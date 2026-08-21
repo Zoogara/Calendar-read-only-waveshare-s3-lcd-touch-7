@@ -1,0 +1,9 @@
+## Managed dependencies for board bring-up.
+## `idf.py build` resolves and downloads these automatically via the IDF
+## Component Manager - no manual cloning needed.
+dependencies:
+  idf: ">=5.3"   # needs the new driver/i2c_master.h API (ch422g.c/board_bsp.c) and
+                 # the i2c_master_bus_handle_t-based esp_lcd_new_panel_io_i2c() signature
+  lvgl/lvgl: "^8.3.0"
+  espressif/esp_lvgl_port: "^2.0.0"
+  espressif/esp_lcd_touch_gt911: "^1.1.0"
