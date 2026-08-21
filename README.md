@@ -389,9 +389,19 @@ function syncTasksToCalendar() {
      minutes**)
 4. Click **Save**.
 
-### Step 5: Fetch the feed
+### Step 5: Add it to the display
 
-Issue an HTTP GET request (via this project's ICS client, `libcurl`, or
-your library of choice) to the secret iCal address obtained in Step 2.
-Parse the `.ics` payload's `SUMMARY` lines - pending tasks are prefixed
-with ☐ (U+2610), completed tasks with ☑ (U+2611).
+"My Tasks Sync" is a calendar in your own Google account, so - unlike a
+calendar someone else owns and won't share - the simplest path is to add
+it as a normal **Google**-source calendar rather than an ICS feed:
+share it with the service account's email address exactly as described
+in "Google Cloud setup" above, then add its **Calendar ID** (Settings
+and sharing → Integrate calendar → Calendar ID, right next to the secret
+iCal address from Step 2) as a calendar entry in the setup portal or
+config web page. This reuses the service-account auth already set up for
+your other calendars, with no separate feed-fetching code path involved.
+
+If you'd rather not share it with the service account, the secret iCal
+address from Step 2 works too - add it as an **ICS URL**-source calendar
+instead, no sharing required. Either way, pending tasks show up
+prefixed with ☐ (U+2610), completed ones with ☑ (U+2611).
