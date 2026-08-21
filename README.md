@@ -1,3 +1,5 @@
+**Caveat:** Developed in conjunction with Claude AI.
+
 # Google Calendar wall display — Waveshare ESP32-S3-Touch-LCD-7
 
 An ESP-IDF + LVGL project that turns the [Waveshare ESP32-S3-Touch-LCD-7](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7)
@@ -261,3 +263,135 @@ left for you to discover blind.
   Sunday-based by changing the `mon_offset` calculation if you'd rather
   match the US convention.
 - **Colours/theme**: `components/calendar_ui/include/ui_theme.h`.
+
+## Bonus: adding Google Tasks to a calendar feed, without OAuth
+
+Google Tasks has no ICS feed of its own, so this display can't read it
+directly. The workaround: a small Google Apps Script mirrors your Tasks
+into a dedicated Google Calendar (as all-day events, checkbox-prefixed),
+which you then add here as a normal calendar or ICS source.
+
+### Prerequisites
+
+- A Google account containing your Google Tasks and Google Calendar.
+- Access to Google Apps Script.
+
+### Step 1: Create a dedicated calendar for tasks
+
+1. Open Google Calendar in your web browser.
+2. In the left sidebar, find **Other calendars**, click the **+** icon,
+   and select **Create new calendar**.
+3. Name the calendar **My Tasks Sync** and click **Create calendar**.
+
+### Step 2: Retrieve the secret iCal address
+
+1. Under **My calendars** on the left, hover over **My Tasks Sync**,
+   click the three dots, and select **Settings and sharing**.
+2. Scroll down to the **Integrate calendar** section.
+3. Locate the **Secret address in iCal format** field.
+4. Copy the entire URL (e.g.
+   `https://calendar.google.com/calendar/ical/.../basic.ics`).
+
+### Step 3: Create and deploy the Google Apps Script
+
+1. Navigate to [Google Apps Script](https://script.google.com) and click
+   **New project**.
+2. Clear any default code in the editor and paste the following script:
+
+```javascript
+function syncTasksToCalendar() {
+  // CONFIGURATION
+  const CALENDAR_NAME = "My Tasks Sync";
+  const DAYS_LOOKBACK = 30;  // Includes completed tasks from past 30 days
+  const DAYS_LOOKAHEAD = 30; // Includes upcoming tasks for next 30 days
+
+  // 1. Locate destination calendar
+  const calendars = CalendarApp.getCalendarsByName(CALENDAR_NAME);
+  if (calendars.length === 0) {
+    Logger.log("Calendar not found! Ensure the name matches CALENDAR_NAME exactly.");
+    return;
+  }
+  const calendar = calendars[0];
+
+  // 2. Define sync range
+  const now = new Date();
+  const pastDate = new Date();
+  pastDate.setDate(now.getDate() - DAYS_LOOKBACK);
+
+  const futureDate = new Date();
+  futureDate.setDate(now.getDate() + DAYS_LOOKAHEAD);
+
+  // 3. Clear existing sync events to prevent duplicates
+  const existingEvents = calendar.getEvents(pastDate, futureDate);
+  for (const event of existingEvents) {
+    event.deleteEvent();
+  }
+
+  // 4. Retrieve task lists and items
+  const taskLists = Tasks.Tasklists.list().items;
+  if (!taskLists || taskLists.length === 0) return;
+
+  for (const taskList of taskLists) {
+    // Incomplete tasks due before futureDate
+    const incompleteTasks = Tasks.Tasks.list(taskList.id, {
+      showCompleted: false,
+      showHidden: true,
+      dueMax: futureDate.toISOString()
+    }).items || [];
+
+    // Tasks completed within past 30 days
+    const completedTasks = Tasks.Tasks.list(taskList.id, {
+      showCompleted: true,
+      showHidden: true,
+      completedMin: pastDate.toISOString()
+    }).items || [];
+
+    const allTasks = incompleteTasks.concat(completedTasks);
+
+    for (const task of allTasks) {
+      if (!task.title) continue;
+
+      const isCompleted = task.status === "completed";
+      // U+2611 (☑) for completed, U+2610 (☐) for incomplete
+      const symbol = isCompleted ? "☑" : "☐";
+
+      let targetDateString = isCompleted ? (task.completed || task.due) : task.due;
+      let eventDate = targetDateString ? new Date(targetDateString) : new Date();
+
+      if (eventDate >= pastDate && eventDate <= futureDate) {
+        calendar.createAllDayEvent(`${symbol} ${task.title}`, eventDate, {
+          description: task.notes || ''
+        });
+      }
+    }
+  }
+}
+```
+
+3. Enable the Google Tasks API service:
+   - In the left panel, click **Services** (**+**).
+   - Select **Google Tasks API** from the list and click **Add**.
+4. Save the project by clicking the **Save** (disk) icon.
+5. Click **Run** at the top menu to execute the script once manually.
+6. When prompted, click **Review Permissions**, select your Google
+   account, click **Advanced**, and grant access.
+
+### Step 4: Configure automatic background execution
+
+1. In the left menu of the Apps Script interface, click **Triggers**
+   (alarm clock icon).
+2. Click **Add Trigger** in the bottom right corner.
+3. Configure the trigger parameters:
+   - Choose which function to run: `syncTasksToCalendar`
+   - Select event source: **Time-driven**
+   - Type of time based trigger: **Minutes timer**
+   - Select minute interval: **Every 15 minutes** (or **Every 30
+     minutes**)
+4. Click **Save**.
+
+### Step 5: Fetch the feed
+
+Issue an HTTP GET request (via this project's ICS client, `libcurl`, or
+your library of choice) to the secret iCal address obtained in Step 2.
+Parse the `.ics` payload's `SUMMARY` lines - pending tasks are prefixed
+with ☐ (U+2610), completed tasks with ☑ (U+2611).
