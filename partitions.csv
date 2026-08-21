@@ -1,0 +1,14 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+#
+# OTA-capable layout (dual app slots) for the 16MB flash on the
+# ESP32-S3-Touch-LCD-7. "nvs" and "phy_init" keep the exact offsets/sizes
+# from the old single-"factory"-app layout so config already saved there
+# (Wi-Fi credentials, the Google service-account JSON, calendar list)
+# survives this partition-table change without needing to be re-entered.
+# App partition offsets are left blank so the tool auto-aligns them to the
+# required 64KB boundary.
+nvs,      data, nvs,     0x9000,  0x40000,
+phy_init, data, phy,     0x49000, 0x1000,
+otadata,  data, ota,     0x4A000, 0x2000,
+ota_0,    app,  ota_0,   ,        0x300000,
+ota_1,    app,  ota_1,   ,        0x300000,

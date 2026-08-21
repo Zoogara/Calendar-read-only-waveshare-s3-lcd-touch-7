@@ -1,0 +1,88 @@
+# Defaults for the Waveshare ESP32-S3-Touch-LCD-7 board.
+# Run `idf.py set-target esp32s3` once, then `idf.py menuconfig` if you
+# want to tweak anything further - these are just sane starting points.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- Flash / PSRAM ---
+# Board has 16MB flash, 8MB octal PSRAM.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+# Keep Wi-Fi's RX/TX buffers in internal RAM rather than PSRAM - the RGB LCD
+# panel's frame buffers already live in PSRAM (esp_lcd_rgb_panel_config_t in
+# board_bsp.c), and letting Wi-Fi compete for the same PSRAM bus bandwidth
+# is a common cause of visible jitter on the display. There's ~260KB of
+# internal RAM free at boot, comfortably enough for Wi-Fi's buffers.
+# CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP is not set
+
+# The RGB LCD frame buffers (800x480x2 bytes = ~768KB each) live in PSRAM.
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+
+# --- Partition table ---
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# --- FreeRTOS / perf ---
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+
+# --- mbedTLS (needed for TLS to googleapis.com + RSA-SHA256 JWT signing) ---
+CONFIG_MBEDTLS_HARDWARE_AES=y
+CONFIG_MBEDTLS_HARDWARE_MPI=y
+CONFIG_MBEDTLS_HARDWARE_SHA=y
+CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+# The default (SSL_IN_CONTENT_LEN=16384, fixed-size) statically reserves a
+# full 16KB inbound TLS record buffer for every connection regardless of
+# how much data actually arrives - on an internal-RAM budget this tight,
+# that reservation landing on top of whatever's already in use during a
+# handshake is what's been tipping otherwise-survivable internal-RAM
+# levels (~45-55KB free) into "PK verify/parse failed"/"Failed to allocate
+# memory" failures live-observed during testing. VARIABLE_BUFFER_LENGTH
+# lets mbedtls size this buffer to what's actually needed (up to the max
+# below) instead of always reserving the max upfront.
+#
+# 4096 was tried first (matching SSL_OUT_CONTENT_LEN) and made things
+# WORSE, not better - it broke the jwt_auth token handshake outright,
+# 100% of the time, with MBEDTLS_ERR_SSL_INVALID_RECORD (some record in
+# that handshake - likely Google's certificate chain, or a TLS 1.3
+# message - doesn't fit in 4096 bytes). 8192 is the smallest value that
+# tested reliably; don't drop this further without re-testing a live
+# full sync cycle, not just a build.
+CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH=y
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=8192
+
+# --- LVGL (pulled in as a managed component, see board_bsp/idf_component.yml) ---
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_MEM_CUSTOM=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
+
+# --- Wi-Fi ---
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+
+# --- Log level ---
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# --- HTTP server (provisioning portal) ---
+# Default 512-byte header buffer is too small for modern mobile browsers,
+# which routinely send 500-900+ bytes of headers (User-Agent, Accept,
+# sec-ch-ua*, etc.) on the setup form's POST - that overflows the shared
+# request-line/header scratch buffer before the body (with the private key)
+# is even read, causing "431 Header Fields Too Large".
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+CONFIG_HTTPD_MAX_URI_LEN=1024
