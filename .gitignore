@@ -4,3 +4,4 @@ sdkconfig.old
 *.o
 *.d
 .DS_Store
+extracted_display_touch_bsp/

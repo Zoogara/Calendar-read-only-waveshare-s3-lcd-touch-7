@@ -5,7 +5,8 @@
  *     directly by the ESP32-S3's LCD_CAM peripheral - no SPI/QSPI init
  *     sequence needed, just timings)
  *   - GT911 capacitive touch over I2C
- *   - CH422G I2C IO expander for backlight enable + touch reset
+ *   - CH422G I2C IO expander for backlight enable + touch reset + LCD
+ *     reset + TF-card chip-select
  *   - LVGL wired up on top via esp_lvgl_port
  *
  * Reference: https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7
@@ -17,6 +18,7 @@
 
 #include "esp_err.h"
 #include "lvgl.h"
+#include "ch422g.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,6 +41,14 @@ esp_err_t bsp_display_backlight(bool on);
  * context. Re-entrant-safe is NOT assumed - don't nest. */
 bool bsp_lvgl_lock(uint32_t timeout_ms);
 void bsp_lvgl_unlock(void);
+
+/* Returns the CH422G handle bsp_display_init() created. Other board-level
+ * drivers that need the same expander - currently just sd_card, for
+ * SD_CS (CH422G_EXIO_SD_CS) - reuse this handle instead of calling
+ * ch422g_init() a second time, which would fail (i2c_master_bus_add_device
+ * refuses to add a second device at an address already on the bus).
+ * Valid only after bsp_display_init() has returned ESP_OK. */
+ch422g_handle_t bsp_get_expander(void);
 
 #ifdef __cplusplus
 }

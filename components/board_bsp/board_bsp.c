@@ -325,3 +325,8 @@ void bsp_lvgl_unlock(void)
 {
     lvgl_port_unlock();
 }
+
+ch422g_handle_t bsp_get_expander(void)
+{
+    return s_expander;
+}

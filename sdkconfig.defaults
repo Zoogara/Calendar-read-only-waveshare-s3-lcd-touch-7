@@ -78,6 +78,16 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
 # --- Log level ---
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
+# --- FATFS (TF card, see components/sd_card) ---
+# Long filename support: without it, FATFS enforces strict 8.3 short
+# names (max 3-char extension), which silently fails to create a file
+# like "config.json" (a 4-char extension) with EINVAL - confirmed
+# on-device 2026-09-04 (components/provisioning's SD config backup).
+# LFN_HEAP (rather than LFN_STACK) keeps the working buffer off task
+# stacks, which are already tight elsewhere in this project - see the
+# net_task stack-size comment below.
+CONFIG_FATFS_LFN_HEAP=y
+
 # --- HTTP server (provisioning portal) ---
 # Default 512-byte header buffer is too small for modern mobile browsers,
 # which routinely send 500-900+ bytes of headers (User-Agent, Accept,

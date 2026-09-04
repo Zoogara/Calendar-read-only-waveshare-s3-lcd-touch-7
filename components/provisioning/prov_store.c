@@ -1,5 +1,8 @@
 #include "provisioning.h"
 #include <string.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -8,6 +11,8 @@
 static const char *TAG = "prov_store";
 #define NVS_NAMESPACE "gcalcfg"
 #define NVS_KEY_JSON  "json"
+
+#define SD_CONFIG_FILE PROVISIONING_SD_DIR "/config.json"
 
 static cJSON *settings_to_json(const app_settings_t *cfg)
 {
@@ -207,4 +212,93 @@ esp_err_t provisioning_clear(void)
     }
     nvs_close(h);
     return err;
+}
+
+esp_err_t provisioning_sd_ensure_dir(void)
+{
+    struct stat st;
+    if (stat(PROVISIONING_SD_DIR, &st) == 0) {
+        if (S_ISDIR(st.st_mode)) {
+            return ESP_OK;
+        }
+        ESP_LOGE(TAG, "%s exists but isn't a directory", PROVISIONING_SD_DIR);
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (mkdir(PROVISIONING_SD_DIR, 0775) != 0) {
+        ESP_LOGE(TAG, "mkdir(%s) failed: errno=%d", PROVISIONING_SD_DIR, errno);
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "created %s on the TF card", PROVISIONING_SD_DIR);
+    return ESP_OK;
+}
+
+bool provisioning_sd_config_exists(void)
+{
+    struct stat st;
+    return stat(SD_CONFIG_FILE, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+esp_err_t provisioning_load_sd(app_settings_t *out)
+{
+    memset(out, 0, sizeof(*out));
+
+    FILE *f = fopen(SD_CONFIG_FILE, "r");
+    if (f == NULL) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (len <= 0) {
+        fclose(f);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    char *buf = malloc((size_t)len + 1);
+    if (buf == NULL) {
+        fclose(f);
+        return ESP_ERR_NO_MEM;
+    }
+    size_t rd = fread(buf, 1, (size_t)len, f);
+    fclose(f);
+    buf[rd] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (root == NULL) {
+        ESP_LOGW(TAG, "%s failed to parse - treating as unset", SD_CONFIG_FILE);
+        return ESP_ERR_NOT_FOUND;
+    }
+    json_to_settings(root, out);
+    cJSON_Delete(root);
+
+    return out->valid ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t provisioning_save_sd(const app_settings_t *cfg)
+{
+    cJSON *root = settings_to_json(cfg);
+    char *str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (str == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    FILE *f = fopen(SD_CONFIG_FILE, "w");
+    if (f == NULL) {
+        ESP_LOGE(TAG, "fopen(%s, \"w\") failed: errno=%d", SD_CONFIG_FILE, errno);
+        free(str);
+        return ESP_FAIL;
+    }
+    size_t len = strlen(str);
+    size_t written = fwrite(str, 1, len, f);
+    fclose(f);
+    free(str);
+
+    if (written != len) {
+        ESP_LOGE(TAG, "short write to %s (%d/%d bytes)", SD_CONFIG_FILE, (int)written, (int)len);
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "config backed up to %s", SD_CONFIG_FILE);
+    return ESP_OK;
 }
