@@ -38,6 +38,7 @@
 #include "config_web.h"
 #include "wifi_sta.h"
 #include "board_bsp.h"
+#include "sd_card.h"
 #include "calendar_ui.h"
 #include "gcal_client.h"
 #include "event_store.h"
@@ -175,7 +176,45 @@ void app_main(void)
      * the boot flow comment at the top of this file. */
     ESP_ERROR_CHECK(bsp_display_init());
 
-    if (provisioning_load(&s_cfg) != ESP_OK) {
+    /* Settling delay before touching the SD SPI bus/CH422G CS: with no
+     * delay here, mounting the card immediately after bsp_display_init()
+     * (before anything else has exercised I2C/the RGB panel/LVGL)
+     * reliably panics the very first LVGL redraw afterwards with a
+     * "Cache disabled but cached memory region accessed" fault - confirmed
+     * on-device 2026-09-04, and confirmed fixed by this delay (plus the
+     * matching one below) after stack-size and heap-corruption causes
+     * were ruled out. Root cause not fully understood (something in the
+     * board's bring-up - RGB panel DMA, I2C, or the CH422G - not yet
+     * settled), but the delay is reliable; don't remove without re-adding
+     * one if SD mounting starts crashing again. */
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    esp_err_t sd_err = sd_card_init(bsp_get_expander());
+    if (sd_err != ESP_OK) {
+        ESP_LOGW(TAG, "no TF card mounted (%s) - continuing without one",
+                 esp_err_to_name(sd_err));
+    } else if (provisioning_sd_ensure_dir() != ESP_OK) {
+        ESP_LOGW(TAG, "could not create %s on the TF card - config backup disabled",
+                 PROVISIONING_SD_DIR);
+    }
+
+    /* Config load: prefer a config backup already on the TF card over NVS -
+     * see the provisioning.h comment on provisioning_save_sd() for why
+     * (in short: it survives flashing other/test firmware onto the board
+     * and back). Falls back to NVS, then the setup portal, exactly as
+     * before if there's no card, no backup file, or the backup fails to
+     * load. */
+    bool cfg_from_sd = false;
+    if (sd_err == ESP_OK && provisioning_sd_config_exists()) {
+        if (provisioning_load_sd(&s_cfg) == ESP_OK) {
+            ESP_LOGI(TAG, "loaded config from TF card backup (%s)", PROVISIONING_SD_DIR);
+            cfg_from_sd = true;
+        } else {
+            ESP_LOGW(TAG, "TF card config backup exists but didn't load - falling back to NVS");
+        }
+    }
+
+    if (!cfg_from_sd && provisioning_load(&s_cfg) != ESP_OK) {
         ESP_LOGW(TAG, "no valid configuration in flash - starting setup portal "
                       "(connect to Wi-Fi \"%s\" and browse to 192.168.4.1)",
                  PROVISIONING_AP_SSID);
@@ -183,8 +222,25 @@ void app_main(void)
         provisioning_run_portal(); /* reboots once the form is submitted; never returns */
     }
 
+    /* One-time backup to the TF card - see provisioning_save_sd()'s doc
+     * comment for why this only ever writes once (skipped once the backup
+     * file exists). Naturally covers both "just provisioned for the first
+     * time" (NVS has it, the card doesn't yet - the portal above reboots
+     * before we'd get here, so this runs on the boot right after) and "a
+     * card was inserted/replaced on a device that was already
+     * configured". */
+    if (sd_err == ESP_OK && !provisioning_sd_config_exists() &&
+        provisioning_save_sd(&s_cfg) != ESP_OK) {
+        ESP_LOGW(TAG, "failed to write TF card config backup");
+    }
+
     setenv("TZ", s_cfg.posix_tz[0] ? s_cfg.posix_tz : "UTC0", 1);
     tzset();
+
+    /* Same settling delay as the one before sd_card_init() above, on the
+     * other side of it, before the first real LVGL redraw fires below -
+     * see that comment for why. */
+    vTaskDelay(pdMS_TO_TICKS(300));
 
     event_store_init();
     calendar_ui_init(&s_cfg);

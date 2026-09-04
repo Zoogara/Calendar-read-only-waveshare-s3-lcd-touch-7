@@ -56,6 +56,9 @@ components/
                            client + in-RAM event store
   calendar_ui/             the four LVGL screens (month/week/day/up-next)
                            plus the nav rail / top bar / legend shell
+  sd_card/                 mounts the TF card slot as FAT at /sdcard, if one
+                           is inserted (see "TF/SD card" below) - nothing
+                           in the app reads/writes it yet
 ```
 
 ## Building
@@ -154,11 +157,13 @@ there's no "unverified app" warning to fight with.
 - **Legend toggle isn't persisted** — hiding a calendar via the legend
   chip is a live UI filter that resets on reboot (all calendars fetched
   every cycle either way, so this is instant either way).
-- **No SD card support**, even though the board has a slot — see
-  "Bring-up troubleshooting" for why it was left out.
-- **No OTA** — the partition table is a single app slot. Add
-  `ota_0`/`ota_1` partitions and the `esp_https_ota` component if you
-  want over-the-air updates later.
+- **TF/SD card is mounted but unused** — `sd_card_init()` mounts it at
+  `/sdcard` on boot if a card is inserted (see "TF/SD card" below), but
+  nothing in the app reads or writes it yet — no event cache, no logging.
+- **Partition table has OTA slots, but nothing writes to them** — `ota_0`/
+  `ota_1` exist in `partitions.csv`, but no code calls `esp_https_ota` or
+  otherwise switches the active slot, so a flashed image never gets
+  replaced except by re-flashing over serial.
 
 ## Bring-up troubleshooting
 
@@ -251,6 +256,26 @@ None of these are architectural problems — they're exactly the kind of
 "tune the board bring-up constants" work you'd expect when porting to a
 7" RGB panel for the first time, just called out explicitly instead of
 left for you to discover blind.
+
+## TF/SD card
+
+The board's TF-card slot is wired for SPI: `GPIO11`=MOSI, `GPIO12`=SCK,
+`GPIO13`=MISO (a dedicated bus — nothing else on the board shares those
+three pins), with chip-select on `CH422G_EXIO_SD_CS` (the same I2C IO
+expander that drives the backlight and touch/LCD reset), not a native
+GPIO. `sd_card_init()` (`components/sd_card/`) mounts it as FAT at
+`/sdcard` during boot if a card is present; a missing or unreadable card
+is logged and otherwise ignored, not treated as a boot failure — see the
+comment in `main/main.c`.
+
+`sd_card_init()` deliberately leaves `format_if_mount_failed` off: a card
+with an unreadable filesystem will fail to mount rather than be silently
+erased. Format it FAT32 on a PC first if mounting fails and you want to
+use it.
+
+Nothing in the app reads or writes `/sdcard` yet (no event cache, no
+logging) — mounting is wired up so a future feature can use it without
+also having to re-derive the pin/CS wiring.
 
 ## Customizing
 
