@@ -8,15 +8,29 @@ the Google Calendar Android app: Month / Week / Day views you can drill into
 by tapping a day, an "Up next" list, and multiple calendars shown side by
 side, each in its own colour.
 
-**Important, read first:** this was written and reviewed carefully, but it
-has not been compiled or flashed against a physical board in this session —
-I don't have the hardware here. The architecture, Google Calendar
-integration, and UI logic are solid, but a handful of very hardware-specific
-details (exact RGB timing constants, one I2C-expander's register layout, the
-precise `esp_lvgl_port`/`esp_lcd` function signatures for *your* installed
-ESP-IDF version) are flagged below under **Bring-up troubleshooting** —
-expect to spend a first bring-up session tuning those, the way you would
-with any board support package for a new panel.
+**Important, read first:** this has since been built, flashed, and run
+extensively on real hardware (an actual Waveshare ESP32-S3-Touch-LCD-7,
+against ESP-IDF v5.3.2) - display/touch/backlight bring-up, Wi-Fi
+provisioning, the Google Calendar and ICS-feed fetch paths, the TF card and
+its config backup, the on-device settings dialog, and the idle screensaver
+have all been exercised and confirmed working, not just reviewed on paper.
+The items under **Bring-up troubleshooting** below are a mix of real
+findings from that hardware bring-up (several are called out inline as
+"confirmed on real hardware") and a few things that never needed a tweak
+but are still worth knowing about if you hit them on a different board
+revision or IDF version.
+
+The one known, still-open issue: an intermittent crash right after the SD
+card mounts at boot, landing in LVGL's own background redraw task -
+self-recovers via the panic handler's own automatic reboot within about a
+second, on roughly a quarter to two-fifths of boots in repeated testing. It
+has never once failed to recover in testing (never a hard loop), and root
+cause hasn't been pinned down after a real investigation (stack size, heap
+corruption, an NVS-vs-LVGL-task race, and SD SPI clock speed were all ruled
+out) - see the comment above the settling-delay `vTaskDelay()` in
+`main/main.c`'s `app_main()` for the full writeup and the leading remaining
+theory (a GDMA channel-sharing interaction between the SD SPI bus and the
+RGB panel's own continuous-refresh DMA).
 
 ## What it does
 
@@ -31,6 +45,13 @@ with any board support package for a new panel.
 - **Up next**: a scrollable list of upcoming events across all visible
   calendars, soonest first.
 - Auto-refreshes from Google on a timer (default every 5 minutes).
+- **Idle screensaver**: after a configurable idle timeout the backlight
+  turns off and a slowly-regenerating noise pattern replaces the calendar
+  (anti-image-retention, not just a blank screen) until the next touch. If
+  the screen's been asleep 15+ minutes, waking it resets to Month view on
+  today's date rather than resuming whatever view/date was showing before
+  - the idea being that whatever day or week you were looking at before
+  walking away is unlikely to still be what you want to see later.
 
 ## Hardware
 
@@ -57,8 +78,9 @@ components/
   calendar_ui/             the four LVGL screens (month/week/day/up-next)
                            plus the nav rail / top bar / legend shell
   sd_card/                 mounts the TF card slot as FAT at /sdcard, if one
-                           is inserted (see "TF/SD card" below) - nothing
-                           in the app reads/writes it yet
+                           is inserted (see "TF/SD card" below); used for a
+                           config backup that survives reflashing other
+                           firmware onto the board
 ```
 
 ## Building
@@ -157,9 +179,10 @@ there's no "unverified app" warning to fight with.
 - **Legend toggle isn't persisted** — hiding a calendar via the legend
   chip is a live UI filter that resets on reboot (all calendars fetched
   every cycle either way, so this is instant either way).
-- **TF/SD card is mounted but unused** — `sd_card_init()` mounts it at
-  `/sdcard` on boot if a card is inserted (see "TF/SD card" below), but
-  nothing in the app reads or writes it yet — no event cache, no logging.
+- **TF/SD card is only used for a config backup, nothing else yet** — see
+  "TF/SD card" below. No event cache, no logging - `sd_card_init()`'s
+  mount is otherwise idle once boot finishes (and is in fact deinited
+  right after boot, freeing its SPI bus/DMA resources — see below).
 - **Partition table has OTA slots, but nothing writes to them** — `ota_0`/
   `ota_1` exist in `partitions.csv`, but no code calls `esp_https_ota` or
   otherwise switches the active slot, so a flashed image never gets
@@ -251,6 +274,38 @@ you'd hit them:
 8. **Wrong calendar/timezone displayed**: double check the POSIX TZ
    string — a wrong DST rule silently shifts events by an hour for part
    of the year rather than erroring out.
+9. **A hard abort inside `spi_flash_disable_interrupts_caches_and_other_cpu()`
+   (or any "Cache disabled but cached memory region accessed" panic) the
+   first time a new background task does a raw NVS/flash write**: that
+   kind of write needs the calling task's *own stack* to be in internal
+   RAM, not PSRAM — PSRAM itself is briefly unreachable while the flash
+   cache is disabled for the write, so a task whose stack lives there
+   can't safely be the one doing it (or receiving an interrupt while it's
+   in progress). This project already puts a couple of tasks' stacks in
+   PSRAM on purpose, specifically to keep internal RAM free for exactly
+   this kind of operation elsewhere (see `net_task`'s creation comment in
+   `main/main.c` and `lvgl_init()`'s in `board_bsp.c`) — but the first time
+   *any new* task you add does its own NVS/flash write (a settings save, a
+   first-time driver init that touches its own NVS blob — Wi-Fi's own
+   `esp_wifi_init()` hit this on-device, the very first time it ever ran),
+   check what stack that task is running on before assuming it's a logic
+   bug. Fix is always the same: split that one write onto a small,
+   short-lived task with a plain (`xTaskCreate`, internal-RAM) stack — see
+   `reconfigure_task` in `calendar_ui.c`, `save_task` in `config_web.c`, or
+   `wifi_bringup_task` in `main.c` for three examples of the same pattern.
+10. **`main_task` hangs forever after boot, tripping the task watchdog
+    every few seconds with `IDLE0` never getting to run**: if this
+    started after adding a forced `lv_refr_now()` (e.g. to fix tearing
+    somewhere — see the dual-framebuffer note under item 5 above), check
+    whether that code path can run as part of the *very first* screen
+    ever shown (`calendar_ui_init()`'s own initial view selection, before
+    LVGL's own redraw timer has ticked even once) — calling
+    `lv_refr_now()` synchronously that early deadlocked inside LVGL's
+    buffer-sync logic on-device. `select_view_force_redraw()` in
+    `calendar_ui.c` is deliberately called only from *interactive*
+    view-switch call sites (a nav rail tap, drilling into a day, waking
+    from a long sleep), never from the startup path, for exactly this
+    reason.
 
 None of these are architectural problems — they're exactly the kind of
 "tune the board bring-up constants" work you'd expect when porting to a
@@ -266,16 +321,40 @@ expander that drives the backlight and touch/LCD reset), not a native
 GPIO. `sd_card_init()` (`components/sd_card/`) mounts it as FAT at
 `/sdcard` during boot if a card is present; a missing or unreadable card
 is logged and otherwise ignored, not treated as a boot failure — see the
-comment in `main/main.c`.
+comment in `main/main.c`. Once boot finishes, `sd_card_deinit()` unmounts
+it and frees its SPI bus/DMA buffers/GDMA channel again — nothing needs
+the card mounted for the rest of the device's uptime (see "Config
+backup" below), and holding those resources the whole time was
+measurably eating into the internal RAM calendar refresh's TLS
+handshakes need.
 
 `sd_card_init()` deliberately leaves `format_if_mount_failed` off: a card
 with an unreadable filesystem will fail to mount rather than be silently
 erased. Format it FAT32 on a PC first if mounting fails and you want to
 use it.
 
-Nothing in the app reads or writes `/sdcard` yet (no event cache, no
-logging) — mounting is wired up so a future feature can use it without
-also having to re-derive the pin/CS wiring.
+### Config backup
+
+The card is used to back up your saved configuration (Wi-Fi, service
+account, calendar list, all the settings-dialog fields) as JSON at
+`/sdcard/gcal/config.json`, independent of NVS. The point: if you flash
+other/test firmware onto this board and it reuses or wipes NVS, reflashing
+this firmware back can pick your calendar config back up from the card on
+its own, without re-running the setup portal.
+
+- **NVS is always authoritative when it holds a valid config.** The card
+  is only consulted as a fallback, when NVS comes back empty or invalid.
+  Whichever settings dialog you use to change something (the on-device
+  gear icon, the LAN config web page, the first-boot setup portal) writes
+  to NVS *and* to this backup file together, so the two stay in sync —
+  this used to be a one-time snapshot instead, which meant a later
+  settings change wasn't reflected in the backup and could hand back a
+  stale config if NVS ever needed recovering from it (confirmed and fixed
+  on-device).
+- No event cache, no logging — this is the card's only use so far.
+- Nothing in the app reads or writes anywhere else on `/sdcard` — mounting
+  and unmounting are wired up so a future feature can reuse the same
+  pin/CS wiring without having to re-derive it.
 
 ## Customizing
 
@@ -288,6 +367,10 @@ also having to re-derive the pin/CS wiring.
   Sunday-based by changing the `mon_offset` calculation if you'd rather
   match the US convention.
 - **Colours/theme**: `components/calendar_ui/include/ui_theme.h`.
+- **Screen timeout / idle screensaver**: `screen_timeout_s` in the setup
+  portal or settings dialog (0 disables it). How long asleep before waking
+  resets to today/Month instead of resuming the prior view:
+  `LONG_SLEEP_RESET_MS` in `ui_screensaver.c` (default 15 minutes).
 
 ## Bonus: adding Google Tasks to a calendar feed, without OAuth
 

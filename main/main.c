@@ -28,6 +28,7 @@
 #include "esp_netif_sntp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "freertos/idf_additions.h"
 #include "esp_heap_caps.h"
 
@@ -93,10 +94,29 @@ static bool sync_time(void)
     return true;
 }
 
-static void net_task(void *arg)
+static SemaphoreHandle_t s_wifi_up;
+
+/* esp_wifi_init() - called once, inside wifi_sta_connect()'s first-ever
+ * bring-up path - does a raw NVS flash write for Wi-Fi's own internal
+ * calibration/misc data (misc_nvs_init() -> nvs_open() -> ... ->
+ * esp_flash_write()). That needs a task with an internal-RAM stack, not
+ * PSRAM, since PSRAM itself is unreachable while the flash cache is
+ * briefly disabled for the write - same constraint as reconfigure_task in
+ * calendar_ui.c and config_web.c's save_task. net_task's own stack is
+ * deliberately in PSRAM (see its creation below), so this first bring-up
+ * has to happen on this small dedicated task instead - confirmed
+ * on-device 2026-09-05 as a hard abort (assert inside
+ * spi_flash_disable_interrupts_caches_and_other_cpu(), reached via
+ * esp_wifi_init() -> misc_nvs_init()) that boot-looped every time,
+ * whereas the (already-known, self-healing) SD-mount race crash it was
+ * first mistaken for never hard-loops. Reconnects after this first
+ * bring-up don't re-run esp_wifi_init() - they're handled entirely by
+ * wifi_sta.c's own event handler on the default event loop task, which
+ * already has a normal internal-RAM stack - so this task's job is done
+ * once Wi-Fi comes up the first time. */
+static void wifi_bringup_task(void *arg)
 {
     (void)arg;
-
     for (;;) {
         if (wifi_sta_connect(&s_cfg, WIFI_CONNECT_TIMEOUT_MS) == ESP_OK) {
             break;
@@ -104,6 +124,18 @@ static void net_task(void *arg)
         ESP_LOGW(TAG, "Wi-Fi connect failed, retrying in 15s");
         vTaskDelay(pdMS_TO_TICKS(15000));
     }
+    xSemaphoreGive(s_wifi_up);
+    vTaskDelete(NULL);
+}
+
+static void net_task(void *arg)
+{
+    (void)arg;
+
+    s_wifi_up = xSemaphoreCreateBinary();
+    xTaskCreate(wifi_bringup_task, "wifi_bringup", 4096, NULL, 5, NULL);
+    xSemaphoreTake(s_wifi_up, portMAX_DELAY);
+    vSemaphoreDelete(s_wifi_up);
 
     /* No-ops if config_web_password isn't set - see config_web.c. */
     config_web_start(&s_cfg);

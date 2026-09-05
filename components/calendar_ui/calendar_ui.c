@@ -33,6 +33,7 @@ static void render_current_view(void);
 static void update_title(void);
 static void update_legend(void);
 static void select_view(ui_view_t v);
+static void select_view_force_redraw(void);
 
 /* ---------------- shared context accessors (calendar_ui_internal.h) ---------------- */
 
@@ -53,6 +54,7 @@ void ui_switch_to_day(time_t day_start)
 {
     s_cursor = day_start;
     select_view(UI_VIEW_DAY);
+    select_view_force_redraw();
 }
 
 /* ---------------- nav rail ---------------- */
@@ -63,6 +65,7 @@ static void nav_btn_event_cb(lv_event_t *e)
 {
     ui_view_t v = (ui_view_t)(uintptr_t)lv_event_get_user_data(e);
     select_view(v);
+    select_view_force_redraw();
 }
 
 static void today_btn_event_cb(lv_event_t *e)
@@ -500,15 +503,27 @@ static void select_view(ui_view_t v)
     refresh_nav_selection();
     render_current_view();
     update_title();
+}
 
-    /* Full-screen double invalidate+refresh, same reasoning as
-     * ui_screensaver.c's wake_up() (see its comment for the mechanism) -
-     * hiding one view root and showing another, under this panel's
-     * direct_mode + avoid_tearing dual-framebuffer setup, can leave the
-     * OTHER buffer still showing the old view until something else forces
-     * a second full redraw. Without this, a nav rail tap could leave a
-     * torn/stale frame (old view mixed with new) on screen until some
-     * unrelated later redraw happened to settle it. */
+/* Full-screen double invalidate+refresh, same reasoning as
+ * ui_screensaver.c's wake_up() (see its comment for the mechanism) -
+ * hiding one view root and showing another, under this panel's
+ * direct_mode + avoid_tearing dual-framebuffer setup, can leave the OTHER
+ * buffer still showing the old view until something else forces a second
+ * full redraw. Without this, a nav rail tap could leave a torn/stale
+ * frame (old view mixed with new) on screen until some unrelated later
+ * redraw happened to settle it.
+ *
+ * Call after select_view() from an interactive/already-running context
+ * ONLY - NOT from calendar_ui_init()'s initial select_view() call. Doing
+ * it there hung main_task forever (watchdog-reset-looping, confirmed
+ * on-device 2026-09-05): this forces lv_refr_now() to run synchronously
+ * before LVGL's own redraw timer has ever ticked once, and something
+ * about that very first frame under this panel's dual-buffer setup never
+ * satisfies whatever refr_sync_areas()/lv_draw_sw_buffer_copy() was
+ * waiting on. */
+static void select_view_force_redraw(void)
+{
     lv_obj_invalidate(lv_scr_act());
     lv_refr_now(NULL);
     lv_obj_invalidate(lv_scr_act());
@@ -611,5 +626,6 @@ void calendar_ui_reset_to_today_month(void)
                                     already released it before sleep, since
                                     ui_*_release() is idempotent (lv_obj_clean()
                                     on an already-empty container). */
+    select_view_force_redraw();
     bsp_lvgl_unlock();
 }
