@@ -500,6 +500,19 @@ static void select_view(ui_view_t v)
     refresh_nav_selection();
     render_current_view();
     update_title();
+
+    /* Full-screen double invalidate+refresh, same reasoning as
+     * ui_screensaver.c's wake_up() (see its comment for the mechanism) -
+     * hiding one view root and showing another, under this panel's
+     * direct_mode + avoid_tearing dual-framebuffer setup, can leave the
+     * OTHER buffer still showing the old view until something else forces
+     * a second full redraw. Without this, a nav rail tap could leave a
+     * torn/stale frame (old view mixed with new) on screen until some
+     * unrelated later redraw happened to settle it. */
+    lv_obj_invalidate(lv_scr_act());
+    lv_refr_now(NULL);
+    lv_obj_invalidate(lv_scr_act());
+    lv_refr_now(NULL);
 }
 
 /* ---------------- public API ---------------- */

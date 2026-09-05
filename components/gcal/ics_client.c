@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -179,7 +180,17 @@ bool ics_client_fetch(esp_http_client_handle_t client, const app_calendar_cfg_t 
 {
     ESP_LOGI(TAG, "[%s] fetching ICS feed", cal->label);
 
-    struct http_resp_buf resp = {.data = malloc(4096), .len = 0, .cap = 4096};
+    /* MALLOC_CAP_SPIRAM - an ICS feed is a full, unwindowed calendar
+     * export (no server-side date filtering the way the Google Calendar
+     * API gets time_min/time_max query params), so this can grow much
+     * larger than a single Google API page before gcal_client.c's shared
+     * http_event_handler() (which this reuses - see the file comment
+     * above) even gets a chance to realloc() it into PSRAM - a plain
+     * malloc() here would sit on internal RAM, competing with mbedtls's
+     * own internal-RAM-only TLS handshake buffers for the exact same
+     * fetch's handshake. See the matching, more detailed comment on the
+     * gcal_event_t buffer in gcal_client.c's gcal_refresh_all(). */
+    struct http_resp_buf resp = {.data = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM), .len = 0, .cap = 4096};
     if (resp.data == NULL) {
         return false;
     }
