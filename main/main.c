@@ -266,6 +266,20 @@ void app_main(void)
         ESP_LOGW(TAG, "failed to write TF card config backup");
     }
 
+    /* Nothing else touches the TF card for the rest of this boot (or ever
+     * again this session - there's no runtime feature using /sdcard yet),
+     * so free its SPI bus/DMA buffers/GDMA channel now rather than hold
+     * them for the device's entire uptime. Small in isolation (~2.4KB of
+     * internal RAM measured directly via heap_caps_get_free_size() around
+     * sd_card_init() on 2026-09-04), but every internal-RAM KB matters
+     * here - see the CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH comment in
+     * sdkconfig.defaults and the gcal_event_t buffer comment in
+     * gcal_client.c's gcal_refresh_all() for why calendar refresh's TLS
+     * handshakes are already this budget's biggest pressure point. */
+    if (sd_err == ESP_OK) {
+        sd_card_deinit();
+    }
+
     setenv("TZ", s_cfg.posix_tz[0] ? s_cfg.posix_tz : "UTC0", 1);
     tzset();
 

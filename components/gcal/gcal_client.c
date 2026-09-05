@@ -151,7 +151,11 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
     if (evt->event_id == HTTP_EVENT_ON_DATA) {
         if (buf->len + evt->data_len + 1 > buf->cap) {
             size_t new_cap = (buf->len + evt->data_len + 1) * 2;
-            char *grown = realloc(buf->data, new_cap);
+            /* MALLOC_CAP_SPIRAM - see the resp buffer's own allocation
+             * comment in gcal_refresh_all(); this growth path needs the
+             * same capability or a large response would start internal
+             * and only partway migrate to PSRAM as it grows. */
+            char *grown = heap_caps_realloc(buf->data, new_cap, MALLOC_CAP_SPIRAM);
             if (grown == NULL) {
                 return ESP_FAIL;
             }
@@ -280,7 +284,15 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
             snprintf(url, sizeof(url), "%s", base_url);
         }
 
-        struct http_resp_buf resp = {.data = malloc(2048), .len = 0, .cap = 2048};
+        /* MALLOC_CAP_SPIRAM - same reasoning as the gcal_event_t buffer
+         * below: this is a pure scratch buffer for accumulating the JSON
+         * response text before parsing, no DMA/hardware constraint, and
+         * plain malloc()/realloc() (see http_event_handler() above, fixed
+         * to match) would otherwise contend with mbedtls's internal-RAM-
+         * only TLS handshake buffers for the same small pool - especially
+         * costly here since a full 250-event page can grow this well past
+         * the CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL threshold anyway. */
+        struct http_resp_buf resp = {.data = heap_caps_malloc(2048, MALLOC_CAP_SPIRAM), .len = 0, .cap = 2048};
         if (resp.data == NULL) {
             break;
         }

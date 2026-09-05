@@ -108,6 +108,22 @@ static void update_pw_status_label(void)
     lv_label_set_text(s_pw_status_lbl, pw[0] ? "Set" : "Not set");
 }
 
+/* Double invalidate+refresh after deleting a full-screen lv_layer_top()
+ * dialog - see ui_screensaver.c's wake_up() for the mechanism (this
+ * panel's direct_mode + avoid_tearing dual-framebuffer setup can leave
+ * one buffer still showing the deleted dialog until something else
+ * forces a second full redraw). Without this, dismissing a dialog could
+ * leave it visually on screen - looking un-clearable - even though its
+ * LVGL object (and any state tracking whether it's open) is already
+ * gone. */
+static void force_full_redraw(void)
+{
+    lv_obj_invalidate(lv_scr_act());
+    lv_refr_now(NULL);
+    lv_obj_invalidate(lv_scr_act());
+    lv_refr_now(NULL);
+}
+
 static void pw_confirm(void)
 {
     strncpy(s_pending_password, lv_textarea_get_text(s_pw_textarea), sizeof(s_pending_password) - 1);
@@ -115,12 +131,14 @@ static void pw_confirm(void)
     update_pw_status_label();
     lv_obj_del(s_pw_dialog);
     s_pw_dialog = NULL;
+    force_full_redraw();
 }
 
 static void pw_dismiss(void)
 {
     lv_obj_del(s_pw_dialog);
     s_pw_dialog = NULL;
+    force_full_redraw();
 }
 
 /* READY fires when the keyboard's own checkmark/enter key is tapped,
@@ -247,6 +265,7 @@ static void cancel_cb(lv_event_t *e)
     (void)e;
     lv_obj_del(s_panel);
     s_panel = NULL;
+    force_full_redraw();
 }
 
 static void save_cb(lv_event_t *e)
@@ -264,6 +283,7 @@ static void save_cb(lv_event_t *e)
 
     lv_obj_del(s_panel);
     s_panel = NULL;
+    force_full_redraw();
 
     xTaskCreate(settings_save_task, "settings_save", 4096, NULL, 5, NULL);
 }

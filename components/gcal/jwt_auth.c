@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "cJSON.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/md.h"
@@ -90,7 +91,14 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
     if (evt->event_id == HTTP_EVENT_ON_DATA) {
         if (buf->len + evt->data_len + 1 > buf->cap) {
             size_t new_cap = (buf->len + evt->data_len + 1) * 2;
-            char *grown = realloc(buf->data, new_cap);
+            /* MALLOC_CAP_SPIRAM - pure scratch buffer for the token
+             * response text, no DMA/hardware constraint; plain malloc()/
+             * realloc() puts it in contention with mbedtls's own
+             * internal-RAM-only TLS handshake buffers for the same small
+             * pool, right in the middle of the handshake that fills them -
+             * see the matching, more detailed comment on the gcal_event_t
+             * buffer in gcal_client.c's gcal_refresh_all(). */
+            char *grown = heap_caps_realloc(buf->data, new_cap, MALLOC_CAP_SPIRAM);
             if (grown == NULL) {
                 return ESP_FAIL;
             }
@@ -203,14 +211,20 @@ static esp_err_t exchange_jwt_for_token(const char *jwt)
     static const char *grant_type_encoded =
         "urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer";
 
+    /* MALLOC_CAP_SPIRAM for both buffers below - same reasoning as
+     * http_event_handler()'s realloc() above: pure scratch memory (a
+     * POST body esp_http_client just reads from, and a response
+     * accumulator it's memcpy()'d into), no DMA/hardware constraint, so
+     * no reason to make mbedtls's internal-RAM-only TLS buffers compete
+     * with them during the very handshake that needs this exchange. */
     size_t body_sz = strlen(grant_type_encoded) + strlen(jwt) + 64;
-    char *body = malloc(body_sz);
+    char *body = heap_caps_malloc(body_sz, MALLOC_CAP_SPIRAM);
     if (body == NULL) {
         return ESP_ERR_NO_MEM;
     }
     snprintf(body, body_sz, "grant_type=%s&assertion=%s", grant_type_encoded, jwt);
 
-    struct http_resp_buf resp = {.data = malloc(512), .len = 0, .cap = 512};
+    struct http_resp_buf resp = {.data = heap_caps_malloc(512, MALLOC_CAP_SPIRAM), .len = 0, .cap = 512};
     if (resp.data == NULL) {
         free(body);
         return ESP_ERR_NO_MEM;
