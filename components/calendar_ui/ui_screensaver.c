@@ -23,6 +23,9 @@
 
 #define SNOW_REGEN_MS     (60U * 1000U)       /* repaint noise this often while asleep */
 #define WAKE_BIT          (1 << 0)
+#define LONG_SLEEP_RESET_MS (15U * 60U * 1000U) /* asleep >= this long -> wake to
+                                                    today/Month instead of resuming
+                                                    whatever view/date was showing */
 
 static const char *TAG = "ui_screensaver";
 
@@ -36,6 +39,7 @@ static void *s_canvas_buf;
 static volatile bool s_asleep = false;
 static uint32_t s_prev_idle_ms = 0;
 static uint32_t s_last_regen_ms = 0;
+static uint32_t s_sleep_start_ms = 0;
 static EventGroupHandle_t s_wake_event;
 
 static void regen_snow(void)
@@ -50,6 +54,7 @@ static void regen_snow(void)
 static void go_to_sleep(void)
 {
     s_asleep = true;
+    s_sleep_start_ms = lv_tick_get();
     regen_snow();
     s_last_regen_ms = lv_tick_get();
     lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
@@ -68,7 +73,14 @@ static void go_to_sleep(void)
 static void wake_up(void)
 {
     s_asleep = false;
-    calendar_ui_restore_active_view();
+    uint32_t asleep_ms = lv_tick_get() - s_sleep_start_ms;
+    if (asleep_ms >= LONG_SLEEP_RESET_MS) {
+        ESP_LOGI(TAG, "asleep for %u ms (>= %u) - waking to today/Month view",
+                 (unsigned)asleep_ms, (unsigned)LONG_SLEEP_RESET_MS);
+        calendar_ui_reset_to_today_month();
+    } else {
+        calendar_ui_restore_active_view();
+    }
     lv_obj_add_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
     /* Explicit full-screen invalidate, not just whatever area hiding the
      * canvas invalidates on its own - under this panel's direct_mode +

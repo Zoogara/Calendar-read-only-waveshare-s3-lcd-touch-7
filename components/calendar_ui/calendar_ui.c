@@ -584,3 +584,19 @@ void calendar_ui_restore_active_view(void)
     render_current_view();
     bsp_lvgl_unlock();
 }
+
+void calendar_ui_reset_to_today_month(void)
+{
+    if (!bsp_lvgl_lock(2000)) {
+        ESP_LOGW(TAG, "could not get LVGL lock to reset to today/month after long sleep, skipping");
+        return;
+    }
+    s_cursor = ui_start_of_day(time(NULL));
+    select_view(UI_VIEW_MONTH); /* release_view()s the old view itself if
+                                    it's not already Month - safe even
+                                    though calendar_ui_release_active_view()
+                                    already released it before sleep, since
+                                    ui_*_release() is idempotent (lv_obj_clean()
+                                    on an already-empty container). */
+    bsp_lvgl_unlock();
+}
