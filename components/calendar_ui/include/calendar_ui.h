@@ -73,6 +73,16 @@ void calendar_ui_release_active_view(void);
  * itself. */
 void calendar_ui_restore_active_view(void);
 
+/* Re-anchors the cursor to today and switches to Month view, regardless
+ * of whatever view/date was showing before. Used instead of
+ * calendar_ui_restore_active_view() when waking from a long sleep (see
+ * ui_screensaver.c) - the idea being that whatever day/week someone was
+ * looking at before walking away is unlikely to still be the one they
+ * want to see after the display's been off for a while, so it's better
+ * to come back to a known, useful default than resume mid-drill-down.
+ * Takes the LVGL lock itself. */
+void calendar_ui_reset_to_today_month(void);
+
 #ifdef __cplusplus
 }
 #endif

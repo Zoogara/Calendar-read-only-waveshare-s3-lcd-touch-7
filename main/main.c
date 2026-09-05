@@ -171,23 +171,47 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
-    /* Bring the display up first regardless of whether setup is needed,
-     * so show_provisioning_screen() below has something to draw on - see
-     * the boot flow comment at the top of this file. */
+    /* Load config from NVS before anything else - specifically, before
+     * bsp_display_init() below creates the LVGL task, whose stack
+     * deliberately lives in PSRAM (see board_bsp.c's lvgl_init()) and is
+     * therefore briefly unreachable whenever a raw NVS read disables the
+     * flash/PSRAM cache. Doing the read here means main_task is provably
+     * the only task alive yet - nothing to race against - which is good
+     * practice regardless, but on its own this did NOT fix the
+     * intermittent post-SD-mount crash investigated below (a stress test
+     * with this reorder in place still hit it on ~4-6 of 15 reboots), so
+     * the NVS/LVGL-task race theory was wrong or at best incomplete. Kept
+     * anyway since it's a real (if apparently not dominant) risk it rules
+     * out for free. */
+    bool have_cfg = (provisioning_load(&s_cfg) == ESP_OK);
+
+    /* Bring the display up next regardless of whether setup is needed, so
+     * show_provisioning_screen() below has something to draw on - see the
+     * boot flow comment at the top of this file. */
     ESP_ERROR_CHECK(bsp_display_init());
 
     /* Settling delay before touching the SD SPI bus/CH422G CS: with no
-     * delay here, mounting the card immediately after bsp_display_init()
-     * (before anything else has exercised I2C/the RGB panel/LVGL)
-     * reliably panics the very first LVGL redraw afterwards with a
-     * "Cache disabled but cached memory region accessed" fault - confirmed
-     * on-device 2026-09-04, and confirmed fixed by this delay (plus the
-     * matching one below) after stack-size and heap-corruption causes
-     * were ruled out. Root cause not fully understood (something in the
-     * board's bring-up - RGB panel DMA, I2C, or the CH422G - not yet
-     * settled), but the delay is reliable; don't remove without re-adding
-     * one if SD mounting starts crashing again. */
-    vTaskDelay(pdMS_TO_TICKS(300));
+     * delay here at all, mounting the card immediately after
+     * bsp_display_init() panics deterministically (confirmed 2026-09-04),
+     * so some delay here is required. Beyond that, though, this remains
+     * an unresolved, intermittent (~25-40% of boots in repeated 15-reboot
+     * stress tests on 2026-09-05) crash landing inside the LVGL task's
+     * own background redraw timer, immediately after "TF card mounted" -
+     * always self-recovering via the panic handler's own reboot within
+     * about a second, never a hard loop in any test run. Investigated and
+     * ruled out: main_task/LVGL-task stack size, heap corruption
+     * (CONFIG_HEAP_POISONING_COMPREHENSIVE caught nothing), the NVS/LVGL-
+     * task race above, and SD SPI clock speed (400kHz vs. the 20MHz
+     * default made no meaningful difference). Leading remaining theory,
+     * untested: a GDMA channel-sharing interaction between the SD SPI
+     * bus's spi_bus_initialize() (auto-selected DMA channel) and the RGB
+     * panel's own continuous-refresh GDMA channel (esp_lcd_panel_rgb.c) -
+     * investigating that properly needs real driver-level work with no
+     * guaranteed payoff, so as of 2026-09-05 the decision (made
+     * knowingly, not by default) is to accept the self-healing crash
+     * rather than keep chasing it. Revisit if it ever starts hard-looping
+     * instead of recovering, or if you have a concrete new lead. */
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     esp_err_t sd_err = sd_card_init(bsp_get_expander());
     if (sd_err != ESP_OK) {
@@ -198,23 +222,31 @@ void app_main(void)
                  PROVISIONING_SD_DIR);
     }
 
-    /* Config load: prefer a config backup already on the TF card over NVS -
-     * see the provisioning.h comment on provisioning_save_sd() for why
-     * (in short: it survives flashing other/test firmware onto the board
-     * and back). Falls back to NVS, then the setup portal, exactly as
-     * before if there's no card, no backup file, or the backup fails to
-     * load. */
-    bool cfg_from_sd = false;
-    if (sd_err == ESP_OK && provisioning_sd_config_exists()) {
-        if (provisioning_load_sd(&s_cfg) == ESP_OK) {
-            ESP_LOGI(TAG, "loaded config from TF card backup (%s)", PROVISIONING_SD_DIR);
-            cfg_from_sd = true;
-        } else {
-            ESP_LOGW(TAG, "TF card config backup exists but didn't load - falling back to NVS");
-        }
+    /* Config load, part 2: NVS is authoritative whenever it holds a valid
+     * config - it's the only thing the on-device settings dialog and the
+     * LAN config web server (config_web.c) ever write to, so anything
+     * changed there needs to actually take effect on the next boot
+     * instead of being silently reverted. The TF card backup is only a
+     * FALLBACK, consulted when NVS comes back empty/invalid - e.g. after
+     * flashing other/test firmware that wiped or reused NVS - so this
+     * firmware can pick its calendar config back up on its own instead of
+     * re-running the setup portal. (Earlier, this had it backwards -
+     * preferring the TF card unconditionally - which meant
+     * fetch_past_days/fetch_future_days and other config_web.c-only
+     * settings appeared to stop saving: they saved to NVS fine, but the
+     * next boot loaded the TF card's now-stale snapshot over them. Fixed
+     * 2026-09-05.) provisioning_load_sd() reads a FATFS file, not NVS, so
+     * unlike provisioning_load() above it doesn't need to run before the
+     * LVGL task exists - it was never implicated in the cache-disable
+     * race either way. */
+    if (!have_cfg && sd_err == ESP_OK && provisioning_sd_config_exists() &&
+        provisioning_load_sd(&s_cfg) == ESP_OK) {
+        ESP_LOGI(TAG, "NVS config missing/invalid - loaded from TF card backup (%s)",
+                 PROVISIONING_SD_DIR);
+        have_cfg = true;
     }
 
-    if (!cfg_from_sd && provisioning_load(&s_cfg) != ESP_OK) {
+    if (!have_cfg) {
         ESP_LOGW(TAG, "no valid configuration in flash - starting setup portal "
                       "(connect to Wi-Fi \"%s\" and browse to 192.168.4.1)",
                  PROVISIONING_AP_SSID);
@@ -236,11 +268,6 @@ void app_main(void)
 
     setenv("TZ", s_cfg.posix_tz[0] ? s_cfg.posix_tz : "UTC0", 1);
     tzset();
-
-    /* Same settling delay as the one before sd_card_init() above, on the
-     * other side of it, before the first real LVGL redraw fires below -
-     * see that comment for why. */
-    vTaskDelay(pdMS_TO_TICKS(300));
 
     event_store_init();
     calendar_ui_init(&s_cfg);
