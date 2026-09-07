@@ -217,7 +217,13 @@ void ui_month_populate(lv_obj_t *root, time_t cursor)
                 hidden++;
                 continue;
             }
-            bool is_past = events[e].end <= now;
+            /* Past if either this whole event has ended, or - for a
+             * multi-day event still in progress - this specific day cell
+             * is before today, even though the event as a whole hasn't
+             * ended yet (e.g. a 5-day trip: days 1-2 should read as
+             * already happened once day 3 arrives, not stay full-colour
+             * until the whole trip is over on day 5). */
+            bool is_past = (day < today) || (events[e].end <= now);
             lv_obj_t *bar = lv_obj_create(s_cells[i].events_box);
             lv_obj_remove_style_all(bar);
             lv_obj_set_width(bar, LV_PCT(100));

@@ -273,6 +273,7 @@ void ui_day_populate(lv_obj_t *root, time_t cursor)
     time_t day = ui_start_of_day(cursor);
     time_t now;
     time(&now);
+    time_t today = ui_start_of_day(now);
 
     lv_obj_clean(s_allday_box);
     lv_obj_clean(s_event_col);
@@ -306,7 +307,10 @@ void ui_day_populate(lv_obj_t *root, time_t cursor)
             continue;
         }
         if (events[e].all_day) {
-            bool is_past = events[e].end <= now;
+            /* Past if either this whole event has ended, or - for a
+             * multi-day event still in progress - the day being viewed is
+             * before today, same reasoning as ui_month.c's populate. */
+            bool is_past = (day < today) || (events[e].end <= now);
             lv_obj_t *chip = lv_obj_create(s_allday_box);
             lv_obj_remove_style_all(chip);
             lv_obj_set_height(chip, 22);

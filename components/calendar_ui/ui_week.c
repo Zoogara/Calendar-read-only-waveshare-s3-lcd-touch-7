@@ -346,7 +346,10 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
                 if (allday_shown >= 2) {
                     continue;
                 }
-                bool is_past = events[e].end <= now;
+                /* Past if either this whole event has ended, or - for a
+                 * multi-day event still in progress - this day column is
+                 * before today, same reasoning as ui_month.c's populate. */
+                bool is_past = (day < today) || (events[e].end <= now);
                 lv_obj_t *chip = lv_obj_create(s_day_allday_box[d]);
                 lv_obj_remove_style_all(chip);
                 lv_obj_set_width(chip, LV_PCT(100));
