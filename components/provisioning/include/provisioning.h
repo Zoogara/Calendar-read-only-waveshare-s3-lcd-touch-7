@@ -44,14 +44,21 @@ esp_err_t provisioning_clear(void);
  * by whatever else got flashed, so this file acts as a stable "known
  * good" config to fall back on without re-running the setup portal.
  *
- * This is a one-time backup, not a live mirror: callers write it once,
- * the first time a valid config exists and the file doesn't yet - see
- * provisioning_sd_config_exists(). Later config changes (the on-device
- * settings dialog, the LAN config web server) only update NVS, not this
- * file, so it stays put as a deliberate "known good" snapshot rather than
- * silently drifting (or being overwritten by a bad value) every time
- * something on the device changes a setting. Delete the file on the card
- * manually if you want a fresh snapshot taken.
+ * provisioning_save() (NVS) does NOT also call provisioning_save_sd() -
+ * the card is only mounted in a narrow window early in main.c's boot
+ * sequence (deinited right after, to free its internal-RAM/SPI-bus
+ * footprint for the rest of that boot's uptime), so by the time any real
+ * caller of provisioning_save() runs - the settings dialog, the LAN
+ * config web server, the setup portal, all well after boot - the card is
+ * already unmounted and a write would just fail silently. Confirmed
+ * on-device 2026-09-08 as exactly why an added calendar "disappeared":
+ * the NVS save succeeded, the (then-attempted) SD save didn't, silently.
+ * main.c instead refreshes this file unconditionally on every boot, while
+ * the card is mounted anyway - every existing save path already calls
+ * esp_restart() right after a successful save, so this keeps the two in
+ * sync within seconds of any real change, without mounting the card again
+ * mid-session (see the settling-delay comment in main.c for why that
+ * matters).
  *
  * All of these require the SD card to already be mounted at
  * SD_CARD_MOUNT_POINT (sd_card_init() in components/sd_card) - they
@@ -73,10 +80,9 @@ bool provisioning_sd_config_exists(void);
  * doesn't parse into a valid config - same contract as provisioning_load(). */
 esp_err_t provisioning_load_sd(app_settings_t *out);
 
-/* Writes cfg to the SD card backup file, creating it. Overwrites any
- * existing file - callers that only want a one-time backup should check
- * provisioning_sd_config_exists() first (see the file-level comment
- * above for why this matters). */
+/* Writes cfg to the SD card backup file, creating or overwriting it.
+ * main.c calls this unconditionally on every boot to keep the backup in
+ * sync with NVS - see the file-level comment above for why. */
 esp_err_t provisioning_save_sd(const app_settings_t *cfg);
 
 /* Starts the AP + web form and BLOCKS until the user submits it, then

@@ -195,22 +195,22 @@ esp_err_t provisioning_save(const app_settings_t *cfg)
     nvs_close(h);
     free(str);
 
+    /* Deliberately does NOT also call provisioning_save_sd() here: the TF
+     * card is only mounted in a narrow window early in main.c's boot
+     * sequence (sd_card_deinit() runs right after, to free its internal-
+     * RAM/SPI-bus footprint for the rest of this boot's uptime - see that
+     * comment), so by the time any real caller of this function runs
+     * (the settings dialog, config_web.c, the setup portal - all well
+     * after boot), the card is already unmounted and fopen() would just
+     * fail silently every time. Confirmed on-device 2026-09-08: an added
+     * calendar "disappeared" because this call was failing quietly on
+     * every save. main.c instead refreshes the TF card backup once,
+     * unconditionally, on every boot - since every save path here already
+     * calls esp_restart() right after a successful save, that keeps the
+     * two in sync within seconds of any real change, without mounting the
+     * card again mid-session. */
+
     ESP_LOGI(TAG, "config %s", err == ESP_OK ? "saved" : "save FAILED");
-
-    /* Keep the TF card backup in sync with whatever's now authoritative
-     * in NVS, not just a one-time snapshot - a config change here (the
-     * on-device settings dialog, the LAN config web server, the setup
-     * portal) that never made it to the card would mean the card's
-     * fallback copy goes stale and could hand back an outdated config
-     * the next time NVS needs recovering from it. Best-effort: no card
-     * mounted (or no gcal/ dir/file there yet) just means this quietly
-     * does nothing rather than failing the NVS save that already
-     * succeeded above - provisioning_save_sd() itself no-ops safely via
-     * fopen() failing when there's no /sdcard. */
-    if (err == ESP_OK && provisioning_save_sd(cfg) != ESP_OK) {
-        ESP_LOGW(TAG, "TF card config backup not updated (no card mounted, or write failed)");
-    }
-
     return err;
 }
 

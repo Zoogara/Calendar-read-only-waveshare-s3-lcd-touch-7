@@ -344,13 +344,18 @@ its own, without re-running the setup portal.
 
 - **NVS is always authoritative when it holds a valid config.** The card
   is only consulted as a fallback, when NVS comes back empty or invalid.
-  Whichever settings dialog you use to change something (the on-device
-  gear icon, the LAN config web page, the first-boot setup portal) writes
-  to NVS *and* to this backup file together, so the two stay in sync —
-  this used to be a one-time snapshot instead, which meant a later
-  settings change wasn't reflected in the backup and could hand back a
-  stale config if NVS ever needed recovering from it (confirmed and fixed
-  on-device).
+- **The backup refreshes once per boot, not live.** The SD card is only
+  mounted in a narrow window early in boot (freed again right after, to
+  keep its internal-RAM/SPI-bus footprint off calendar refresh's already
+  tight budget — see "TF/SD card" above), so a settings change made
+  mid-session can't write straight to it — every settings dialog (the
+  on-device gear icon, the LAN config page, the first-boot setup portal)
+  already restarts the device right after saving, though, so the backup
+  is refreshed within seconds of any real change regardless, on the boot
+  that follows. (This used to attempt writing the backup at save time
+  directly, which silently failed once the SD-deinit optimization above
+  landed — confirmed on-device as exactly why an added calendar
+  "disappeared": the NVS save worked, the SD save didn't, silently.)
 - No event cache, no logging — this is the card's only use so far.
 - Nothing in the app reads or writes anywhere else on `/sdcard` — mounting
   and unmounting are wired up so a future feature can reuse the same
