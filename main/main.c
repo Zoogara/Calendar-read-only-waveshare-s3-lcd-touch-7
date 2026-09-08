@@ -276,6 +276,21 @@ void app_main(void)
         ESP_LOGI(TAG, "NVS config missing/invalid - loaded from TF card backup (%s)",
                  PROVISIONING_SD_DIR);
         have_cfg = true;
+
+        /* Heal NVS from the recovered config, not just this boot's
+         * in-memory s_cfg - without this, NVS stayed invalid forever
+         * (every future boot would keep falling back to the card instead
+         * of NVS becoming authoritative again), which is fragile: if the
+         * card were ever removed or failed a mount after this point,
+         * the device would incorrectly fall through to the setup portal
+         * despite having had a perfectly good config a boot ago.
+         * provisioning_save() only touches NVS (see its own comment for
+         * why it no longer also writes the card), so this can't interfere
+         * with the boot-time SD-backup refresh below either way. */
+        if (provisioning_save(&s_cfg) != ESP_OK) {
+            ESP_LOGW(TAG, "could not restore NVS from the TF card backup - "
+                          "will keep falling back to the card each boot until this succeeds");
+        }
     }
 
     if (!have_cfg) {
@@ -286,15 +301,23 @@ void app_main(void)
         provisioning_run_portal(); /* reboots once the form is submitted; never returns */
     }
 
-    /* One-time backup to the TF card - see provisioning_save_sd()'s doc
-     * comment for why this only ever writes once (skipped once the backup
-     * file exists). Naturally covers both "just provisioned for the first
-     * time" (NVS has it, the card doesn't yet - the portal above reboots
-     * before we'd get here, so this runs on the boot right after) and "a
-     * card was inserted/replaced on a device that was already
-     * configured". */
-    if (sd_err == ESP_OK && !provisioning_sd_config_exists() &&
-        provisioning_save_sd(&s_cfg) != ESP_OK) {
+    /* Refresh the TF card backup on every boot, not just once when the
+     * file was missing. provisioning_save() itself can no longer do this
+     * at the moment a setting actually changes - the card is deinited
+     * below and stays that way for the rest of this boot's uptime (SD is
+     * only ever mounted in this narrow boot-time window), so
+     * provisioning_save_sd() would just fail silently the next time the
+     * on-device dialog or the LAN config page saved something,
+     * confirmed on-device 2026-09-08 as exactly why an added calendar
+     * "disappeared": it never made it past NVS. Every existing save path
+     * (the setup portal, the settings dialog, config_web.c) already calls
+     * esp_restart() right after provisioning_save() succeeds, so
+     * reconciling here - once per boot, while the card is mounted anyway
+     * - keeps the two in sync within seconds of any real change, with no
+     * extra runtime SD-mount risk (see the settling-delay comment above
+     * for why that risk is worth minimizing) beyond the one already
+     * accepted at this exact point in boot. */
+    if (sd_err == ESP_OK && provisioning_save_sd(&s_cfg) != ESP_OK) {
         ESP_LOGW(TAG, "failed to write TF card config backup");
     }
 
