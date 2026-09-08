@@ -58,6 +58,24 @@ static inline uint32_t ui_lighten(uint32_t rgb888)
     return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
 }
 
+/* The night/dim counterpart to ui_lighten() - blends a colour toward
+ * black instead of white, by `pct` percent (0 = unchanged, 100 = pure
+ * black). Used by the ambient clock (ui_clock.c) to mute calendar
+ * colours at night and dim them further once presence has been away for
+ * a while - both against that screen's black background, so darkening
+ * (not lightening, which would wash out against black) is what actually
+ * reads as "dimmer" there. */
+static inline uint32_t ui_darken(uint32_t rgb888, uint8_t pct)
+{
+    uint8_t r = (uint8_t)((rgb888 >> 16) & 0xFF);
+    uint8_t g = (uint8_t)((rgb888 >> 8) & 0xFF);
+    uint8_t b = (uint8_t)(rgb888 & 0xFF);
+    r = (uint8_t)(r - r * pct / 100);
+    g = (uint8_t)(g - g * pct / 100);
+    b = (uint8_t)(b - b * pct / 100);
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+}
+
 #ifdef __cplusplus
 }
 #endif

@@ -40,6 +40,7 @@
 #include "wifi_sta.h"
 #include "board_bsp.h"
 #include "sd_card.h"
+#include "presence_sensor.h"
 #include "calendar_ui.h"
 #include "gcal_client.h"
 #include "event_store.h"
@@ -202,6 +203,12 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+
+    /* Independent of display/Wi-Fi/config, so started as early as
+     * possible. ui_screensaver.c's own idle timer polls
+     * presence_sensor_is_detected() directly once it's up; nothing else
+     * needs a dedicated task for this. */
+    presence_sensor_init();
 
     /* Load config from NVS before anything else - specifically, before
      * bsp_display_init() below creates the LVGL task, whose stack
