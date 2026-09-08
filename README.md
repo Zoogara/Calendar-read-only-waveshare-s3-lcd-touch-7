@@ -20,17 +20,29 @@ findings from that hardware bring-up (several are called out inline as
 but are still worth knowing about if you hit them on a different board
 revision or IDF version.
 
-The one known, still-open issue: an intermittent crash right after the SD
-card mounts at boot, landing in LVGL's own background redraw task -
-self-recovers via the panic handler's own automatic reboot within about a
-second, on roughly a quarter to two-fifths of boots in repeated testing. It
-has never once failed to recover in testing (never a hard loop), and root
-cause hasn't been pinned down after a real investigation (stack size, heap
-corruption, an NVS-vs-LVGL-task race, and SD SPI clock speed were all ruled
-out) - see the comment above the settling-delay `vTaskDelay()` in
-`main/main.c`'s `app_main()` for the full writeup and the leading remaining
-theory (a GDMA channel-sharing interaction between the SD SPI bus and the
-RGB panel's own continuous-refresh DMA).
+Two known, still-open issues, both low-severity and both traced (as far as
+they've been root-caused) to this panel's own timing-sensitive dual-buffer
+RGB DMA output rather than to app-level logic:
+
+- An intermittent crash right after the SD card mounts at boot, landing in
+  LVGL's own background redraw task - self-recovers via the panic
+  handler's own automatic reboot within about a second, on roughly a
+  quarter to two-fifths of boots in repeated testing. It has never once
+  failed to recover in testing (never a hard loop), and root cause hasn't
+  been pinned down after a real investigation (stack size, heap
+  corruption, an NVS-vs-LVGL-task race, and SD SPI clock speed were all
+  ruled out) - see the comment above the settling-delay `vTaskDelay()` in
+  `main/main.c`'s `app_main()` for the full writeup and the leading
+  remaining theory (a GDMA channel-sharing interaction between the SD SPI
+  bus and the RGB panel's own continuous-refresh DMA).
+- The ambient clock's once-a-minute digit change (see "Idle screensaver"
+  below) occasionally shows a single frame of visible tearing before
+  settling on the correct new time. Several different fixes were tried,
+  including directly mirroring the two physical framebuffers - see the
+  comment above `ui_clock_create()` in `ui_clock.c` for the fuller
+  writeup, including the one attempted fix (framebuffer mirroring) that
+  made things actively worse and was reverted. It's rare, brief, and
+  never leaves the wrong time on screen - just not perfectly clean.
 
 ## What it does
 
@@ -45,13 +57,25 @@ RGB panel's own continuous-refresh DMA).
 - **Up next**: a scrollable list of upcoming events across all visible
   calendars, soonest first.
 - Auto-refreshes from Google on a timer (default every 5 minutes).
-- **Idle screensaver**: after a configurable idle timeout the backlight
-  turns off and a slowly-regenerating noise pattern replaces the calendar
-  (anti-image-retention, not just a blank screen) until the next touch. If
-  the screen's been asleep 15+ minutes, waking it resets to Month view on
-  today's date rather than resuming whatever view/date was showing before
-  - the idea being that whatever day or week you were looking at before
-  walking away is unlikely to still be what you want to see later.
+- **Idle screensaver**: three states, driven by the idle timer and the
+  presence sensor (see "Presence sensor" below). After a configurable idle
+  timeout, the calendar gives way to a big ambient clock - "HH:MM" with
+  each digit tinted using the same colours as your own calendars, vivid
+  during daylight hours and muted at night (no separate setting for this -
+  it reuses the same view_start_hour/view_end_hour that bound the Day/Week
+  views) - but only if someone's actually in front of the presence sensor
+  at that moment; if not, the display goes straight to sleep instead
+  (below). If the clock's showing and presence is then continuously absent
+  for 5 minutes, it goes to sleep too. Sleep means the backlight actually
+  turns off and a slowly-regenerating noise pattern (anti-image-retention,
+  not just a blank screen) replaces whatever was showing - presence
+  returning wakes it back to the ambient clock, never straight to the
+  calendar. Only an actual touch brings the calendar back, from any state.
+  If the display's been away from the calendar 15+ minutes by the time
+  that touch happens, it resets to Month view on today's date rather than
+  resuming whatever view/date was showing before - the idea being that
+  whatever day or week you were looking at before walking away is unlikely
+  to still be what you want to see later.
 
 ## Hardware
 
@@ -76,11 +100,16 @@ components/
   gcal/                    Google service-account auth (JWT) + Calendar API
                            client + in-RAM event store
   calendar_ui/             the four LVGL screens (month/week/day/up-next)
-                           plus the nav rail / top bar / legend shell
+                           plus the nav rail / top bar / legend shell, the
+                           idle-timeout ambient clock, and the settings
+                           dialog
   sd_card/                 mounts the TF card slot as FAT at /sdcard, if one
                            is inserted (see "TF/SD card" below); used for a
                            config backup that survives reflashing other
                            firmware onto the board
+  presence_sensor/         reads the GPIO6 presence sensor (see "Presence
+                           sensor" below); drives the ambient clock's
+                           brighten/dim behaviour
 ```
 
 ## Building
@@ -361,21 +390,41 @@ its own, without re-running the setup portal.
   and unmounting are wired up so a future feature can reuse the same
   pin/CS wiring without having to re-derive it.
 
+## Presence sensor
+
+An active-high presence/PIR sensor is wired to `GPIO6` (high = someone's
+there, low = clear). `presence_sensor_init()` (`components/presence_sensor/`)
+configures it as an input with the **internal pull-down enabled** - on
+real hardware this line floats and reads intermittent false "detected"
+spikes without it, confirmed by extended monitoring during bring-up. It's
+polled (not interrupt-driven) once a second, from the same timer that
+drives the ambient clock (see "Idle screensaver" above), which is
+plenty of granularity for a presence-driven dim/brighten decision.
+
+No sensor connected reads as a permanent "clear" (GPIO6 pulled low), which
+just means the display always settles into full sleep after the usual
+delays (see "Idle screensaver" above) - harmless, just not useful.
+
 ## Customizing
 
 - **Refresh interval / fetch window**: `main/main.c` (`FETCH_PAST_DAYS`,
   `FETCH_FUTURE_DAYS`) and the "Refresh interval" field in the setup
   portal.
-- **Week/Day hour range**: `HOUR_START`/`HOUR_END` at the top of
-  `ui_week.c` / `ui_day.c` (default 6am-10pm).
+- **Week/Day hour range**: `view_start_hour`/`view_end_hour` in the setup
+  portal or settings dialog (default 6am-10pm). The same two hours also
+  decide the ambient clock's day/night colour boundary (see "Idle
+  screensaver" above) - there's no separate setting for that.
 - **Week starts Monday**: `ui_start_of_week()` in `ui_time.c` — flip to
   Sunday-based by changing the `mon_offset` calculation if you'd rather
   match the US convention.
 - **Colours/theme**: `components/calendar_ui/include/ui_theme.h`.
 - **Screen timeout / idle screensaver**: `screen_timeout_s` in the setup
-  portal or settings dialog (0 disables it). How long asleep before waking
-  resets to today/Month instead of resuming the prior view:
-  `LONG_SLEEP_RESET_MS` in `ui_screensaver.c` (default 15 minutes).
+  portal or settings dialog (0 disables it). How long away from the
+  calendar (ambient clock and/or sleep, combined) before a touch resets to
+  today/Month instead of resuming the prior view: `LONG_SLEEP_RESET_MS` in
+  `ui_screensaver.c` (default 15 minutes). How long the ambient clock
+  shows before giving up on presence and going to sleep (backlight off):
+  `PRESENCE_AWAY_SLEEP_MS` in `ui_screensaver.c` (default 5 minutes).
 
 ## Bonus: adding Google Tasks to a calendar feed, without OAuth
 

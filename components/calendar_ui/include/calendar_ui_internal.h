@@ -32,6 +32,10 @@ typedef enum {
 extern const lv_font_t gcal_font_14;
 extern const lv_font_t gcal_font_20;
 
+/* Digits + colon only, at a size meant to be read from across a room -
+ * see gcal_font_clock.c's header comment. Used only by ui_clock.c. */
+extern const lv_font_t gcal_font_clock;
+
 /* --- shared context (implemented in calendar_ui.c) --- */
 app_settings_t *ui_get_cfg(void);
 bool ui_calendar_enabled(uint8_t calendar_index);
@@ -77,6 +81,22 @@ void ui_upnext_release(void);
 
 /* --- screensaver (implemented in ui_screensaver.c) --- */
 void ui_screensaver_init(void);
+
+/* --- ambient clock (implemented in ui_clock.c) - shown by ui_screensaver.c
+ * in place of the calendar once it's gone idle, while presence is still
+ * detected --- */
+/* Creates the (initially hidden) full-screen clock overlay on `parent`
+ * (ui_screensaver.c passes lv_layer_top()). Call once, from
+ * ui_screensaver_init(). */
+lv_obj_t *ui_clock_create(lv_obj_t *parent);
+/* Re-renders the clock for "now" - current time and day/night colour
+ * choice (from ui_get_cfg()'s view_start_hour/view_end_hour). Call every
+ * ~1s while the clock is the thing being shown - it's cheap to call when
+ * nothing's actually changed (see its own comment) so there's no need to
+ * gate calls to this on the caller's side. Presence is not this
+ * function's concern: ui_screensaver.c decides when to show the clock at
+ * all based on presence, this just renders it while it's showing. */
+void ui_clock_update(void);
 
 /* --- display settings dialog (implemented in ui_settings_dialog.c) --- */
 void ui_settings_dialog_show(void);
