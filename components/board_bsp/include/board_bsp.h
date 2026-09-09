@@ -19,6 +19,7 @@
 #include "esp_err.h"
 #include "lvgl.h"
 #include "ch422g.h"
+#include "driver/i2c_master.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,8 +35,40 @@ extern "C" {
  */
 esp_err_t bsp_display_init(void);
 
-/* Turns the backlight on/off (it starts on at the end of bsp_display_init). */
+/* Turns the backlight on/off (it starts on at the end of bsp_display_init).
+ * A thin wrapper over bsp_display_set_brightness(on ? 100 : 0). */
 esp_err_t bsp_display_backlight(bool on);
+
+/* Sets backlight brightness as a whole percentage (0-100, clamped) - a
+ * thin wrapper over bsp_display_set_brightness_permille(percent * 10) for
+ * callers that don't need finer-than-1% control (bsp_display_backlight()'s
+ * plain on/off, mainly). See that function's own comment for the
+ * mechanism (CH422G gate vs LEDC PWM duty) - it's identical here, just at
+ * coarser granularity. */
+esp_err_t bsp_display_set_brightness(uint8_t percent);
+
+/* Sets backlight brightness in tenths of a percent (0-1000, clamped, i.e.
+ * 0.0%-100.0% in 0.1% steps). Finer than bsp_display_set_brightness()'s
+ * whole-percent parameter can express - needed because the ambient
+ * auto-dimming floor (app_settings_t's brightness_min_pct_x10) is
+ * confirmed on real hardware to need adjustment within a fairly narrow
+ * "dark zone" where a single whole percent is already a meaningful chunk
+ * of the usable range, so ui_screensaver.c's ambient_brightness_tick()
+ * uses this instead of the whole-percent version.
+ *
+ * 0 fully powers the backlight down via the CH422G's enable gate (EXIO2)
+ * rather than just driving the PWM duty to 0 - the test point this drives
+ * (GPIO16, via LEDC PWM) is a *dimming* input to the backlight boost
+ * driver, not an independent supply, so it only has any effect while that
+ * gate is also on; leaving the gate on at 0 duty would still draw
+ * quiescent current for no visible benefit. Turning the backlight back on
+ * from fully off re-enables the gate and waits briefly for the boost
+ * driver to reach regulation before applying a duty, so calls after the
+ * first one at a given power state are cheap (a single LEDC register
+ * write, no I2C). See ch422g.h for the EXIO pin map and board_bsp.c's
+ * lcd_reset_pulse()/touch reset for the same settle-delay pattern
+ * elsewhere on this board. */
+esp_err_t bsp_display_set_brightness_permille(uint16_t permille);
 
 /* Must be held for any lv_* call made outside of LVGL's own task/timer
  * context. Re-entrant-safe is NOT assumed - don't nest. */
@@ -49,6 +82,14 @@ void bsp_lvgl_unlock(void);
  * refuses to add a second device at an address already on the bus).
  * Valid only after bsp_display_init() has returned ESP_OK. */
 ch422g_handle_t bsp_get_expander(void);
+
+/* Returns the I2C bus handle bsp_display_init() created (shared by the
+ * CH422G expander and GT911 touch controller). Other drivers that need
+ * the same bus - currently just light_sensor, for the BH1750 ambient
+ * light sensor - reuse this handle instead of calling
+ * i2c_new_master_bus() a second time on the same SDA/SCL pins. Valid
+ * only after bsp_display_init() has returned ESP_OK. */
+i2c_master_bus_handle_t bsp_get_i2c_bus(void);
 
 #ifdef __cplusplus
 }

@@ -7,6 +7,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_touch_gt911.h"
 #include "driver/i2c_master.h"
+#include "driver/ledc.h"
 #include "esp_lvgl_port.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -50,12 +51,42 @@ static const int s_lcd_data_gpios[16] = {
 #define LCD_DE_GPIO    5
 #define LCD_PCLK_GPIO  7
 
+/* ---- Backlight dimming ----
+ * The CH422G's EXIO2 (CH422G_EXIO_LCD_BL) only gates power to the
+ * backlight boost driver on/off - confirmed on real hardware that a
+ * separate test point on the driver is a genuine PWM *dimming* input,
+ * unconnected to any ESP32-S3 pin from the factory. GPIO16 is free (not
+ * used anywhere else in s_lcd_data_gpios/the touch or SD wiring above),
+ * so it's wired to that test point to drive dimming via LEDC, with the
+ * CH422G gate left in place exactly as the board ships (no need to
+ * isolate/cut anything) and still used for a hard, zero-current off. */
+#define BACKLIGHT_PWM_GPIO     16
+#define BACKLIGHT_LEDC_MODE    LEDC_LOW_SPEED_MODE /* ESP32-S3 LEDC has no high-speed mode */
+#define BACKLIGHT_LEDC_TIMER   LEDC_TIMER_0
+#define BACKLIGHT_LEDC_CHANNEL LEDC_CHANNEL_0
+/* 1220Hz + 14-bit (0-16383 duty steps) rather than the original 5kHz +
+ * 10-bit: matches ESPHome's own LEDC output platform recommendation for
+ * LED/backlight dimming specifically (their default is 1kHz, but they
+ * recommend ~1220Hz because that's the frequency where the ESP32
+ * family's LEDC timer can hit its own maximum duty resolution against an
+ * 80MHz APB clock - 14 bits on S2/S3/C3, SOC_LEDC_TIMER_BIT_WIDTH -
+ * rather than the timer needing to trade resolution away to hit a
+ * higher frequency). Still well above visible flicker and low enough not
+ * to fight the boost driver's own switching, same reasoning as the
+ * original 5kHz choice - the actual motivation for the change is the 16x
+ * finer duty steps (16384 vs 1024) it buys at the low end, where this
+ * board's measured hard cutoff (see brightness_min_pct_x10's comment in
+ * app_settings.h) leaves very little room to work with at 10-bit. */
+#define BACKLIGHT_LEDC_RES     LEDC_TIMER_14_BIT
+#define BACKLIGHT_LEDC_FREQ_HZ 1220
+
 static i2c_master_bus_handle_t s_i2c_bus;
 static ch422g_handle_t s_expander;
 static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_touch_handle_t s_touch;
 static lv_disp_t *s_disp;
 static lv_indev_t *s_indev;
+static bool s_bl_powered; /* current state of the CH422G backlight-enable gate */
 
 static esp_err_t i2c_bus_init(void)
 {
@@ -136,6 +167,41 @@ static esp_err_t lcd_panel_init(void)
     }
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
+    return ESP_OK;
+}
+
+static esp_err_t backlight_pwm_init(void)
+{
+    ledc_timer_config_t timer_cfg = {
+        .speed_mode = BACKLIGHT_LEDC_MODE,
+        .duty_resolution = BACKLIGHT_LEDC_RES,
+        .timer_num = BACKLIGHT_LEDC_TIMER,
+        .freq_hz = BACKLIGHT_LEDC_FREQ_HZ,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+    esp_err_t err = ledc_timer_config(&timer_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "backlight LEDC timer config failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ledc_channel_config_t ch_cfg = {
+        .gpio_num = BACKLIGHT_PWM_GPIO,
+        .speed_mode = BACKLIGHT_LEDC_MODE,
+        .channel = BACKLIGHT_LEDC_CHANNEL,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = BACKLIGHT_LEDC_TIMER,
+        .duty = 0,
+        .hpoint = 0,
+    };
+    err = ledc_channel_config(&ch_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "backlight LEDC channel config failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "backlight PWM ready (GPIO%d, %dHz, %d-bit)",
+             BACKLIGHT_PWM_GPIO, BACKLIGHT_LEDC_FREQ_HZ, BACKLIGHT_LEDC_RES);
     return ESP_OK;
 }
 
@@ -305,14 +371,64 @@ esp_err_t bsp_display_init(void)
     ESP_ERROR_CHECK(lcd_panel_init());
     ESP_ERROR_CHECK(touch_init());
     ESP_ERROR_CHECK(lvgl_init());
+    ESP_ERROR_CHECK(backlight_pwm_init());
     ESP_ERROR_CHECK(bsp_display_backlight(true));
     ESP_LOGI(TAG, "display + touch + LVGL ready (%dx%d)", LCD_H_RES, LCD_V_RES);
     return ESP_OK;
 }
 
+esp_err_t bsp_display_set_brightness_permille(uint16_t permille)
+{
+    if (permille > 1000) {
+        permille = 1000;
+    }
+
+    if (permille == 0) {
+        /* Duty to 0 before cutting power, not after - avoids a brief
+         * window where the gate is live but the PWM channel is still
+         * mid-cycle from whatever duty was last set. */
+        ledc_set_duty(BACKLIGHT_LEDC_MODE, BACKLIGHT_LEDC_CHANNEL, 0);
+        ledc_update_duty(BACKLIGHT_LEDC_MODE, BACKLIGHT_LEDC_CHANNEL);
+        esp_err_t err = ch422g_set_level(s_expander, CH422G_EXIO_LCD_BL, false);
+        if (err == ESP_OK) {
+            s_bl_powered = false;
+        }
+        return err;
+    }
+
+    if (!s_bl_powered) {
+        esp_err_t err = ch422g_set_level(s_expander, CH422G_EXIO_LCD_BL, true);
+        if (err != ESP_OK) {
+            return err;
+        }
+        s_bl_powered = true;
+        /* Let the boost driver reach regulation before also asking it to
+         * track a PWM duty - same settle-delay idea as lcd_reset_pulse()/
+         * touch_init()'s reset pulses above, just much shorter since
+         * there's no reset line involved, only power settling. */
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    uint32_t max_duty = (1u << BACKLIGHT_LEDC_RES) - 1;
+    uint32_t duty = (max_duty * permille) / 1000;
+    esp_err_t err = ledc_set_duty(BACKLIGHT_LEDC_MODE, BACKLIGHT_LEDC_CHANNEL, duty);
+    if (err == ESP_OK) {
+        err = ledc_update_duty(BACKLIGHT_LEDC_MODE, BACKLIGHT_LEDC_CHANNEL);
+    }
+    return err;
+}
+
+esp_err_t bsp_display_set_brightness(uint8_t percent)
+{
+    if (percent > 100) {
+        percent = 100;
+    }
+    return bsp_display_set_brightness_permille((uint16_t)percent * 10);
+}
+
 esp_err_t bsp_display_backlight(bool on)
 {
-    return ch422g_set_level(s_expander, CH422G_EXIO_LCD_BL, on);
+    return bsp_display_set_brightness(on ? 100 : 0);
 }
 
 bool bsp_lvgl_lock(uint32_t timeout_ms)
@@ -328,4 +444,9 @@ void bsp_lvgl_unlock(void)
 ch422g_handle_t bsp_get_expander(void)
 {
     return s_expander;
+}
+
+i2c_master_bus_handle_t bsp_get_i2c_bus(void)
+{
+    return s_i2c_bus;
 }

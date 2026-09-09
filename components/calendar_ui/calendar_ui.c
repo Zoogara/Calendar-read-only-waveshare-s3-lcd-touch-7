@@ -594,6 +594,40 @@ void calendar_ui_init(app_settings_t *cfg)
     s_cfg = cfg;
     s_cursor = ui_start_of_day(time(NULL));
 
+    /* Holds the LVGL lock for this entire initial build, not just the
+     * later per-call updates that already take it (calendar_ui_refresh()
+     * etc., below) - board_bsp.c's lvgl_init() (called before this, from
+     * bsp_display_init()) has already started esp_lvgl_port's own
+     * background task, which independently calls lv_timer_handler() on a
+     * loop from the moment it's created, including LVGL's own periodic
+     * layout/redraw pass over whatever object tree exists at that
+     * instant. Without this lock, that concurrently-running task and
+     * this function - running unlocked, from app_main()'s own task,
+     * building the ENTIRE UI (nav rail, top bar, legend, all four views,
+     * the clock overlay) - could race: LVGL's own task walking a
+     * half-built object whose children or style list isn't linked up
+     * yet. Confirmed (2026-09-09) as the real cause of a recurring
+     * LoadProhibited crash inside LVGL's layout pass at boot - a
+     * different leaf function each time, matching exactly whichever
+     * object happened to be mid-construction at the moment the race
+     * hit. Heap poisoning (briefly enabled to chase this) never caught a
+     * heap-corruption event before it, and it kept recurring even after
+     * fixing a real, separate LVGL foot-gun in ui_settings_dialog.c
+     * (synchronous lv_obj_del() from inside an object's own descendant's
+     * click handler) - both pointed away from corruption/stale-pointer
+     * theories and toward this unsynchronized-construction race instead,
+     * since this always happened well before any dialog could even have
+     * been touched. bsp_lvgl_lock() IS esp_lvgl_port's own mutex
+     * (lvgl_port_lock() - see board_bsp.c), and the port task's own
+     * lv_timer_handler() call already takes it non-blockingly
+     * (lvgl_port_lock(0)) each cycle, so holding it here for the whole
+     * build just makes that task skip a few cycles and retry - no
+     * deadlock risk. */
+    if (!bsp_lvgl_lock(5000)) {
+        ESP_LOGE(TAG, "could not get LVGL lock for initial UI build - giving up");
+        return;
+    }
+
     s_screen = lv_scr_act();
     lv_obj_set_style_bg_color(s_screen, ui_color(UI_COLOR_BG), 0);
     lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
@@ -612,6 +646,7 @@ void calendar_ui_init(app_settings_t *cfg)
     select_view(UI_VIEW_MONTH);
     s_boot_forced_redraw_ok = true;
     ui_screensaver_init();
+    bsp_lvgl_unlock();
     ESP_LOGI(TAG, "UI ready");
 }
 

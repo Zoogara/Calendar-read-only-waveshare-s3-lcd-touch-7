@@ -124,21 +124,42 @@ static void force_full_redraw(void)
     lv_refr_now(NULL);
 }
 
-static void pw_confirm(void)
+/* Deletes s_pw_dialog and forces the double-refresh that clears it, but
+ * deferred via lv_async_call() rather than run synchronously - both
+ * pw_confirm() and pw_dismiss() below are called directly from a button
+ * that's a CHILD of s_pw_dialog's own click handler, and deleting an
+ * object from inside its own descendant's event callback is a well-known
+ * LVGL foot-gun (LVGL's docs: use lv_obj_del_async(), not lv_obj_del(),
+ * for exactly this case - the input-device/event-dispatch machinery can
+ * still reference the object after the callback returns, even though the
+ * callback itself finishes fine). Confirmed as the likely cause of a
+ * recurring, hard-to-pin-down LoadProhibited crash inside LVGL's own
+ * periodic layout pass, always some time after a dialog had been closed
+ * this way - a dangling reference planted here, dereferenced much later
+ * by unrelated LVGL bookkeeping. lv_async_call() (what lv_obj_del_async()
+ * itself is built on) bundles the delete AND the redraw into one deferred
+ * unit instead of just the delete, so the existing "force a redraw right
+ * after deleting" behaviour is preserved exactly, just pushed to just
+ * after the current event finishes unwinding instead of mid-event. */
+static void pw_dialog_close_deferred(void *user_data)
 {
-    strncpy(s_pending_password, lv_textarea_get_text(s_pw_textarea), sizeof(s_pending_password) - 1);
-    s_pending_password_set = true;
-    update_pw_status_label();
+    (void)user_data;
     lv_obj_del(s_pw_dialog);
     s_pw_dialog = NULL;
     force_full_redraw();
 }
 
+static void pw_confirm(void)
+{
+    strncpy(s_pending_password, lv_textarea_get_text(s_pw_textarea), sizeof(s_pending_password) - 1);
+    s_pending_password_set = true;
+    update_pw_status_label();
+    lv_async_call(pw_dialog_close_deferred, NULL);
+}
+
 static void pw_dismiss(void)
 {
-    lv_obj_del(s_pw_dialog);
-    s_pw_dialog = NULL;
-    force_full_redraw();
+    lv_async_call(pw_dialog_close_deferred, NULL);
 }
 
 /* READY fires when the keyboard's own checkmark/enter key is tapped,
@@ -260,12 +281,22 @@ static void settings_save_task(void *arg)
     esp_restart();
 }
 
-static void cancel_cb(lv_event_t *e)
+/* Deferred for the same reason as pw_dialog_close_deferred() above -
+ * cancel_cb()/save_cb() are themselves called directly from a button
+ * that's a child of s_panel, so deleting s_panel synchronously from
+ * inside its own descendant's click handler is the same LVGL foot-gun. */
+static void settings_panel_close_deferred(void *user_data)
 {
-    (void)e;
+    (void)user_data;
     lv_obj_del(s_panel);
     s_panel = NULL;
     force_full_redraw();
+}
+
+static void cancel_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_async_call(settings_panel_close_deferred, NULL);
 }
 
 static void save_cb(lv_event_t *e)
@@ -281,9 +312,7 @@ static void save_cb(lv_event_t *e)
         strncpy(cfg->config_web_password, s_pending_password, sizeof(cfg->config_web_password) - 1);
     }
 
-    lv_obj_del(s_panel);
-    s_panel = NULL;
-    force_full_redraw();
+    lv_async_call(settings_panel_close_deferred, NULL);
 
     xTaskCreate(settings_save_task, "settings_save", 4096, NULL, 5, NULL);
 }

@@ -91,6 +91,35 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
 # --- Log level ---
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
+# --- Heap poisoning ---
+# Was briefly turned on (2026-09-09, COMPREHENSIVE) to chase a recurring
+# Guru Meditation LoadProhibited crash inside LVGL's own periodic layout
+# pass (_lv_disp_refr_timer -> layout_update_core -> various property
+# getters - a different leaf function each time, always the same
+# recursive-layout call shape). It never caught a heap-corruption event
+# before either of two further crashes while it was on - a genuinely
+# useful negative result, since COMPREHENSIVE fully verifies the heap's
+# integrity on every malloc/free/realloc and would have aborted
+# immediately, with a precise stack trace, if this were an out-of-bounds
+# write or heap-metadata corruption. That pointed at a *clean*
+# use-after-free instead (a stale pointer to a validly lv_obj_del()'d
+# object, not a corrupted one) - found and fixed in
+# ui_settings_dialog.c (see its lv_async_call() comments): several
+# dialogs were being lv_obj_del()'d synchronously from inside their own
+# child button's click handler, a known LVGL foot-gun.
+#
+# Turned back off once that fix was in: COMPREHENSIVE's own overhead
+# (canary bytes + bookkeeping on every single allocation) was eating
+# into this board's already-tight internal-RAM budget enough to start
+# failing TLS certificate verification on calendar sync ("PK verify
+# failed", internal RAM ~40KB free - see CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN's
+# own comment above for the ~45-55KB threshold that's already been
+# fought to stay above once before). Re-enable
+# (CONFIG_HEAP_POISONING_COMPREHENSIVE=y, then `idf.py fullclean`) only if
+# a similar heap-corruption-shaped crash shows up again and needs the
+# same treatment - not something to leave on or ship.
+CONFIG_HEAP_POISONING_DISABLED=y
+
 # --- FATFS (TF card, see components/sd_card) ---
 # Long filename support: without it, FATFS enforces strict 8.3 short
 # names (max 3-char extension), which silently fails to create a file

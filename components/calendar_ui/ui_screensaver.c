@@ -7,9 +7,11 @@
  *     the user's own calendar colours and dimmed for night hours (see
  *     ui_clock.c) - but only entered if presence is detected at that
  *     moment (and the clock feature is currently enabled - see
- *     s_clock_feature_enabled below). The backlight stays on the whole
- *     time; this board has no PWM dimming, so the clock's own colour
- *     choice against a black background is the only "dim" this state has.
+ *     s_clock_feature_enabled below). The backlight brightness itself is
+ *     driven independently by ambient_brightness_tick() below, off a
+ *     BH1750 lux sensor - this state's own "dim" is the clock's colour
+ *     choice against a black background, layered on top of whatever the
+ *     backlight is currently doing.
  *   - DISPLAY_SLEEP: the backlight goes off and a slowly-regenerating
  *     noise pattern (anti-image-retention, not just a blank screen)
  *     replaces whatever was showing - entered either straight from
@@ -24,7 +26,9 @@
 #include "calendar_ui.h"
 #include "board_bsp.h"
 #include "presence_sensor.h"
+#include "light_sensor.h"
 
+#include <math.h>
 #include "esp_random.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -71,6 +75,20 @@ static uint32_t s_presence_away_since_ms = 0; /* 0 while present; set the instan
                                                   presence is first found absent
                                                   while DISPLAY_AMBIENT */
 static EventGroupHandle_t s_wake_event;
+
+/* Ambient light -> backlight brightness (see ambient_brightness_tick()
+ * below). s_last_applied_permille starts at 1000 (100.0%) - a safe,
+ * visible default before the sensor has produced a reading, and matches
+ * "normal room light should already read as full" for the very first
+ * tick or two of a cold boot. In tenths of a percent (0-1000), not whole
+ * percent, matching bsp_display_set_brightness_permille() and
+ * app_settings_t's brightness_min_pct_x10 - see that field's own comment
+ * for why whole-percent granularity isn't fine enough at the dim end. */
+#define LUX_EMA_ALPHA 0.3f /* smoothing factor, 0..1 - higher tracks faster */
+static bool s_light_sensor_ok;
+static float s_lux_ema = -1.0f;      /* negative = not yet seeded */
+static uint16_t s_last_applied_permille = 1000;
+static uint32_t s_diag_ticks_left = 300; /* ~5 min of every-tick logging after boot */
 
 /* Runtime-only on/off switch for DISPLAY_AMBIENT, toggled from the
  * eye-icon button in calendar_ui.c's top bar - deliberately NOT part of
@@ -138,7 +156,10 @@ static void go_ambient(void)
         calendar_ui_release_active_view();
     } else { /* prev == DISPLAY_SLEEP */
         lv_obj_add_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
-        bsp_display_backlight(true);
+        /* Wake at whatever ambient_brightness_tick() last computed, not a
+         * hardcoded 100% - avoids a bright flash before the next tick
+         * (at most 1s away) dims it back down in a dark room. */
+        bsp_display_set_brightness_permille(s_last_applied_permille);
     }
     s_presence_away_since_ms = 0;
     lv_obj_clear_flag(s_clock, LV_OBJ_FLAG_HIDDEN);
@@ -188,11 +209,229 @@ static void go_calendar(void)
         lv_obj_add_flag(s_clock, LV_OBJ_FLAG_HIDDEN);
     } else if (prev == DISPLAY_SLEEP) {
         lv_obj_add_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
-        bsp_display_backlight(true);
+        /* See the matching comment in go_ambient() above. */
+        bsp_display_set_brightness_permille(s_last_applied_permille);
     }
     full_double_refresh();
     ESP_LOGI(TAG, "touch detected - showing calendar");
     xEventGroupSetBits(s_wake_event, WAKE_BIT);
+}
+
+/* Below this many lux, the backlight sits at exactly min_permille - both
+ * to give the BH1750's own dark-end jitter (see below) somewhere flat to
+ * land, and as the curve's own zero-point (see compute_brightness_permille):
+ * it's no longer a separate clamp bolted onto the curve, the curve is
+ * defined relative to this threshold, so the two are mathematically
+ * guaranteed to meet with no seam. Confirmed on real hardware
+ * (2026-09-09): a BH1750 sitting in a genuinely dark/covered spot doesn't
+ * read a steady 0 - it jitters across a few raw counts (0, 1, 2...) from
+ * ordinary photodiode/quantisation noise near the sensor's floor, and
+ * because the whole auto-dim floor now lives in a deliberately narrow
+ * 0.1%-10% "dark zone" (see brightness_min_pct_x10), even that small
+ * amount of lux jitter was enough to visibly hunt the backlight up and
+ * down. Flattening anything at or below this threshold absorbs that noise
+ * instead of chasing it. */
+#define LUX_DARK_FLOOR 2.0f
+
+/* How many lux above LUX_DARK_FLOOR it takes for the curve to get up to
+ * speed - softens the very start of the ramp so the BH1750's own ~1 lux
+ * measurement resolution doesn't itself read as a visible brightness
+ * step right where a jump is most noticeable (just above full dark).
+ * A plain log(1+x) curve (what this used before 2026-09-09) has its
+ * steepest slope exactly at x=0, so the single lux count separating
+ * "just above the dark floor" from "one measurement step further" was
+ * swinging output by a large fraction of the whole range in one hop -
+ * on top of, and separate from, the seam bug LUX_DARK_FLOOR's own
+ * comment above describes. Dividing by (and adding) this constant inside
+ * the log spreads that initial slope out over several lux instead of
+ * one, without moving either endpoint: the curve below is still exactly
+ * min_permille at lux == LUX_DARK_FLOOR and exactly 1000 (100%) at
+ * lux == brightness_max_lux, whatever this is set to. Purely an internal
+ * shaping constant - the two settings-page sliders already define the
+ * curve's endpoints (the floor % and the lux for 100%); this only
+ * affects how briskly it gets from one to the other, which isn't
+ * something that needs its own control. */
+#define LUX_CURVE_SOFTEN 5.0f
+
+/* Minimum permille change worth actually writing to the LEDC duty
+ * register - a true hysteresis band, not just "skip identical values"
+ * (which the log-curve's own rounding already made unlikely to matter
+ * anyway). Added alongside LUX_DARK_FLOOR above for the same real-
+ * hardware hunting complaint: even with the EMA smoothing raw lux, the
+ * *computed* permille can still tick up/down by a step or two near a
+ * boundary as the smoothed value drifts fractionally either side of it.
+ * A older version of this comment reasoned there was no need for a
+ * deadband since a bare LEDC duty write is cheap (no I2C, no hardware
+ * wear) - true, but that only covers the electrical cost, not the
+ * visible one: a duty change too small to serve any purpose still reads
+ * as a flicker at the panel. 3 permille (0.3%) is small enough to stay
+ * invisible as a *skipped* step but large enough to swallow the observed
+ * hunting. */
+#define BRIGHTNESS_DEADBAND_PERMILLE 3
+
+/* Largest permille change applied to the backlight in a single tick -
+ * anything beyond this ramps toward the target over several ticks
+ * instead of jumping there in one. Confirmed on real hardware
+ * (2026-09-09) that a big lighting change (covering/uncovering the
+ * sensor, a room light switching on) otherwise snapped the backlight
+ * straight to its new target within the same 1-second tick the sensor
+ * noticed it in - correct, but visually abrupt, more like a light switch
+ * than a fade. 150 permille (15%) means a full floor-to-ceiling swing
+ * takes roughly 6 ticks (~6 seconds) to settle, while smaller day-to-day
+ * adjustments (most of them well under 150 permille) still apply in a
+ * single tick same as before - only genuinely large jumps get spread
+ * out. Purely a rate limit on top of BRIGHTNESS_DEADBAND_PERMILLE above,
+ * not a replacement for it: the deadband still decides whether to move
+ * at all, this only caps how far in one go once it does. */
+#define BRIGHTNESS_RAMP_STEP_PERMILLE 150
+
+/* Ambient light -> backlight brightness. Runs every tick this timer
+ * fires except during DISPLAY_SLEEP (where the backlight is deliberately
+ * off regardless of ambient light) - piggybacks on the same 1-second
+ * cadence already used for presence polling/state transitions below
+ * rather than a dedicated task. Smoothed via a simple exponential moving
+ * average so a hand/shadow briefly crossing the sensor - or its own
+ * read-to-read jitter - doesn't visibly flicker the screen, then mapped
+ * through a log curve (see compute_brightness_permille) rather than
+ * linearly.
+ *
+ * Works in tenths of a percent (permille, 0-1000) throughout rather than
+ * whole percent - confirmed on real hardware that the floor
+ * (brightness_min_pct_x10) needs to be adjustable within quite a narrow
+ * "dark zone", where a single whole percent is already a big step, so
+ * whole-percent granularity couldn't represent it usefully. */
+static uint16_t compute_brightness_permille(float lux)
+{
+    const app_settings_t *cfg = ui_get_cfg();
+    /* brightness_min_pct_x10's raw value IS already the permille figure,
+     * not something to further multiply by 10 - it's stored in tenths of
+     * a percent (V means V/10 percent), and permille is percent*10, so
+     * permille = (V/10)*10 = V. An earlier version of this line multiplied
+     * by 10 again, silently delivering a floor 10x brighter than the
+     * slider displayed (e.g. a displayed "0.1%" floor was actually driving
+     * the backlight at 1.0%) - caught only once real hardware testing
+     * showed the visible floor didn't match the number on the settings
+     * page. */
+    uint16_t min_permille = cfg->brightness_min_pct_x10
+                                 ? cfg->brightness_min_pct_x10
+                                 : APP_SETTINGS_DEFAULT_BRIGHTNESS_MIN_PCT_X10;
+    uint16_t max_lux = cfg->brightness_max_lux ? cfg->brightness_max_lux
+                                                : APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX;
+
+    /* Everything below is measured relative to the dark floor, not raw
+     * lux - the previous version ran the log curve on raw lux and only
+     * clamped to min_permille below LUX_DARK_FLOOR as a bolted-on separate
+     * step, so the curve's own value AT lux == LUX_DARK_FLOOR (2.0 lux by
+     * default -> already ~22% of the full range with the old formula) was
+     * nowhere near min_permille. Crossing that threshold in either
+     * direction snapped the backlight between the floor and ~22%+ of full
+     * range in a single 1-second tick - the "cliff" seen on real hardware.
+     * Measuring from the floor instead makes compute_brightness_permille()
+     * mathematically equal to min_permille right at lux == LUX_DARK_FLOOR,
+     * so the flat region above and the curve below meet with no seam. */
+    float lux_above_floor = lux - LUX_DARK_FLOOR;
+    if (lux_above_floor <= 0.0f) {
+        return min_permille;
+    }
+
+    float range_above_floor = (float)max_lux - LUX_DARK_FLOOR;
+    if (range_above_floor < 1.0f) {
+        range_above_floor = 1.0f; /* guard divide-by-zero if brightness_max_lux
+                                      is ever configured at/below the dark floor */
+    }
+
+    /* log1p-style ramp, but with LUX_CURVE_SOFTEN folded in (see that
+     * constant's own comment for why a bare log(1+x) isn't gentle enough
+     * right at the bottom). t=0 at lux_above_floor=0 (i.e. lux ==
+     * LUX_DARK_FLOOR) and t=1 at lux_above_floor == range_above_floor
+     * (i.e. lux == brightness_max_lux), so the curve's own endpoints line
+     * up exactly with the flat floor below and the 100% ceiling above,
+     * with nothing left to reconcile between them. */
+    float t = logf(1.0f + lux_above_floor / LUX_CURVE_SOFTEN) /
+              logf(1.0f + range_above_floor / LUX_CURVE_SOFTEN);
+    if (t < 0.0f) {
+        t = 0.0f;
+    } else if (t > 1.0f) {
+        t = 1.0f;
+    }
+    return (uint16_t)(min_permille + t * (float)(1000 - min_permille) + 0.5f);
+}
+
+static void ambient_brightness_tick(void)
+{
+    if (!s_light_sensor_ok) {
+        return;
+    }
+
+    float lux;
+    if (light_sensor_read_lux(&lux) != ESP_OK) {
+        return;
+    }
+
+    if (s_lux_ema < 0.0f) {
+        s_lux_ema = lux; /* seed on the first successful reading instead of
+                             easing up from 0 over several seconds */
+    } else {
+        s_lux_ema = LUX_EMA_ALPHA * lux + (1.0f - LUX_EMA_ALPHA) * s_lux_ema;
+    }
+
+    /* target_permille is where the curve says the backlight should end up
+     * for the current light level; permille (what actually gets applied
+     * this tick) only moves part way there, capped at
+     * BRIGHTNESS_RAMP_STEP_PERMILLE - see that constant's own comment.
+     * Since this function re-runs every tick, a target that's still far
+     * off keeps pulling permille another step closer each time, so the
+     * backlight fades smoothly toward wherever the light level currently
+     * calls for rather than snapping there in one hop. */
+    uint16_t target_permille = compute_brightness_permille(s_lux_ema);
+    int32_t delta = (int32_t)target_permille - (int32_t)s_last_applied_permille;
+    bool changed = (delta >= BRIGHTNESS_DEADBAND_PERMILLE || -delta >= BRIGHTNESS_DEADBAND_PERMILLE);
+    if (changed) {
+        int32_t step = delta;
+        if (step > BRIGHTNESS_RAMP_STEP_PERMILLE) {
+            step = BRIGHTNESS_RAMP_STEP_PERMILLE;
+        } else if (step < -BRIGHTNESS_RAMP_STEP_PERMILLE) {
+            step = -BRIGHTNESS_RAMP_STEP_PERMILLE;
+        }
+        uint16_t permille = (uint16_t)((int32_t)s_last_applied_permille + step);
+        bsp_display_set_brightness_permille(permille);
+        s_last_applied_permille = permille;
+    }
+
+    /* First-run visibility: log every reading for a while after boot so
+     * the actual sensor response and chosen brightness can be watched
+     * (and config_web.c's sliders tuned) against real numbers, then drop
+     * back to logging only on an actual change - same "log on change"
+     * pattern presence_sensor.c already uses. Also piggybacks internal-RAM
+     * free/largest-block onto this same line (rather than a separate log
+     * source) while chasing a real crash seen 2026-09-09: a Wi-Fi PHY
+     * calibration ESP_ERROR_CHECK(ESP_ERR_NO_MEM) abort a few seconds into
+     * boot, in phy_track_pll_init() off the power-save wake path - internal
+     * DRAM exhaustion, not a light_sensor/backlight bug as such, but this
+     * is the fastest way to see whether adding light_sensor's I2C device +
+     * the new LEDC channel is what tipped an already-marginal internal-RAM
+     * budget (see the pre-existing TEMPORARY diag block below, tracking a
+     * separate unexplained internal-RAM drop) over the edge. Remove once
+     * that's confirmed either way. */
+    if (s_diag_ticks_left > 0) {
+        s_diag_ticks_left--;
+        ESP_LOGI(TAG, "[brightness] raw=%.0f lux smoothed=%.0f lux -> target %.1f%% "
+                      "applied %.1f%% (min=%.1f%% max_lux=%u) [diag] internal: %u free / %u largest block",
+                 lux, s_lux_ema, target_permille / 10.0f, s_last_applied_permille / 10.0f,
+                 (ui_get_cfg()->brightness_min_pct_x10
+                      ? ui_get_cfg()->brightness_min_pct_x10
+                      : APP_SETTINGS_DEFAULT_BRIGHTNESS_MIN_PCT_X10) / 10.0f,
+                 ui_get_cfg()->brightness_max_lux,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    } else if (changed) {
+        /* target and applied differing here (rather than logging just one
+         * number) is the normal, expected look of a multi-tick ramp in
+         * progress, not a bug - see BRIGHTNESS_RAMP_STEP_PERMILLE's own
+         * comment. */
+        ESP_LOGI(TAG, "[brightness] smoothed=%.0f lux -> target %.1f%% applied %.1f%%",
+                 s_lux_ema, target_permille / 10.0f, s_last_applied_permille / 10.0f);
+    }
 }
 
 /* TEMPORARY - tracking down an internal-RAM drop between refresh cycles
@@ -216,6 +455,10 @@ static void check_timer_cb(lv_timer_t *timer)
      * back to the calendar from either DISPLAY_AMBIENT or DISPLAY_SLEEP. */
     bool touched = idle_ms < s_prev_idle_ms;
     bool presence = presence_sensor_is_detected();
+
+    if (s_state != DISPLAY_SLEEP) {
+        ambient_brightness_tick();
+    }
 
     switch (s_state) {
     case DISPLAY_CALENDAR:
@@ -264,6 +507,22 @@ static void check_timer_cb(lv_timer_t *timer)
 void ui_screensaver_init(void)
 {
     s_idle_timeout_ms = ui_get_cfg()->screen_timeout_s * 1000U;
+
+    s_light_sensor_ok = (light_sensor_init(bsp_get_i2c_bus()) == ESP_OK);
+    if (!s_light_sensor_ok) {
+        ESP_LOGW(TAG, "no ambient light sensor - backlight brightness will stay "
+                      "wherever it's already set (see light_sensor.c for the error)");
+    }
+    /* Baseline for the same [diag] internal free/largest numbers logged
+     * every tick in ambient_brightness_tick() below - this one's from
+     * before Wi-Fi's own init/connect/power-save cycle has touched
+     * anything, so the two together show whether internal RAM was already
+     * thin at this point or only got that way once Wi-Fi (net_task, spawned
+     * right after calendar_ui_init() returns) started up. See that
+     * function's comment for why this is being watched right now. */
+    ESP_LOGI(TAG, "[diag] internal RAM at ui_screensaver_init(): %u free / %u largest block",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
     s_wake_event = xEventGroupCreate();
 
