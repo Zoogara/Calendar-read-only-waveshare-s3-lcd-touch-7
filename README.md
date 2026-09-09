@@ -20,10 +20,12 @@ findings from that hardware bring-up (several are called out inline as
 but are still worth knowing about if you hit them on a different board
 revision or IDF version.
 
-Known, still-open issues (two others - the ambient clock's once-a-minute
-digit change occasionally tearing, and a boot-time hang/crash inside
-`update_title()` - were root-caused and fixed; see "Ambient clock digit
-tearing (fixed)" and "update_title() boot-time crash (fixed)" below):
+Known, still-open issues (three others - the ambient clock's once-a-minute
+digit change occasionally tearing, a boot-time hang/crash inside
+`update_title()`, and a recurring `LoadProhibited` panic inside LVGL's
+layout pass - were root-caused and fixed; see "Ambient clock digit
+tearing (fixed)", "update_title() boot-time crash (fixed)", and
+"Unsynchronized LVGL construction at boot (fixed)" below):
 
 - An intermittent crash right after the SD card mounts at boot, landing in
   LVGL's own background redraw task - self-recovers via the panic
@@ -36,15 +38,6 @@ tearing (fixed)" and "update_title() boot-time crash (fixed)" below):
   `main/main.c`'s `app_main()` for the full writeup and the leading
   remaining theory (a GDMA channel-sharing interaction between the SD SPI
   bus and the RGB panel's own continuous-refresh DMA).
-- A one-off `LoadProhibited` panic seen during interactive testing
-  (2026-09-09), decoding to LVGL's own `layout_update_core()` →
-  `lv_obj_get_child_cnt()` - i.e. it faulted walking the object tree
-  during a routine layout pass, which points at heap corruption or a
-  stale/freed object pointer somewhere rather than any single obviously
-  wrong call site. Self-recovered via the panic handler's automatic
-  reboot, same as the SD-card crash above. Seen exactly once so far, not
-  yet reproduced or root-caused - flagging it here rather than chasing it
-  further until it's shown up enough times to have a pattern to go on.
 
 ### update_title() boot-time crash (fixed)
 
@@ -78,6 +71,71 @@ second buffer to catch up on, and the next regular LVGL timer tick paints
 the very first frame correctly on its own. Every other caller of
 `update_title()` runs after that flag flips, so this only changes behaviour
 during the exact narrow window that was actually unsafe.
+
+### Unsynchronized LVGL construction at boot (fixed)
+
+A recurring `Guru Meditation Error: Core 0 panic'ed (LoadProhibited)`,
+always inside LVGL's own periodic redraw pass (`_lv_disp_refr_timer` →
+`layout_update_core`, recursing several levels deep into the object tree)
+but always in a *different* leaf function - `lv_obj_get_child_cnt()`,
+`get_prop_core()` (a style property read), `lv_obj_get_scroll_bottom()`,
+`lv_obj_scrollbar_invalidate()` - with no single obviously-wrong call site
+in common between occurrences. First seen once, then recurring more often
+(three times in one short burst) during 2026-09-09's testing.
+
+Two theories were tested and ruled out before finding the real cause,
+each still worth keeping in mind for anything similar in the future:
+
+- **Heap corruption** (an out-of-bounds write or heap-metadata corruption
+  making the object tree's own memory garbage) - ruled out by briefly
+  enabling `CONFIG_HEAP_POISONING_COMPREHENSIVE`, which wraps every heap
+  block in canary bytes and fully verifies heap integrity on every
+  malloc/free/realloc. It never caught a corruption event before two
+  further crashes while it was on - a genuinely useful negative result,
+  since a real overflow or metadata corruption would have aborted
+  immediately with a precise stack trace pointing at the actual bad
+  write. (Heap poisoning has real overhead - enough, on this board's
+  already-tight internal-RAM budget, to break TLS certificate
+  verification on calendar sync. Not something to leave on; re-enable
+  only to chase something similarly corruption-shaped, then turn it back
+  off.)
+- **A stale pointer to a validly-freed object** - `ui_settings_dialog.c`
+  turned out to have a real, separate bug matching this shape exactly:
+  four places (`pw_confirm()`, `pw_dismiss()`, `cancel_cb()`, `save_cb()`)
+  called `lv_obj_del()` on a dialog *synchronously, from inside a click
+  handler on that dialog's own child button* - a well-known LVGL
+  foot-gun (their own docs: use `lv_obj_del_async()`, not `lv_obj_del()`,
+  for exactly this case, since LVGL's input-device/event-dispatch
+  machinery can still reference the object after the callback returns).
+  Fixed by deferring each delete-and-redraw sequence through
+  `lv_async_call()` instead. A real bug worth having fixed regardless,
+  but *not* this crash's actual cause - it kept recurring even after this
+  fix, including on fresh boots where no dialog had ever been touched.
+
+The real cause: `calendar_ui_init()` builds the **entire** UI - nav rail,
+top bar, legend, all four views, the ambient clock overlay - running in
+`app_main()`'s own task, with no `bsp_lvgl_lock()` held at all. By the
+time it runs, `board_bsp.c`'s `lvgl_init()` (called earlier, from
+`bsp_display_init()`) has already started `esp_lvgl_port`'s background
+task, which independently calls `lv_timer_handler()` on its own loop from
+the moment it's created - including LVGL's own periodic layout/redraw
+pass over whatever object tree exists at that instant. Two unsynchronized
+tasks touching the same object tree is a textbook LVGL thread-safety
+violation: LVGL's own task could walk into an object mid-construction,
+its children or style list not yet linked up, and read garbage - which
+exactly explains the symptom (a different leaf function each time,
+whichever object happened to be mid-construction when the race hit) and
+its rarity/inconsistency across boots (purely a timing race).
+
+Fixed by wrapping `calendar_ui_init()`'s entire body in
+`bsp_lvgl_lock()`/`bsp_lvgl_unlock()`. `bsp_lvgl_lock()` is `esp_lvgl_port`'s
+own mutex (`lvgl_port_lock()`), the identical one its background task
+already takes non-blockingly (`lvgl_port_lock(0)`) before each
+`lv_timer_handler()` call - so holding it for the whole init just makes
+that task skip a few cycles and retry, no deadlock risk. Confirmed on real
+hardware: no recurrence since, and boot completes measurably faster too
+(the background task no longer wastes cycles contending on a half-built
+tree).
 
 ### Ambient clock digit tearing (fixed)
 
@@ -139,11 +197,18 @@ upstream, drop `components/esp_lcd/` and go back to the SDK's own copy.
   views) - but only if someone's actually in front of the presence sensor
   at that moment; if not, the display goes straight to sleep instead
   (below). If the clock's showing and presence is then continuously absent
-  for 5 minutes, it goes to sleep too. Sleep means the backlight actually
-  turns off and a slowly-regenerating noise pattern (anti-image-retention,
-  not just a blank screen) replaces whatever was showing - presence
-  returning wakes it back to the ambient clock, never straight to the
-  calendar. Only an actual touch brings the calendar back, from any state.
+  for 5 minutes, it goes to sleep too. Independent of all of that, the
+  backlight's actual physical brightness auto-dims off ambient room light
+  whenever a light sensor is fitted (see "Backlight auto-dimming" below) -
+  it runs continuously in both the calendar and ambient-clock states, so a
+  dark room dims the physical backlight *and* mutes the clock's on-screen
+  colours at the same time, from two independent mechanisms. Sleep means
+  the backlight actually turns fully off (not just dimmed) and a
+  slowly-regenerating noise pattern (anti-image-retention, not just a
+  blank screen) replaces whatever was showing - presence returning wakes
+  it back to the ambient clock, never straight to the calendar, at
+  whatever brightness auto-dimming last computed rather than a flash back
+  to full. Only an actual touch brings the calendar back, from any state.
   If the display's been away from the calendar 15+ minutes by the time
   that touch happens, it resets to Month view on today's date rather than
   resuming whatever view/date was showing before - the idea being that
@@ -166,7 +231,14 @@ Waveshare ESP32-S3-Touch-LCD-7:
 - GT911 capacitive touch (I2C)
 - CH422G I2C IO expander for backlight enable + touch reset
 
-No external wiring needed — this targets the board as sold.
+The board as sold needs no external wiring at all for display/touch/SD.
+Two optional additions — a presence sensor on `GPIO6` (see "Presence
+sensor" below) and ambient-light-driven backlight dimming (a wire to a
+backlight-driver test point, plus an external light sensor - see
+"Backlight auto-dimming" below) — do need it; the firmware degrades
+gracefully without either (no presence sensor: idle timeout always goes
+straight to sleep; no light sensor: the backlight just stays wherever it
+last was, no auto-dimming).
 
 ## Repo layout
 
@@ -174,7 +246,9 @@ No external wiring needed — this targets the board as sold.
 main/                    app_main: boot sequence, wires everything together
 components/
   app_common/            shared app_settings_t config struct (header-only)
-  board_bsp/              display + touch + CH422G + LVGL bring-up
+  board_bsp/              display + touch + CH422G + LVGL bring-up, plus
+                           the backlight's LEDC PWM dimming channel (see
+                           "Backlight auto-dimming" below)
   provisioning/            first-boot Wi-Fi AP + web form, NVS config storage,
                            normal-mode Wi-Fi station connect
   gcal/                    Google service-account auth (JWT) + Calendar API
@@ -190,6 +264,9 @@ components/
   presence_sensor/         reads the GPIO6 presence sensor (see "Presence
                            sensor" below); drives the ambient clock's
                            brighten/dim behaviour
+  light_sensor/           reads a BH1750 ambient light sensor over I2C
+                           (see "Backlight auto-dimming" below); drives
+                           the physical backlight brightness
   esp_lcd/                 vendored + patched copy of ESP-IDF's own
                            esp_lcd component (overrides $IDF_PATH's) -
                            fixes a real bug in the RGB panel driver, see
@@ -489,6 +566,69 @@ No sensor connected reads as a permanent "clear" (GPIO6 pulled low), which
 just means the display always settles into full sleep after the usual
 delays (see "Idle screensaver" above) - harmless, just not useful.
 
+## Backlight auto-dimming
+
+Two physical additions to the board as sold, both optional - without
+either, the firmware just leaves the backlight wherever it last was:
+
+- **A wire from `GPIO16` to a PWM dimming test point** on the backlight
+  boost driver. The CH422G expander's own backlight line
+  (`CH422G_EXIO_LCD_BL`) only ever gates the driver fully on/off from the
+  factory - confirmed on real hardware that a separate test point on the
+  driver board is a genuine PWM *dimming* input, unconnected to any
+  ESP32-S3 pin out of the box. `board_bsp.c` drives that test point via
+  GPIO16 and one of the SoC's LEDC PWM channels; the CH422G gate is left
+  exactly as it ships and still used for a true, zero-current off (see
+  `bsp_display_set_brightness_permille()`'s own comment for the exact
+  power-up/power-down sequencing between the two).
+- **A GY-30/BH1750 ambient light sensor breakout**, wired onto the same
+  shared I2C bus as the CH422G expander and GT911 touch controller
+  (`bsp_get_i2c_bus()`), at its default address `0x23` (`ADDR` pin
+  low/floating, how these modules ship - doesn't collide with anything
+  else already on that bus). `components/light_sensor/` starts it in
+  Continuous High-Resolution Mode and polls it once a second, from the
+  same timer that drives the ambient clock and presence sensor
+  (`ui_screensaver.c`'s `ambient_brightness_tick()`).
+
+The LEDC PWM channel runs at **1220Hz, 14-bit resolution** (16384 duty
+steps) - not an arbitrary choice: this matches
+[ESPHome's own recommendation](https://esphome.io/components/output/ledc.html)
+for LED/backlight dimming specifically, since 1220Hz is where the ESP32
+family's LEDC timer can hit its *maximum* duty resolution (14 bits on
+S2/S3/C3) against an 80MHz APB clock, rather than trading resolution away
+for a higher switching frequency. This isn't just theoretical: an earlier
+5kHz/10-bit configuration measured a real, hard cutoff on this specific
+board's driver at duty 12/1023 (~1.2%) - 11/1023 simply didn't light at
+all - leaving almost no usable dimming range above it ("a bit dimmer,
+then nothing" rather than a smooth fade). Moving to 1220Hz/14-bit fixed
+that outright.
+
+Raw lux is smoothed with an exponential moving average (so a hand or
+shadow briefly crossing the sensor doesn't flicker the screen) and mapped
+to backlight duty through a log curve, not a linear one (perceived
+brightness is roughly logarithmic) - shaped by two settings, both on the
+on-device settings dialog / config web page:
+
+- **Minimum brightness in the dark** (`brightness_min_pct_x10`,
+  10.5%-30.0%, stored internally in tenths of a percent since a whole
+  percent is too coarse a step at this panel's dim end): the floor the
+  backlight settles at in a fully dark room, rather than going to true
+  black. The range itself, like the LEDC frequency/resolution above, was
+  determined by bisecting on real hardware (via a temporary live
+  `/test_brightness?permille=N` endpoint in `config_web.c`, applying a
+  duty directly with no save/restart needed) - the panel's *visually
+  useful* floor turned out to sit noticeably higher than the raw
+  duty-12/1023 driver cutoff mentioned above.
+- **Room brightness where full backlight kicks in**
+  (`brightness_max_lux`, default 150 lux): at or above this ambient
+  level the screen runs at 100%; below it, brightness fades toward the
+  floor above on the log curve.
+
+No sensor connected leaves `light_sensor_init()` failing at boot (logged,
+not fatal) and the backlight simply staying at whatever brightness it was
+last explicitly set to - no auto-dimming, but nothing crashes or hangs
+either.
+
 ## Customizing
 
 - **Refresh interval / fetch window**: `main/main.c` (`FETCH_PAST_DAYS`,
@@ -509,6 +649,17 @@ delays (see "Idle screensaver" above) - harmless, just not useful.
   `ui_screensaver.c` (default 15 minutes). How long the ambient clock
   shows before giving up on presence and going to sleep (backlight off):
   `PRESENCE_AWAY_SLEEP_MS` in `ui_screensaver.c` (default 5 minutes).
+- **Backlight auto-dimming curve**: the dark-room floor and the "full
+  brightness" ambient-light threshold are both settings-page sliders (see
+  "Backlight auto-dimming" above) - `brightness_min_pct_x10` and
+  `brightness_max_lux` in `app_settings.h` for the defaults/valid ranges.
+  How quickly readings smooth out (`LUX_EMA_ALPHA`), how large a change is
+  worth actually writing to the backlight (`BRIGHTNESS_DEADBAND_PERMILLE`),
+  and the flat-floor threshold at the very bottom of the sensor's own
+  range (`LUX_DARK_FLOOR`) are all in `ui_screensaver.c`, not exposed as
+  settings - they shape the curve's responsiveness rather than its
+  endpoints, and haven't needed hardware-specific tuning the way the
+  endpoints themselves did.
 
 ## Bonus: adding Google Tasks to a calendar feed, without OAuth
 

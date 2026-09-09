@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "board_bsp.h"
 
 static const char *TAG = "config_web";
 
@@ -135,6 +136,8 @@ static const char *HTML_HEAD =
     "input[type=text],input[type=number],textarea{width:100%;box-sizing:border-box;"
     "padding:.5em;font-size:1em;margin-top:.2em}"
     "textarea{font-family:monospace;font-size:.8em}"
+    "input[type=range]{width:100%;margin-top:.4em}"
+    ".range-val{color:#666;font-size:.85em}"
     ".cal-row{display:flex;gap:.5em;align-items:center;margin-top:.6em}"
     ".cal-row input[type=text]{flex:1}"
     ".hint{color:#666;font-size:.82em;margin-top:.2em}"
@@ -198,7 +201,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         httpd_resp_sendstr_chunk(req, row);
     }
 
-    char other[2200];
+    char other[3600];
     snprintf(other, sizeof(other),
         "<h2>Other</h2>"
         "<label>Timezone (POSIX TZ string)</label>"
@@ -226,6 +229,33 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<div class='hint'>How far back/forward each sync fetches and keeps "
         "cached - wider covers more paging without a fresh fetch, but costs "
         "more time/memory per sync. Dial back if syncs start struggling.</div>"
+        "<h2>Display brightness (auto-dimming)</h2>"
+        "<div class='hint'>A GY-30/BH1750 ambient light sensor drives the "
+        "backlight automatically - these two sliders shape the curve "
+        "between them. Watch the device log after changing the sensor's "
+        "surroundings to see the raw/smoothed lux and chosen brightness "
+        "%% while tuning.</div>"
+        "<label>Minimum brightness in the dark</label>"
+        "<input type='range' name='brightness_min_pct_x10' min='105' max='300' value='%u' "
+        "oninput=\"this.nextElementSibling.textContent=(this.value/10).toFixed(1)+'%%'\">"
+        "<span class='range-val'>%.1f%%</span>"
+        "<div class='hint'>In tenths of a percent (10.5%%-30.0%%), not whole "
+        "percent. Range confirmed on real hardware (2026-09-09, bisecting via "
+        "a temporary test endpoint) after moving the backlight's LEDC timer "
+        "to 1220Hz/14-bit (see board_bsp.c's BACKLIGHT_LEDC_FREQ_HZ comment) "
+        "- at the original 5kHz/10-bit config this range had a hard driver "
+        "cutoff around 1.2%% with a very short usable dimming band above it; "
+        "the finer duty steps at 1220Hz/14-bit fixed the actual dimming (no "
+        "more \"a bit dimmer, then nothing\"), but the *visually useful* "
+        "range for this driver still starts noticeably higher than that raw "
+        "cutoff.</div>"
+        "<label>Room brightness where full backlight kicks in</label>"
+        "<input type='range' name='brightness_max_lux' min='10' max='1000' step='10' value='%u' "
+        "oninput=\"this.nextElementSibling.textContent=this.value+' lux'\">"
+        "<span class='range-val'>%u lux</span>"
+        "<div class='hint'>At or above this ambient light level the screen runs "
+        "at 100%% brightness; below it, brightness fades toward the floor above. "
+        "Typical indoor room light is roughly 100-300 lux.</div>"
         "<div class='btn-row'>"
         "<button type='submit'>Save &amp; restart</button>"
         "<a class='btn-cancel' href='/'>Cancel</a>"
@@ -233,7 +263,9 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "</form></body></html>",
         s_cfg->posix_tz, (unsigned)s_cfg->refresh_interval_s, s_cfg->ota_url,
         (unsigned)s_cfg->screen_timeout_s, (unsigned)s_cfg->view_start_hour, (unsigned)s_cfg->view_end_hour,
-        (unsigned)s_cfg->fetch_past_days, (unsigned)s_cfg->fetch_future_days);
+        (unsigned)s_cfg->fetch_past_days, (unsigned)s_cfg->fetch_future_days,
+        (unsigned)s_cfg->brightness_min_pct_x10, (double)s_cfg->brightness_min_pct_x10 / 10.0,
+        (unsigned)s_cfg->brightness_max_lux, (unsigned)s_cfg->brightness_max_lux);
     httpd_resp_sendstr_chunk(req, other);
 
     httpd_resp_sendstr_chunk(req, NULL);
@@ -343,6 +375,21 @@ static esp_err_t save_post_handler(httpd_req_t *req)
             s_cfg->fetch_future_days = (uint16_t)v;
         }
     }
+    if (form_get(body, "brightness_min_pct_x10", num, sizeof(num))) {
+        long v = strtol(num, NULL, 10);
+        /* 105-300 (10.5%-30.0%), matching the slider's own bounds - see
+         * its hint text for why the visually-useful range sits well above
+         * this panel's raw driver cutoff, not just barely above it. */
+        if (v >= 105 && v <= 300) {
+            s_cfg->brightness_min_pct_x10 = (uint16_t)v;
+        }
+    }
+    if (form_get(body, "brightness_max_lux", num, sizeof(num))) {
+        long v = strtol(num, NULL, 10);
+        if (v >= 10 && v <= 2000) {
+            s_cfg->brightness_max_lux = (uint16_t)v;
+        }
+    }
 
     app_calendar_cfg_t new_cals[APP_SETTINGS_MAX_CALENDARS];
     memset(new_cals, 0, sizeof(new_cals));
@@ -410,6 +457,65 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* TEMPORARY - a live brightness-sweep tool for finding this board's real
+ * backlight-boost-driver dimming floor, reinstated (2026-09-09) after the
+ * LEDC timer moved from 5kHz/10-bit to 1220Hz/14-bit (see board_bsp.c's
+ * BACKLIGHT_LEDC_FREQ_HZ comment - ESPHome's recommended frequency for
+ * hitting the ESP32 family's max duty resolution) to re-bisect the cutoff
+ * at the new, 16x finer duty granularity. The "minimum brightness"
+ * setting on the main page only applies on save, which restarts the
+ * device - much too slow for this. This applies a duty directly via
+ * bsp_display_set_brightness_permille(), live, with NO save and NO
+ * restart - it doesn't touch s_cfg or NVS at all, so it can't leave any
+ * lasting state behind and is safe to just leave running between tests.
+ * `permille` (0-1000, tenths of a percent) is resolution-independent -
+ * bsp_display_set_brightness_permille() does the actual duty-steps
+ * conversion internally, so this endpoint's interface doesn't need to
+ * change even though the underlying duty range just went from 0-1023 to
+ * 0-16383. Remove this handler (and its /test_brightness registration
+ * below) once brightness_min_pct_x10's real-world floor is known and set
+ * for good at the new resolution - it's a debugging aid, not a
+ * feature. */
+static esp_err_t test_brightness_get_handler(httpd_req_t *req)
+{
+    char query[64] = {0};
+    char val[16] = {0};
+    long permille = -1;
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "permille", val, sizeof(val)) == ESP_OK) {
+        permille = strtol(val, NULL, 10);
+    }
+
+    char body[768];
+    if (permille >= 0 && permille <= 1000) {
+        esp_err_t err = bsp_display_set_brightness_permille((uint16_t)permille);
+        snprintf(body, sizeof(body),
+            "<html><body style='font-family:sans-serif'>"
+            "<p>Set to %ld/1000 (%.1f%%) - %s</p>"
+            "<p><a href='/test_brightness?permille=0'>0 (off)</a> | "
+            "<a href='/test_brightness?permille=1'>1</a> | "
+            "<a href='/test_brightness?permille=5'>5</a> | "
+            "<a href='/test_brightness?permille=10'>10</a> | "
+            "<a href='/test_brightness?permille=15'>15</a> | "
+            "<a href='/test_brightness?permille=20'>20</a> | "
+            "<a href='/test_brightness?permille=50'>50</a> | "
+            "<a href='/test_brightness?permille=100'>100</a> | "
+            "<a href='/test_brightness?permille=1000'>1000 (full)</a></p>"
+            "<form><input type='number' name='permille' min='0' max='1000' "
+            "placeholder='exact value (integer)'><button>Set</button></form>"
+            "<p><a href='/'>Back to settings</a></p></body></html>",
+            permille, (double)permille / 10.0, esp_err_to_name(err));
+    } else {
+        snprintf(body, sizeof(body),
+            "<html><body style='font-family:sans-serif'>"
+            "<p>Pass ?permille=N (0-1000, tenths of a percent).</p>"
+            "<p><a href='/test_brightness?permille=10'>Try 10 (1.0%%)</a></p>"
+            "</body></html>");
+    }
+    httpd_resp_sendstr(req, body);
+    return ESP_OK;
+}
+
 void config_web_start(app_settings_t *cfg)
 {
     if (s_server != NULL) {
@@ -443,6 +549,10 @@ void config_web_start(app_settings_t *cfg)
 
     httpd_uri_t root_uri = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler};
     httpd_uri_t save_uri = {.uri = "/save", .method = HTTP_POST, .handler = save_post_handler};
+    /* TEMPORARY, see test_brightness_get_handler()'s own comment. */
+    httpd_uri_t test_brightness_uri = {.uri = "/test_brightness", .method = HTTP_GET,
+                                        .handler = test_brightness_get_handler};
+    httpd_register_uri_handler(s_server, &test_brightness_uri);
     httpd_register_uri_handler(s_server, &root_uri);
     httpd_register_uri_handler(s_server, &save_uri);
 
