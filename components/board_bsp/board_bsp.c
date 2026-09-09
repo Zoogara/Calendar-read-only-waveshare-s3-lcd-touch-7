@@ -284,7 +284,6 @@ static esp_err_t lvgl_init(void)
                       "disp_cfg (see README troubleshooting)");
         return ESP_FAIL;
     }
-
     const lvgl_port_touch_cfg_t touch_cfg = {
         .disp = s_disp,
         .handle = s_touch,
