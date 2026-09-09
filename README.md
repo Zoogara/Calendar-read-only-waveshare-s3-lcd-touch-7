@@ -20,9 +20,10 @@ findings from that hardware bring-up (several are called out inline as
 but are still worth knowing about if you hit them on a different board
 revision or IDF version.
 
-Two known, still-open issues, both low-severity and both traced (as far as
-they've been root-caused) to this panel's own timing-sensitive dual-buffer
-RGB DMA output rather than to app-level logic:
+Known, still-open issues (two others - the ambient clock's once-a-minute
+digit change occasionally tearing, and a boot-time hang/crash inside
+`update_title()` - were root-caused and fixed; see "Ambient clock digit
+tearing (fixed)" and "update_title() boot-time crash (fixed)" below):
 
 - An intermittent crash right after the SD card mounts at boot, landing in
   LVGL's own background redraw task - self-recovers via the panic
@@ -35,14 +36,86 @@ RGB DMA output rather than to app-level logic:
   `main/main.c`'s `app_main()` for the full writeup and the leading
   remaining theory (a GDMA channel-sharing interaction between the SD SPI
   bus and the RGB panel's own continuous-refresh DMA).
-- The ambient clock's once-a-minute digit change (see "Idle screensaver"
-  below) occasionally shows a single frame of visible tearing before
-  settling on the correct new time. Several different fixes were tried,
-  including directly mirroring the two physical framebuffers - see the
-  comment above `ui_clock_create()` in `ui_clock.c` for the fuller
-  writeup, including the one attempted fix (framebuffer mirroring) that
-  made things actively worse and was reverted. It's rare, brief, and
-  never leaves the wrong time on screen - just not perfectly clean.
+- A one-off `LoadProhibited` panic seen during interactive testing
+  (2026-09-09), decoding to LVGL's own `layout_update_core()` →
+  `lv_obj_get_child_cnt()` - i.e. it faulted walking the object tree
+  during a routine layout pass, which points at heap corruption or a
+  stale/freed object pointer somewhere rather than any single obviously
+  wrong call site. Self-recovered via the panic handler's automatic
+  reboot, same as the SD-card crash above. Seen exactly once so far, not
+  yet reproduced or root-caused - flagging it here rather than chasing it
+  further until it's shown up enough times to have a pattern to go on.
+
+### update_title() boot-time crash (fixed)
+
+`calendar_ui.c`'s `update_title()` calls `lv_refr_now()` twice, synchronously,
+as part of its own dual-framebuffer sync dance (documented in its own
+comment) - and it runs unconditionally on every `select_view()` call,
+including the one at boot, inside `calendar_ui_init()`. That's exactly the
+category of problem `select_view_force_redraw()`'s own doc comment already
+warned about: calling `lv_refr_now()` before LVGL's redraw timer has ticked
+even once wedges LVGL's buffer-sync logic, because nothing's ready yet for
+the synchronous `refr_sync_areas()`/`lv_draw_sw_buffer_copy()` path it
+forces. `select_view_force_redraw()` was deliberately never called that
+early for exactly this reason, but `update_title()` wasn't written with the
+same guard, since it's called from many more places than just view
+switches.
+
+First seen (2026-09-05) as a non-self-recovering watchdog hang - this
+board's task watchdog isn't configured to reset on timeout, so it needed a
+manual reset. Seen again (2026-09-09) as a hard `Guru Meditation Error:
+Cache disabled but cached memory region accessed` panic instead - same root
+cause hit at the same call site, just a different failure mode depending on
+what else was going on at that exact moment (in this case, right at boot,
+likely mid something else in the early-flash-cache-sensitive window).
+
+Fixed by gating `update_title()`'s two `lv_refr_now()` calls behind a new
+`s_boot_forced_redraw_ok` flag, set `true` right after
+`calendar_ui_init()`'s own initial `select_view()` call returns. Before
+that point a plain `lv_obj_invalidate()` (no forced synchronous refresh) is
+enough - nothing's been shown on screen yet at boot, so there's no stale
+second buffer to catch up on, and the next regular LVGL timer tick paints
+the very first frame correctly on its own. Every other caller of
+`update_title()` runs after that flag flips, so this only changes behaviour
+during the exact narrow window that was actually unsafe.
+
+### Ambient clock digit tearing (fixed)
+
+The ambient clock's once-a-minute digit change used to occasionally show a
+single frame of visible tearing before settling on the correct new time.
+Extensive on-device correlation testing (logging which of the RGB panel's
+two physical framebuffers each redraw landed in, then deliberately
+shifting where those buffers land in PSRAM and swapping which one LVGL
+calls "buf1" vs "buf2") showed the tearing tracked one specific physical
+framebuffer slot - `rgb_panel->fbs[0]` - regardless of its PSRAM address
+or which LVGL buffer role currently pointed at it, which ruled out both a
+memory/alignment explanation and an LVGL/`esp_lvgl_port`-level one.
+
+The actual bug: ESP-IDF's own RGB LCD driver
+(`esp_lcd_panel_rgb.c`'s `lcd_rgb_panel_try_restart_transmission()`, gated
+by `CONFIG_LCD_RGB_RESTART_IN_VSYNC`) restarts the GDMA chain via a single
+link hardcoded to `fbs[0]` on every VSYNC, regardless of which buffer was
+actually current - so with two frame buffers, every VSYNC-triggered
+restart silently re-anchored the scan-out back to `fbs[0]`'s stale content
+whenever the most recent redraw had actually landed in the other buffer.
+Simply disabling `CONFIG_LCD_RGB_RESTART_IN_VSYNC` "fixed" the flash but
+traded it for a worse, permanent ~300px horizontal shift (this flag turns
+out to be genuinely needed on this board/timing, guarding against a real
+GDMA-vs-LCD-FIFO desync) - so the real fix is a vendored, patched copy of
+the whole `esp_lcd` component under `components/esp_lcd/` (project-local
+`components/<name>` overrides `$IDF_PATH/components/<name>` of the same
+name - ESP-IDF's own documented mechanism for exactly this), which builds
+one restart link per frame buffer instead of one hardcoded to slot 0 and
+selects among them by `cur_fb_index` at restart time. See that file's own
+header comment for the full patch writeup. `CONFIG_LCD_RGB_RESTART_IN_VSYNC`
+stays enabled with this patch in place - do a clean `idf.py fullclean`
+before rebuilding after pulling this component in fresh, so CMake actually
+picks up the local override instead of a previously-cached SDK path.
+
+Maintenance cost: any future `esp_lcd` fix or security patch from an
+ESP-IDF upgrade needs to be manually re-applied to this vendored copy too
+- it won't pick them up automatically. If Espressif ever fixes this
+upstream, drop `components/esp_lcd/` and go back to the SDK's own copy.
 
 ## What it does
 
@@ -75,7 +148,14 @@ RGB DMA output rather than to app-level logic:
   that touch happens, it resets to Month view on today's date rather than
   resuming whatever view/date was showing before - the idea being that
   whatever day or week you were looking at before walking away is unlikely
-  to still be what you want to see later.
+  to still be what you want to see later. The clock icon in the top bar
+  (left of the settings gear) toggles the ambient clock on/off for the
+  current session only - toggling it off makes idle timeout go straight
+  to the backlight-off sleep state instead, regardless of presence,
+  matching the screensaver's pre-clock behaviour. On/off is shown by
+  dimming the icon rather than swapping its shape, since there's no
+  built-in "disabled clock" glyph to switch to. This is a runtime-only
+  switch, not a saved setting: it's always back on after a reboot.
 
 ## Hardware
 
@@ -110,6 +190,10 @@ components/
   presence_sensor/         reads the GPIO6 presence sensor (see "Presence
                            sensor" below); drives the ambient clock's
                            brighten/dim behaviour
+  esp_lcd/                 vendored + patched copy of ESP-IDF's own
+                           esp_lcd component (overrides $IDF_PATH's) -
+                           fixes a real bug in the RGB panel driver, see
+                           "Ambient clock digit tearing (fixed)" below
 ```
 
 ## Building

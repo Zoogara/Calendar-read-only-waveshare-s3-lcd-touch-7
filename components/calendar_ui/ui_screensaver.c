@@ -6,17 +6,19 @@
  *     calendar after the configured idle timeout, colour-cycled through
  *     the user's own calendar colours and dimmed for night hours (see
  *     ui_clock.c) - but only entered if presence is detected at that
- *     moment. The backlight stays on the whole time; this board has no
- *     PWM dimming, so the clock's own colour choice against a black
- *     background is the only "dim" this state has.
+ *     moment (and the clock feature is currently enabled - see
+ *     s_clock_feature_enabled below). The backlight stays on the whole
+ *     time; this board has no PWM dimming, so the clock's own colour
+ *     choice against a black background is the only "dim" this state has.
  *   - DISPLAY_SLEEP: the backlight goes off and a slowly-regenerating
  *     noise pattern (anti-image-retention, not just a blank screen)
  *     replaces whatever was showing - entered either straight from
  *     DISPLAY_CALENDAR (idle timeout fires with nobody present to see a
- *     clock) or from DISPLAY_AMBIENT (presence has been continuously
- *     absent for PRESENCE_AWAY_SLEEP_MS). Presence returning wakes the
- *     display back to the ambient clock, never straight to the calendar -
- *     only a touch does that, from any state.
+ *     clock, or the clock feature's toggled off) or from DISPLAY_AMBIENT
+ *     (presence has been continuously absent for PRESENCE_AWAY_SLEEP_MS).
+ *     Presence returning wakes the display back to the ambient clock,
+ *     never straight to the calendar - only a touch does that, from any
+ *     state.
  */
 #include "calendar_ui_internal.h"
 #include "calendar_ui.h"
@@ -69,6 +71,28 @@ static uint32_t s_presence_away_since_ms = 0; /* 0 while present; set the instan
                                                   presence is first found absent
                                                   while DISPLAY_AMBIENT */
 static EventGroupHandle_t s_wake_event;
+
+/* Runtime-only on/off switch for DISPLAY_AMBIENT, toggled from the
+ * eye-icon button in calendar_ui.c's top bar - deliberately NOT part of
+ * app_settings_t/NVS: this is a quick "I don't want the clock right now"
+ * toggle, not a persistent preference, so it always starts back at
+ * enabled (true) after a reboot rather than needing a settings-dialog
+ * round trip (and the reboot every settings change already triggers) to
+ * turn back on. When disabled, idle timeout goes straight from
+ * DISPLAY_CALENDAR to DISPLAY_SLEEP regardless of presence - i.e. exactly
+ * the pre-ambient-clock screensaver behaviour. */
+static bool s_clock_feature_enabled = true;
+
+bool ui_screensaver_clock_enabled(void)
+{
+    return s_clock_feature_enabled;
+}
+
+void ui_screensaver_toggle_clock_enabled(void)
+{
+    s_clock_feature_enabled = !s_clock_feature_enabled;
+    ESP_LOGI(TAG, "ambient clock feature %s", s_clock_feature_enabled ? "enabled" : "disabled");
+}
 
 static void regen_snow(void)
 {
@@ -196,7 +220,7 @@ static void check_timer_cb(lv_timer_t *timer)
     switch (s_state) {
     case DISPLAY_CALENDAR:
         if (s_idle_timeout_ms > 0 && idle_ms >= s_idle_timeout_ms) {
-            if (presence) {
+            if (presence && s_clock_feature_enabled) {
                 go_ambient();
             } else {
                 go_sleep();
@@ -225,7 +249,7 @@ static void check_timer_cb(lv_timer_t *timer)
     case DISPLAY_SLEEP:
         if (touched) {
             go_calendar();
-        } else if (presence) {
+        } else if (presence && s_clock_feature_enabled) {
             go_ambient();
         } else if (lv_tick_get() - s_last_regen_ms >= SNOW_REGEN_MS) {
             regen_snow();

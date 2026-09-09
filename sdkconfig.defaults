@@ -24,6 +24,19 @@ CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
 
 # The RGB LCD frame buffers (800x480x2 bytes = ~768KB each) live in PSRAM.
 CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+# CONFIG_LCD_RGB_RESTART_IN_VSYNC: keep this `y`. It's genuinely needed on
+# this board/timing - disabling it was tested on real hardware and traded
+# an occasional flash for a permanent, worsening ~300px horizontal shift
+# (classic GDMA-vs-LCD-FIFO desync drift). The flash itself was a real bug
+# in esp_lcd_panel_rgb.c (this flag's VSYNC restart path always restarted
+# GDMA from a link hardcoded to fbs[0], ignoring which buffer was actually
+# current) - now fixed at the source: see components/esp_lcd/ in this
+# project, a vendored + patched copy of ESP-IDF's own esp_lcd component
+# (project-local components/<name> overrides $IDF_PATH/components/<name>
+# of the same name - ESP-IDF's own documented mechanism for exactly this).
+# Do a clean `idf.py fullclean` before the next build after this component
+# was added, so CMake actually picks up the override instead of the
+# previously-cached SDK path.
 CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
 
 # --- Partition table ---

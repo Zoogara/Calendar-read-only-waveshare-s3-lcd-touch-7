@@ -30,18 +30,33 @@
  * against a fixed black background, held for a while, is exactly the kind
  * of static pattern that risks LC image retention on this panel.
  *
- * Known minor quirk (see README's "Bring-up troubleshooting" for the
- * fuller writeup of this panel's other timing-sensitive issue): on real
- * hardware, the once-a-minute text change occasionally shows a single
- * frame of visible tearing before settling on the correct new time. A
- * few different fixes were tried (forcing an extra redraw at various
- * scopes/frequencies, directly mirroring the two physical framebuffers)
- * - each either didn't help or, in the framebuffer-mirroring case,
- * occasionally reverted a correct frame back to the previous minute,
- * which is worse than an occasional flash. The current code (a plain,
- * de-duplicated lv_label_set_text()/lv_obj_align() plus one scoped
- * double-refresh, see the end of ui_clock_update()) is the best trade-off
- * found: rare, brief, and never wrong - just not perfectly clean. */
+ * Kept deliberately simple: labels are re-set every tick with no manual
+ * redraw calls of their own - this panel's direct_mode dual-framebuffer
+ * synchronization used to need workarounds scattered through whatever
+ * happened to update often, but that turned out to be a genuine bug in
+ * ESP-IDF's RGB LCD driver (fixed at the source - see
+ * components/esp_lcd/rgb/esp_lcd_panel_rgb.c's own header comment), not
+ * something app code ever needed to work around in the first place.
+ *
+ * Three separate label objects, not one recolored string: when the colon
+ * lived inline in the same label/string as the digits, every character
+ * shared one baseline, and gcal_font_clock's colon glyph (Montserrat, like
+ * most fonts, sits a colon around the x-height rather than spanning the
+ * full digit height) read as low and slightly large next to the digits.
+ * Splitting it into its own object turns out to fix both complaints for
+ * free, with no manual size/position styling needed at all: the colon's
+ * generated glyph box is itself only ~76% the height of a digit's (76px
+ * vs 128px at this font size - Montserrat's colon is simply a smaller
+ * shape to begin with), and s_row's flex cross-axis alignment
+ * (LV_FLEX_ALIGN_CENTER) centres each child vertically by *its own* box
+ * height rather than by a shared baseline - so the shorter colon object
+ * lands vertically centred against the taller digit objects automatically.
+ * (An earlier attempt to additionally resize/reposition the colon via
+ * lv_obj_set_style_transform_zoom()/translate_y() made it render as
+ * completely invisible on real hardware for reasons never fully
+ * root-caused - see git history on this file if that's ever worth
+ * revisiting - so it was dropped once the zoom-free layout turned out to
+ * already look right without it.) */
 #include "calendar_ui_internal.h"
 #include "ui_theme.h"
 
@@ -64,7 +79,10 @@ static const int8_t s_jitter[][2] = {
 #define JITTER_PERIOD_MS (10U * 60U * 1000U)
 
 static lv_obj_t *s_cont;
-static lv_obj_t *s_label;
+static lv_obj_t *s_row;
+static lv_obj_t *s_hh_label;
+static lv_obj_t *s_colon_label;
+static lv_obj_t *s_mm_label;
 
 lv_obj_t *ui_clock_create(lv_obj_t *parent)
 {
@@ -82,22 +100,45 @@ lv_obj_t *ui_clock_create(lv_obj_t *parent)
      * on whatever calendar element is underneath. */
     lv_obj_add_flag(s_cont, LV_OBJ_FLAG_CLICKABLE);
 
-    s_label = lv_label_create(s_cont);
-    lv_label_set_recolor(s_label, true);
-    lv_obj_set_style_text_font(s_label, &gcal_font_clock, 0);
-    /* Fixed width, not size-to-content - same reasoning as s_title_label
-     * in calendar_ui.c: gcal_font_clock is proportional (a "1" is
-     * narrower than a "0"), so the rendered "HH:MM" is a slightly
-     * different pixel width every time the minute changes. Under this
-     * panel's direct_mode/avoid_tearing dual-framebuffer setup, an
-     * auto-sized label whose bounding box changes shape leaves stale
-     * pixels behind on whichever framebuffer wasn't just redrawn. A
-     * fixed-size box keeps the invalidated rectangle identical every
-     * time the text changes, regardless of which digits are showing. */
-    lv_obj_set_width(s_label, CLOCK_H_RES - 80);
-    lv_label_set_long_mode(s_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_align(s_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(s_label, LV_ALIGN_CENTER, 0, 0);
+    /* Row container holding "HH", the colon, and "MM" as three separate
+     * objects (see file header comment for why) - a flex row keeps them
+     * laid out side by side and the whole group centred on screen
+     * without having to hand-compute each object's x position as their
+     * individual widths change tick to tick. */
+    s_row = lv_obj_create(s_cont);
+    lv_obj_remove_style_all(s_row);
+    lv_obj_set_size(s_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(s_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(s_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_align(s_row, LV_ALIGN_CENTER, 0, 0);
+
+    s_hh_label = lv_label_create(s_row);
+    lv_label_set_recolor(s_hh_label, true);
+    lv_obj_set_style_text_font(s_hh_label, &gcal_font_clock, 0);
+
+    /* No size styling needed - see file header comment for why the flex
+     * row's own cross-axis centring plus the font's naturally-smaller
+     * colon glyph already produce the intended size/position with zero
+     * extra code (and confirmed on real hardware that a
+     * transform_zoom/translate_y here breaks rendering entirely, so don't
+     * reach for those again without re-testing on hardware). The one
+     * remaining tweak - nudging it up a few pixels from dead-centre,
+     * matched to how the eye actually reads a clock face - is done via
+     * bottom-only padding rather than a transform: growing the label's
+     * own LV_SIZE_CONTENT box downward (asymmetrically) shifts where the
+     * row's centring lands the glyph inside it, which is layout, not a
+     * post-layout visual shift, so it doesn't hit whatever broke the
+     * transform approach. */
+    s_colon_label = lv_label_create(s_row);
+    lv_obj_set_style_text_font(s_colon_label, &gcal_font_clock, 0);
+    lv_obj_set_style_text_color(s_colon_label, ui_color(UI_COLOR_TEXT_MUTED), 0);
+    lv_obj_set_style_pad_bottom(s_colon_label, 10, 0);
+    lv_label_set_text(s_colon_label, ":");
+
+    s_mm_label = lv_label_create(s_row);
+    lv_label_set_recolor(s_mm_label, true);
+    lv_obj_set_style_text_font(s_mm_label, &gcal_font_clock, 0);
 
     return s_cont;
 }
@@ -125,6 +166,24 @@ static uint32_t digit_base_color(int digit_index)
     return enabled_colors[digit_index % enabled_count];
 }
 
+/* Only actually touches `label` - and only when `new_text` differs from
+ * what it already has - the same "de-dupe before touching LVGL"
+ * reasoning that used to matter for framebuffer sync (see file header
+ * comment) and still matters for its own sake: the displayed time only
+ * changes once a minute, and there's no reason to mark three objects
+ * dirty and re-render them every ~1s tick just to set them to the exact
+ * text they already have. `last_buf` is the caller's own persistent
+ * scratch space (a `static char[]` local to each call site). */
+static void set_label_if_changed(lv_obj_t *label, const char *new_text, char *last_buf, size_t last_buf_sz)
+{
+    if (strcmp(new_text, last_buf) == 0) {
+        return;
+    }
+    lv_label_set_text(label, new_text);
+    strncpy(last_buf, new_text, last_buf_sz - 1);
+    last_buf[last_buf_sz - 1] = '\0';
+}
+
 void ui_clock_update(void)
 {
     if (s_cont == NULL) {
@@ -145,65 +204,36 @@ void ui_clock_update(void)
     char mins[4];
     snprintf(mins, sizeof(mins), "%02d", tm_now.tm_min);
 
-    uint32_t colon_color = ui_darken(UI_COLOR_TEXT_MUTED, pct);
-    char buf[128];
-    snprintf(buf, sizeof(buf),
-             "#%06lx %c##%06lx %c#"
-             "#%06lx :#"
-             "#%06lx %c##%06lx %c#",
+    char hh_buf[64];
+    snprintf(hh_buf, sizeof(hh_buf), "#%06lx %c##%06lx %c#",
              (unsigned long)ui_darken(digit_base_color(0), pct), digits[0],
-             (unsigned long)ui_darken(digit_base_color(1), pct), digits[1],
-             (unsigned long)colon_color,
+             (unsigned long)ui_darken(digit_base_color(1), pct), digits[1]);
+    char mm_buf[64];
+    snprintf(mm_buf, sizeof(mm_buf), "#%06lx %c##%06lx %c#",
              (unsigned long)ui_darken(digit_base_color(2), pct), mins[0],
              (unsigned long)ui_darken(digit_base_color(3), pct), mins[1]);
-    /* Only actually touch the label - and force the redraw below - when
-     * its rendered content would change. The displayed time only changes
-     * once a minute (the dim level only twice a day, at the day/night
-     * boundary), but this function is called every ~1s to stay responsive
-     * to the ambient/sleep transition. Calling lv_label_set_text() with
-     * the same string it already has still unconditionally marks the
-     * object dirty, and doing that every tick - instead of only on the
-     * ~1-in-60 ticks where something really changed - was confirmed on
-     * real hardware to be the source of a once-a-second flash this
-     * screen used to have. */
-    static char s_last_buf[128] = {0};
-    bool text_changed = strcmp(buf, s_last_buf) != 0;
-    if (text_changed) {
-        lv_label_set_text(s_label, buf);
-        strncpy(s_last_buf, buf, sizeof(s_last_buf) - 1);
-        s_last_buf[sizeof(s_last_buf) - 1] = '\0';
+
+    static char s_last_hh[64] = {0};
+    static char s_last_mm[64] = {0};
+    set_label_if_changed(s_hh_label, hh_buf, s_last_hh, sizeof(s_last_hh));
+    set_label_if_changed(s_mm_label, mm_buf, s_last_mm, sizeof(s_last_mm));
+
+    /* Plain text colour, not recolor - the colon is always one solid
+     * tone, no per-run colour needed. */
+    static int32_t s_last_colon_color = -1;
+    uint32_t colon_color = ui_darken(UI_COLOR_TEXT_MUTED, pct);
+    if ((int32_t)colon_color != s_last_colon_color) {
+        lv_obj_set_style_text_color(s_colon_label, ui_color(colon_color), 0);
+        s_last_colon_color = (int32_t)colon_color;
     }
 
-    /* Nudge position every ~10 minutes - see file header comment. Same
-     * "only touch it when it actually changes" reasoning as above -
-     * lv_obj_align() forces a layout/invalidate pass every time it's
-     * called, whether or not the position actually moved. */
+    /* Nudge the whole group's position every ~10 minutes - see file
+     * header comment. Applied to s_row (all three objects move together)
+     * rather than any one label. */
     int jitter_idx = (lv_tick_get() / JITTER_PERIOD_MS) % (sizeof(s_jitter) / sizeof(s_jitter[0]));
     static int s_last_jitter_idx = -1;
-    bool jitter_changed = jitter_idx != s_last_jitter_idx;
-    if (jitter_changed) {
-        lv_obj_align(s_label, LV_ALIGN_CENTER, s_jitter[jitter_idx][0], s_jitter[jitter_idx][1]);
+    if (jitter_idx != s_last_jitter_idx) {
+        lv_obj_align(s_row, LV_ALIGN_CENTER, s_jitter[jitter_idx][0], s_jitter[jitter_idx][1]);
         s_last_jitter_idx = jitter_idx;
-    }
-
-    if (text_changed || jitter_changed) {
-        /* Scoped to just this label, not lv_scr_act() - go_ambient()/
-         * go_calendar()/go_sleep() in ui_screensaver.c do the full-screen
-         * version of this same dance, needed there because those
-         * transitions actually change the whole screen. This one only
-         * needs to keep this label in sync across both of this panel's
-         * ping-ponged framebuffers on the (rare - at most once a minute)
-         * ticks where it actually changed. Confirmed on real hardware
-         * this doesn't eliminate every occasional single-frame flash on a
-         * real change, but it does reliably get the new content on
-         * screen - a direct memcpy between the two framebuffers, tried as
-         * an alternative to a second lv_refr_now() here, turned out to
-         * sometimes copy the wrong direction and revert a just-rendered
-         * frame back to the previous minute, which is worse than an
-         * occasional flash - reverted. */
-        lv_obj_invalidate(s_label);
-        lv_refr_now(NULL);
-        lv_obj_invalidate(s_label);
-        lv_refr_now(NULL);
     }
 }

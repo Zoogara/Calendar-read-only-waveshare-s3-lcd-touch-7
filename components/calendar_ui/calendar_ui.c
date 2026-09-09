@@ -29,6 +29,22 @@ static lv_obj_t *s_nav_btns[4];
 static lv_obj_t *s_view_roots[4];
 static bool s_sync_failed = false;
 
+/* Guards update_title()'s forced lv_refr_now() calls (see its own
+ * comment) against running during calendar_ui_init()'s very first
+ * select_view() - forcing a synchronous refresh before LVGL's own redraw
+ * timer has ticked even once has been confirmed on real hardware to wedge
+ * this panel's dual-framebuffer sync (select_view_force_redraw()'s
+ * comment documents the same finding, from a watchdog-hang; seen again
+ * 2026-09-09 as a hard "cache disabled but cached memory region accessed"
+ * panic instead - same root cause, LVGL's refr_sync_areas()/
+ * lv_draw_sw_buffer_copy() reached mid-boot before anything's ready for
+ * it, just a different failure mode depending on what else was going on
+ * at that exact moment). Set true once, right after calendar_ui_init()'s
+ * initial select_view() returns - every update_title() from then on
+ * (including the handful still inside calendar_ui_init() via
+ * ui_screensaver_init(), if any were ever added) behaves as before. */
+static bool s_boot_forced_redraw_ok = false;
+
 static void render_current_view(void);
 static void update_title(void);
 static void update_legend(void);
@@ -185,6 +201,22 @@ static void settings_menu_cb(lv_event_t *e)
         lv_obj_center(confirm);
         lv_obj_add_event_cb(confirm, ota_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
     }
+}
+
+/* Toggles the ambient clock feature on/off - see ui_screensaver.c's
+ * s_clock_feature_enabled for what this actually changes. Runtime-only
+ * (resets to enabled every boot), so the icon always starts fully opaque
+ * (enabled) - no need to read the current state at build_top_bar() time.
+ * The glyph itself (gcal_font_icon_clock's FontAwesome clock icon)
+ * doesn't change - LVGL has no built-in "clock with a slash through it"
+ * or similar disabled-clock glyph, so on/off is conveyed by dimming the
+ * same icon instead, same idea as a greyed-out toolbar button
+ * elsewhere. */
+static void clock_toggle_btn_cb(lv_event_t *e)
+{
+    ui_screensaver_toggle_clock_enabled();
+    lv_obj_t *icon = lv_event_get_target(e);
+    lv_obj_set_style_text_opa(icon, ui_screensaver_clock_enabled() ? LV_OPA_COVER : LV_OPA_40, 0);
 }
 
 static void settings_btn_cb(lv_event_t *e)
@@ -348,6 +380,22 @@ static void build_top_bar(lv_obj_t *parent)
     lv_obj_add_flag(settings, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(settings, 16);
     lv_obj_add_event_cb(settings, settings_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Ambient-clock on/off toggle - a clock icon (gcal_font_icon_clock,
+     * a standalone one-glyph font, see its own header comment for why
+     * LVGL's built-in symbol set couldn't supply this one) that dims
+     * rather than changes shape when the feature's off, since there's no
+     * built-in "disabled clock" glyph to swap to. Sits just left of the
+     * settings gear, same 40px rhythm as the gap between settings and the
+     * "last synced" label. */
+    lv_obj_t *clock_toggle = lv_label_create(bar);
+    lv_label_set_text(clock_toggle, "\xEF\x80\x97" /* U+F017 FontAwesome "clock" */);
+    lv_obj_set_style_text_font(clock_toggle, &gcal_font_icon_clock, 0);
+    lv_obj_set_style_text_color(clock_toggle, ui_color(UI_COLOR_TEXT_MUTED), 0);
+    lv_obj_align(clock_toggle, LV_ALIGN_RIGHT_MID, -210, 0);
+    lv_obj_add_flag(clock_toggle, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(clock_toggle, 16);
+    lv_obj_add_event_cb(clock_toggle, clock_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
 /* ---------------- legend ---------------- */
@@ -465,13 +513,22 @@ static void update_title(void)
      * redraw activity to flush both buffers as a side effect, which is
      * why this looked like "the time only updates after switching to
      * month view" rather than a title-bar-specific bug - staying on the
-     * same view after a sync never got that lucky flush. */
+     * same view after a sync never got that lucky flush.
+     *
+     * Only forced this way once LVGL's own redraw timer has ticked at
+     * least once - see s_boot_forced_redraw_ok's comment. Before that
+     * (calendar_ui_init()'s very first select_view()), a plain invalidate
+     * is enough: nothing has been shown on screen yet at that point, so
+     * there's no stale second buffer to catch up on, and the next regular
+     * LVGL timer tick paints the very first frame correctly on its own. */
     lv_obj_invalidate(s_title_label);
     lv_obj_invalidate(s_updated_label);
-    lv_refr_now(NULL);
-    lv_obj_invalidate(s_title_label);
-    lv_obj_invalidate(s_updated_label);
-    lv_refr_now(NULL);
+    if (s_boot_forced_redraw_ok) {
+        lv_refr_now(NULL);
+        lv_obj_invalidate(s_title_label);
+        lv_obj_invalidate(s_updated_label);
+        lv_refr_now(NULL);
+    }
 }
 
 /* Empties whichever view is about to stop being visible, per its own
@@ -553,6 +610,7 @@ void calendar_ui_init(app_settings_t *cfg)
 
     update_legend();
     select_view(UI_VIEW_MONTH);
+    s_boot_forced_redraw_ok = true;
     ui_screensaver_init();
     ESP_LOGI(TAG, "UI ready");
 }
