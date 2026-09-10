@@ -33,6 +33,15 @@ int event_store_copy_range(time_t range_start, time_t range_end, gcal_event_t *o
 /* Copies up to max_out events starting at/after `now`, soonest first. */
 int event_store_copy_upcoming(time_t now, gcal_event_t *out, int max_out);
 
+/* Appends every currently-stored event tagged with the given
+ * calendar_index into out[] starting at *inout_count (bounded by
+ * max_out), advancing *inout_count and returning how many were added.
+ * Used by gcal_refresh_all() to carry a "Daily" calendar's existing
+ * events forward on the cycles where it deliberately isn't re-fetched -
+ * without this, event_store_replace_all()'s wholesale replace would drop
+ * them. */
+int event_store_copy_calendar(uint8_t calendar_index, gcal_event_t *out, int max_out, int *inout_count);
+
 /* Epoch seconds of the last successful refresh, or 0 if none yet. */
 time_t event_store_last_refresh(void);
 void event_store_mark_refreshed(void);

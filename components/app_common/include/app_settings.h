@@ -45,6 +45,20 @@ typedef struct {
                                             everywhere (month dots, week/day blocks,
                                             up-next strip, legend chip) */
     bool enabled;                       /* Toggleable from the on-screen legend */
+    bool daily_only;                    /* When set, this calendar is only fetched
+                                            once per local calendar day (on the first
+                                            refresh cycle on or after local midnight,
+                                            and once at startup) rather than every
+                                            refresh_interval_s like normal - for feeds
+                                            that barely ever change (a public holidays
+                                            ICS, say) or a flaky third-party host not
+                                            worth hammering. Its events are carried
+                                            forward untouched on the cycles in
+                                            between; see gcal_client.c's
+                                            gcal_refresh_all(). A failed daily fetch
+                                            still retries on the next regular cycle -
+                                            the once-a-day quiet only kicks in after
+                                            it has actually succeeded that day. */
 } app_calendar_cfg_t;
 
 typedef struct {

@@ -262,8 +262,11 @@ wakes came back clean throughout.
 ## What it does
 
 - Pulls events from **multiple Google Calendars** (your primary calendar,
-  a family calendar, a work calendar, etc.) and shows each in a colour you
-  pick, with a legend you can tap to show/hide a calendar.
+  a family calendar, a work calendar, etc.) and **ICS feeds**, and shows
+  each in a colour you pick, with a legend you can tap to show/hide a
+  calendar. Any calendar can be marked **daily** to fetch it just once a
+  day instead of every refresh cycle (for feeds that rarely change, or a
+  flaky host).
 - **Month view**: a 6x7 grid with coloured event chips per day; tap a day
   to jump into Day view.
 - **Week view**: an hourly grid (6am-10pm by default) across 7 day columns,
@@ -433,7 +436,17 @@ In the setup portal form:
   `\n`, replace those with actual new lines first).
 - One row per calendar: **ID** (from step 6), a short **label**, and a
   **colour** — this is exactly like assigning a colour to a calendar in
-  the Google Calendar app.
+  the Google Calendar app. Two checkboxes per row: **on** (whether it's
+  currently shown - also toggleable live from the legend) and **daily**
+  (see below).
+- **daily** (per calendar): tick it for a feed that barely ever changes
+  (a public holidays ICS, say) or a third-party host that's flaky and not
+  worth hammering. That calendar is then fetched only once per local
+  calendar day - on the first refresh cycle on or after local midnight,
+  plus once at startup - instead of every `refresh_interval_s`. Its
+  events are carried forward untouched on the cycles in between, and a
+  failed daily fetch still retries on the next regular cycle (the
+  once-a-day quiet only starts after it has actually succeeded that day).
 - **Timezone**: a POSIX TZ string. Defaults to
   `AEST-10AEDT,M10.1.0,M4.1.0/3` (Australia/Melbourne). Search "POSIX TZ
   string <your city>" if you need a different one.
