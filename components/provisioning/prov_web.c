@@ -119,10 +119,12 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "\"Secret address in iCal format\" instead - for calendars that "
         "can't be shared with the service account at all; recurring "
         "events aren't shown yet for this source. Leave ID/URL blank to "
-        "skip a row.</div>");
+        "skip a row. Tick \"daily\" for a rarely-changing or flaky "
+        "calendar to fetch it just once a day (and at startup) rather "
+        "than every refresh cycle.</div>");
 
     for (int i = 0; i < APP_SETTINGS_MAX_CALENDARS; i++) {
-        char row[700];
+        char row[850];
         snprintf(row, sizeof(row),
             "<div class='cal-row'>"
             "<select name='cal_source_%d' style='width:auto'>"
@@ -131,7 +133,8 @@ static esp_err_t root_get_handler(httpd_req_t *req)
             "<input type='text' name='cal_label_%d' placeholder='label' style='max-width:9em'>"
             "<input type='color' name='cal_color_%d' value='#4285F4'>"
             "<label style='margin:0;font-weight:400'><input type='checkbox' name='cal_enabled_%d' checked style='width:auto'> on</label>"
-            "</div>", i, i, i, i, i);
+            "<label style='margin:0;font-weight:400'><input type='checkbox' name='cal_daily_%d' style='width:auto'> daily</label>"
+            "</div>", i, i, i, i, i, i);
         httpd_resp_sendstr_chunk(req, row);
     }
 
@@ -209,7 +212,7 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 
     int n = 0;
     for (int i = 0; i < APP_SETTINGS_MAX_CALENDARS; i++) {
-        char key[24], id[APP_SETTINGS_MAX_CAL_ID], label[40], color[16], enabled[8], source[4];
+        char key[24], id[APP_SETTINGS_MAX_CAL_ID], label[40], color[16], enabled[8], source[4], daily[8];
         snprintf(key, sizeof(key), "cal_id_%d", i);
         if (!form_get(body, key, id, sizeof(id)) || id[0] == '\0') {
             continue;
@@ -236,6 +239,9 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 
         snprintf(key, sizeof(key), "cal_enabled_%d", i);
         c->enabled = form_get(body, key, enabled, sizeof(enabled));
+
+        snprintf(key, sizeof(key), "cal_daily_%d", i);
+        c->daily_only = form_get(body, key, daily, sizeof(daily));
         n++;
     }
     s_pending.calendar_count = n;

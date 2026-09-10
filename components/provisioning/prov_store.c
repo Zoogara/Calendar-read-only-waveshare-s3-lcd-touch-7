@@ -42,6 +42,7 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
         cJSON_AddStringToObject(jc, "label", c->label);
         cJSON_AddNumberToObject(jc, "color", (double)c->color);
         cJSON_AddBoolToObject(jc, "enabled", c->enabled);
+        cJSON_AddBoolToObject(jc, "daily_only", c->daily_only);
         cJSON_AddItemToArray(cals, jc);
     }
     return root;
@@ -138,6 +139,8 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
             c->color = cJSON_IsNumber(v) ? (uint32_t)v->valuedouble : 0x808080;
             v = cJSON_GetObjectItemCaseSensitive(jc, "enabled");
             c->enabled = cJSON_IsBool(v) ? cJSON_IsTrue(v) : true;
+            v = cJSON_GetObjectItemCaseSensitive(jc, "daily_only");
+            c->daily_only = cJSON_IsBool(v) ? cJSON_IsTrue(v) : false;
             if (c->id[0] != '\0') {
                 i++;
             }

@@ -181,12 +181,15 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "\"Secret address in iCal format\" instead - for calendars that "
         "can't be shared with the service account at all; recurring "
         "events aren't shown yet for this source. Leave ID/URL blank to "
-        "skip a row.</div>");
+        "skip a row. Tick \"daily\" for a calendar that barely ever "
+        "changes (a holidays feed) or a flaky host not worth hammering - "
+        "it's then only fetched once a day (and at startup) instead of "
+        "every refresh cycle, keeping its last-fetched events in between.</div>");
 
     for (int i = 0; i < APP_SETTINGS_MAX_CALENDARS; i++) {
         const app_calendar_cfg_t *c = (i < s_cfg->calendar_count) ? &s_cfg->calendars[i] : NULL;
         bool is_ics = c && c->source == APP_CAL_SOURCE_ICS;
-        char row[APP_SETTINGS_MAX_CAL_ID + 900];
+        char row[APP_SETTINGS_MAX_CAL_ID + 1100];
         snprintf(row, sizeof(row),
             "<div class='cal-row'>"
             "<select name='cal_source_%d' style='width:auto'>"
@@ -195,9 +198,11 @@ static esp_err_t root_get_handler(httpd_req_t *req)
             "<input type='text' name='cal_label_%d' placeholder='label' style='max-width:9em' value='%s'>"
             "<input type='color' name='cal_color_%d' value='#%06lX'>"
             "<label style='margin:0;font-weight:400'><input type='checkbox' name='cal_enabled_%d' %s style='width:auto'> on</label>"
+            "<label style='margin:0;font-weight:400'><input type='checkbox' name='cal_daily_%d' %s style='width:auto'> daily</label>"
             "</div>", i, is_ics ? "" : "selected", is_ics ? "selected" : "",
             i, c ? c->id : "", i, c ? c->label : "", i,
-            (unsigned long)(c ? c->color : 0x4285F4), i, (c == NULL || c->enabled) ? "checked" : "");
+            (unsigned long)(c ? c->color : 0x4285F4), i, (c == NULL || c->enabled) ? "checked" : "",
+            i, (c && c->daily_only) ? "checked" : "");
         httpd_resp_sendstr_chunk(req, row);
     }
 
@@ -395,7 +400,7 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     memset(new_cals, 0, sizeof(new_cals));
     int n = 0;
     for (int i = 0; i < APP_SETTINGS_MAX_CALENDARS; i++) {
-        char key[24], id[APP_SETTINGS_MAX_CAL_ID], label[40], color[16], enabled[8], source[4];
+        char key[24], id[APP_SETTINGS_MAX_CAL_ID], label[40], color[16], enabled[8], source[4], daily[8];
         snprintf(key, sizeof(key), "cal_id_%d", i);
         if (!form_get(body, key, id, sizeof(id)) || id[0] == '\0') {
             continue;
@@ -422,6 +427,9 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 
         snprintf(key, sizeof(key), "cal_enabled_%d", i);
         c->enabled = form_get(body, key, enabled, sizeof(enabled));
+
+        snprintf(key, sizeof(key), "cal_daily_%d", i);
+        c->daily_only = form_get(body, key, daily, sizeof(daily));
         n++;
     }
     free(body);

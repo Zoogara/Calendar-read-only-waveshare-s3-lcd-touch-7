@@ -78,6 +78,20 @@ int event_store_copy_upcoming(time_t now, gcal_event_t *out, int max_out)
     return n;
 }
 
+int event_store_copy_calendar(uint8_t calendar_index, gcal_event_t *out, int max_out, int *inout_count)
+{
+    int added = 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int i = 0; i < s_count && *inout_count < max_out; i++) {
+        if (s_events[i].calendar_index == calendar_index) {
+            out[(*inout_count)++] = s_events[i];
+            added++;
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return added;
+}
+
 time_t event_store_last_refresh(void)
 {
     return s_last_refresh;

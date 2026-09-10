@@ -447,6 +447,18 @@ esp_err_t gcal_refresh_all(const app_settings_t *cfg, int window_past_days, int 
     time_t time_min = now - (time_t)window_past_days * 86400;
     time_t time_max = now + (time_t)window_future_days * 86400;
 
+    /* Local midnight of "today", for the per-calendar daily_only check
+     * below. Stays 0 for every calendar until its first successful fetch
+     * (so daily_only calendars still fetch once at startup), and a failed
+     * daily fetch leaves it unchanged so the next regular cycle retries. */
+    struct tm now_lt;
+    localtime_r(&now, &now_lt);
+    now_lt.tm_hour = 0;
+    now_lt.tm_min = 0;
+    now_lt.tm_sec = 0;
+    time_t today_start = mktime(&now_lt);
+    static time_t s_cal_last_fetch_day[APP_SETTINGS_MAX_CALENDARS];
+
     /* MALLOC_CAP_SPIRAM, not a plain calloc() - this buffer (tens of KB at
      * MAX_FETCH_EVENTS) is alive for the ENTIRE fetch cycle, spanning
      * every calendar's TLS handshake. Plain malloc()/calloc() prefers
@@ -514,7 +526,21 @@ esp_err_t gcal_refresh_all(const app_settings_t *cfg, int window_past_days, int 
         if (cal->id[0] == '\0') {
             continue;
         }
+
+        /* Daily-only and already fetched (successfully) today - carry its
+         * existing events forward untouched instead of hitting the
+         * network, and don't count it toward attempted/succeeded (it's
+         * neither - it was deliberately skipped). See daily_only's comment
+         * in app_settings.h. */
+        if (cal->daily_only && s_cal_last_fetch_day[i] == today_start) {
+            int kept = event_store_copy_calendar((uint8_t)i, buf, MAX_FETCH_EVENTS, &count);
+            ESP_LOGI(TAG, "[%s] daily-only, already fetched today - keeping %d cached event(s)",
+                     cal->label, kept);
+            continue;
+        }
+
         attempted++;
+        bool ok;
         if (cal->source == APP_CAL_SOURCE_ICS) {
             /* The Google OAuth bearer token has no business going to an
              * arbitrary third-party ICS host - strip it before this
@@ -523,16 +549,21 @@ esp_err_t gcal_refresh_all(const app_settings_t *cfg, int window_past_days, int 
                 esp_http_client_delete_header(client, "Authorization");
                 auth_header_set = false;
             }
-            if (ics_client_fetch(client, cal, (uint8_t)i, time_min, time_max, buf, &count, MAX_FETCH_EVENTS)) {
-                succeeded++;
-            }
+            ok = ics_client_fetch(client, cal, (uint8_t)i, time_min, time_max, buf, &count, MAX_FETCH_EVENTS);
         } else {
             if (!auth_header_set) {
                 esp_http_client_set_header(client, "Authorization", auth_header);
                 auth_header_set = true;
             }
-            if (fetch_one_calendar(client, cal, (uint8_t)i, time_min, time_max, buf, &count, MAX_FETCH_EVENTS)) {
-                succeeded++;
+            ok = fetch_one_calendar(client, cal, (uint8_t)i, time_min, time_max, buf, &count, MAX_FETCH_EVENTS);
+        }
+        if (ok) {
+            succeeded++;
+            /* Only after a real success does daily_only go quiet for the
+             * rest of the day - a failed daily fetch leaves the marker
+             * untouched so the next cycle retries. */
+            if (cal->daily_only) {
+                s_cal_last_fetch_day[i] = today_start;
             }
         }
     }
