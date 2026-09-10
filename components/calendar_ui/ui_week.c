@@ -29,6 +29,50 @@ static int day_col_w(void)
     return (UI_CONTENT_W - TIME_COL_W) / WEEK_DAYS;
 }
 
+/* Shared styles for the event blocks/chips and boundary-indicator badges
+ * that ui_week_populate() creates and destroys fresh every sync cycle and
+ * week/view navigation - see ui_month.c's ensure_shared_styles() for the
+ * full reasoning (constant properties shared via one static lv_style_t
+ * cost nothing per object beyond a pointer, instead of every object
+ * paying for its own dynamically-sized local style out of internal RAM).
+ * Only bg_color (one of many per-calendar colours) stays a genuine
+ * per-object property. */
+static lv_style_t s_bar_style;         /* event block/chip: radius + bg_opa */
+static lv_style_t s_lbl_style;         /* event label, not past: font + white text */
+static lv_style_t s_lbl_past_style;    /* event label, past: font + muted text */
+static lv_style_t s_badge_style;       /* boundary indicator: bg_color + bg_opa + radius */
+static lv_style_t s_badge_ind_style;   /* boundary indicator's arrow glyph: font + white text */
+static bool s_styles_ready;
+
+static void ensure_shared_styles(void)
+{
+    if (s_styles_ready) {
+        return;
+    }
+    s_styles_ready = true;
+
+    lv_style_init(&s_bar_style);
+    lv_style_set_radius(&s_bar_style, 3);
+    lv_style_set_bg_opa(&s_bar_style, LV_OPA_COVER);
+
+    lv_style_init(&s_lbl_style);
+    lv_style_set_text_font(&s_lbl_style, &gcal_font_14);
+    lv_style_set_text_color(&s_lbl_style, lv_color_white());
+
+    lv_style_init(&s_lbl_past_style);
+    lv_style_set_text_font(&s_lbl_past_style, &gcal_font_14);
+    lv_style_set_text_color(&s_lbl_past_style, ui_color(UI_COLOR_TEXT_PAST));
+
+    lv_style_init(&s_badge_style);
+    lv_style_set_bg_color(&s_badge_style, ui_color(UI_COLOR_TEXT_MUTED));
+    lv_style_set_bg_opa(&s_badge_style, LV_OPA_COVER);
+    lv_style_set_radius(&s_badge_style, 3);
+
+    lv_style_init(&s_badge_ind_style);
+    lv_style_set_text_font(&s_badge_ind_style, &gcal_font_14);
+    lv_style_set_text_color(&s_badge_ind_style, lv_color_white());
+}
+
 static void day_header_click_cb(lv_event_t *e)
 {
     int d = (int)(uintptr_t)lv_event_get_user_data(e);
@@ -37,6 +81,8 @@ static void day_header_click_cb(lv_event_t *e)
 
 lv_obj_t *ui_week_create(lv_obj_t *parent)
 {
+    ensure_shared_styles();
+
     const app_settings_t *cfg = ui_get_cfg();
     if (cfg->view_start_hour < cfg->view_end_hour) {
         s_hour_start = cfg->view_start_hour;
@@ -156,9 +202,7 @@ static void add_boundary_indicator(lv_obj_t *parent, bool at_top)
     lv_obj_t *badge = lv_obj_create(parent);
     lv_obj_remove_style_all(badge);
     lv_obj_set_size(badge, 18, 15);
-    lv_obj_set_style_bg_color(badge, ui_color(UI_COLOR_TEXT_MUTED), 0);
-    lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(badge, 3, 0);
+    lv_obj_add_style(badge, &s_badge_style, 0);
     lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(badge, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_align(badge, at_top ? LV_ALIGN_TOP_RIGHT : LV_ALIGN_BOTTOM_RIGHT,
@@ -166,8 +210,7 @@ static void add_boundary_indicator(lv_obj_t *parent, bool at_top)
 
     lv_obj_t *ind = lv_label_create(badge);
     lv_label_set_text(ind, at_top ? LV_SYMBOL_UP : LV_SYMBOL_DOWN);
-    lv_obj_set_style_text_font(ind, &gcal_font_14, 0);
-    lv_obj_set_style_text_color(ind, lv_color_white(), 0);
+    lv_obj_add_style(ind, &s_badge_ind_style, 0);
     lv_obj_center(ind);
 }
 
@@ -268,17 +311,15 @@ static void add_block(lv_obj_t *parent, int colw, const gcal_event_t *ev, time_t
     lv_obj_remove_style_all(blk);
     lv_obj_set_pos(blk, x, y);
     lv_obj_set_size(blk, slot_w, h - 1);
-    lv_obj_set_style_radius(blk, 3, 0);
+    lv_obj_add_style(blk, &s_bar_style, 0);
     lv_obj_set_style_bg_color(blk, ui_color(is_past ? ui_lighten(ev->color) : ev->color), 0);
-    lv_obj_set_style_bg_opa(blk, LV_OPA_COVER, 0);
     lv_obj_clear_flag(blk, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *lbl = lv_label_create(blk);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
     lv_obj_set_size(lbl, slot_w - 4, h - 3);
     lv_obj_set_pos(lbl, 3, 1);
-    lv_obj_set_style_text_font(lbl, &gcal_font_14, 0);
-    lv_obj_set_style_text_color(lbl, is_past ? ui_color(UI_COLOR_TEXT_PAST) : lv_color_white(), 0);
+    lv_obj_add_style(lbl, is_past ? &s_lbl_past_style : &s_lbl_style, 0);
     lv_label_set_text(lbl, ev->summary);
 }
 
@@ -354,16 +395,14 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
                 lv_obj_remove_style_all(chip);
                 lv_obj_set_width(chip, LV_PCT(100));
                 lv_obj_set_height(chip, 14);
-                lv_obj_set_style_radius(chip, 3, 0);
+                lv_obj_add_style(chip, &s_bar_style, 0);
                 lv_obj_set_style_bg_color(chip, ui_color(is_past ? ui_lighten(events[e].color) : events[e].color), 0);
-                lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
                 lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
                 lv_obj_clear_flag(chip, LV_OBJ_FLAG_CLICKABLE); /* let the tap reach day_header_click_cb */
                 lv_obj_t *lbl = lv_label_create(chip);
                 lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
                 lv_obj_set_width(lbl, LV_PCT(100));
-                lv_obj_set_style_text_font(lbl, &gcal_font_14, 0);
-                lv_obj_set_style_text_color(lbl, is_past ? ui_color(UI_COLOR_TEXT_PAST) : lv_color_white(), 0);
+                lv_obj_add_style(lbl, is_past ? &s_lbl_past_style : &s_lbl_style, 0);
                 lv_label_set_text(lbl, events[e].summary);
                 allday_shown++;
             } else {

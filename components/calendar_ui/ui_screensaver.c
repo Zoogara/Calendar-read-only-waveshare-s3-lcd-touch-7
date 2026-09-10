@@ -214,7 +214,23 @@ static void go_calendar(void)
     }
     full_double_refresh();
     ESP_LOGI(TAG, "touch detected - showing calendar");
-    xEventGroupSetBits(s_wake_event, WAKE_BIT);
+    /* Deliberately does NOT set WAKE_BIT (that's calendar_ui_request_sync()'s
+     * job now, for the "tap the updated-HH:MM label" manual force-sync
+     * gesture only) - a plain touch-wake used to also nudge net_task into
+     * an immediate fresh gcal_refresh_all(), but that's both redundant and
+     * actively counterproductive now: calendar_ui_restore_active_view()
+     * above already repopulated this view from event_store's own cached
+     * data (no network involved), and net_task's own background sync now
+     * runs continuously on its normal schedule regardless of display
+     * state (see main.c's net_task() - it no longer skips syncing while
+     * asleep/ambient), so event_store is never more than
+     * refresh_interval_s stale to begin with. Forcing an *extra* fetch
+     * right at the exact moment of a touch wake was actively harmful:
+     * that's precisely when the view is being reconstructed (its own
+     * internal-RAM cost), so colliding a fresh network fetch - and
+     * specifically its TLS handshakes - with that reconstruction was the
+     * worst possible timing for the marginal-RAM-headroom certificate-
+     * verification flakiness documented in gcal_client.c/ics_client.c. */
 }
 
 /* Below this many lux, the backlight sits at exactly min_permille - both

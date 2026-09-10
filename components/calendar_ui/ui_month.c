@@ -31,6 +31,64 @@ typedef struct {
 
 static month_cell_t s_cells[GRID_COLS * GRID_ROWS];
 
+/* Shared styles for the event bars/labels and the overflow badge that
+ * ui_month_populate() creates and destroys fresh on every single sync
+ * cycle and month/view navigation (unlike the 42 persistent day_label
+ * cells, which are created once and just have individual properties
+ * mutated in place afterward). Every lv_obj_set_style_*() call on an
+ * object with no matching style yet allocates that object its own
+ * dynamically-sized "local style" out of internal RAM (confirmed:
+ * CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384 keeps allocations this small
+ * off PSRAM entirely) - for properties that are actually constant across
+ * every bar/label/badge (radius, opacity, font, and even text colour
+ * where there are only ever two possible values), defining ONE static
+ * lv_style_t up front and attaching it via lv_obj_add_style() costs
+ * nothing per object beyond a pointer, instead of paying for a fresh
+ * local style on every single one, every single populate(). Found while
+ * chasing a real, reproducible correlation (2026-09-10) between this
+ * view being actively rendered (tighter internal-RAM headroom) and the
+ * ICS calendar's TLS certificate verification becoming intermittently
+ * flaky - see gcal_client.c/ics_client.c's own comments. Only bg_color
+ * (which takes one of many per-calendar colours, not a small fixed set)
+ * stays a genuine per-object property. */
+static lv_style_t s_bar_style;         /* event bar: radius + bg_opa */
+static lv_style_t s_lbl_style;         /* event label, not past: font + pad + white text */
+static lv_style_t s_lbl_past_style;    /* event label, past: font + pad + muted text */
+static lv_style_t s_badge_style;       /* overflow badge: bg_color + bg_opa + radius (all constant) */
+static lv_style_t s_badge_ind_style;   /* overflow badge's "+" glyph: font + white text (all constant) */
+static bool s_styles_ready;
+
+static void ensure_shared_styles(void)
+{
+    if (s_styles_ready) {
+        return;
+    }
+    s_styles_ready = true;
+
+    lv_style_init(&s_bar_style);
+    lv_style_set_radius(&s_bar_style, 3);
+    lv_style_set_bg_opa(&s_bar_style, LV_OPA_COVER);
+
+    lv_style_init(&s_lbl_style);
+    lv_style_set_text_font(&s_lbl_style, &gcal_font_14);
+    lv_style_set_pad_left(&s_lbl_style, 3);
+    lv_style_set_text_color(&s_lbl_style, lv_color_white());
+
+    lv_style_init(&s_lbl_past_style);
+    lv_style_set_text_font(&s_lbl_past_style, &gcal_font_14);
+    lv_style_set_pad_left(&s_lbl_past_style, 3);
+    lv_style_set_text_color(&s_lbl_past_style, ui_color(UI_COLOR_TEXT_PAST));
+
+    lv_style_init(&s_badge_style);
+    lv_style_set_bg_color(&s_badge_style, ui_color(UI_COLOR_TEXT_MUTED));
+    lv_style_set_bg_opa(&s_badge_style, LV_OPA_COVER);
+    lv_style_set_radius(&s_badge_style, 3);
+
+    lv_style_init(&s_badge_ind_style);
+    lv_style_set_text_font(&s_badge_ind_style, &gcal_font_14);
+    lv_style_set_text_color(&s_badge_ind_style, lv_color_white());
+}
+
 static void cell_click_cb(lv_event_t *e)
 {
     int idx = (int)(uintptr_t)lv_event_get_user_data(e);
@@ -39,6 +97,8 @@ static void cell_click_cb(lv_event_t *e)
 
 lv_obj_t *ui_month_create(lv_obj_t *parent)
 {
+    ensure_shared_styles();
+
     lv_obj_t *root = lv_obj_create(parent);
     lv_obj_remove_style_all(root);
     lv_obj_set_pos(root, UI_CONTENT_X, UI_CONTENT_Y);
@@ -117,9 +177,7 @@ static lv_obj_t *add_overflow_badge(lv_obj_t *cell)
     lv_obj_t *badge = lv_obj_create(cell);
     lv_obj_remove_style_all(badge);
     lv_obj_set_size(badge, 14, 14);
-    lv_obj_set_style_bg_color(badge, ui_color(UI_COLOR_TEXT_MUTED), 0);
-    lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(badge, 3, 0);
+    lv_obj_add_style(badge, &s_badge_style, 0);
     lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(badge, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_align(badge, LV_ALIGN_TOP_RIGHT, -2, 4);
@@ -131,8 +189,7 @@ static lv_obj_t *add_overflow_badge(lv_obj_t *cell)
      * badge with no extra padding needed. */
     lv_obj_t *ind = lv_label_create(badge);
     lv_label_set_text(ind, LV_SYMBOL_PLUS);
-    lv_obj_set_style_text_font(ind, &gcal_font_14, 0);
-    lv_obj_set_style_text_color(ind, lv_color_white(), 0);
+    lv_obj_add_style(ind, &s_badge_ind_style, 0);
     lv_obj_center(ind);
 
     return badge;
@@ -228,9 +285,8 @@ void ui_month_populate(lv_obj_t *root, time_t cursor)
             lv_obj_remove_style_all(bar);
             lv_obj_set_width(bar, LV_PCT(100));
             lv_obj_set_height(bar, 16);
-            lv_obj_set_style_radius(bar, 3, 0);
+            lv_obj_add_style(bar, &s_bar_style, 0);
             lv_obj_set_style_bg_color(bar, ui_color(is_past ? ui_lighten(events[e].color) : events[e].color), 0);
-            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
             lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
             /* Same reasoning as events_box above - let taps on an event
              * chip fall through to the day cell instead of being
@@ -240,9 +296,7 @@ void ui_month_populate(lv_obj_t *root, time_t cursor)
             lv_obj_t *lbl = lv_label_create(bar);
             lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
             lv_obj_set_width(lbl, LV_PCT(100));
-            lv_obj_set_style_pad_left(lbl, 3, 0);
-            lv_obj_set_style_text_font(lbl, &gcal_font_14, 0);
-            lv_obj_set_style_text_color(lbl, is_past ? ui_color(UI_COLOR_TEXT_PAST) : lv_color_white(), 0);
+            lv_obj_add_style(lbl, is_past ? &s_lbl_past_style : &s_lbl_style, 0);
             lv_label_set_text(lbl, events[e].summary);
             shown++;
         }
