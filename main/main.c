@@ -21,6 +21,10 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <time.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -81,6 +85,69 @@ static void show_provisioning_screen(void)
  * lost race meant both the wake-triggered sync and a manual force-sync tap
  * would silently do nothing until the next scheduled cycle, minutes later. */
 #define RETRY_BACKOFF_S 20
+
+/* How often keepalive_probe() runs during an otherwise idle gap between
+ * sync cycles - see that function's own comment. */
+#define KEEPALIVE_INTERVAL_MS (60U * 1000U)
+
+/* Lightweight network keep-alive: resolves and opens (then immediately
+ * closes) a plain TCP connection to the same host calendar sync talks
+ * to, with no TLS handshake or data exchanged - just enough to exercise
+ * the exact DNS + routing + TCP-connect path a real sync needs, roughly
+ * once a minute during whatever of net_task's wait between sync cycles
+ * is still otherwise completely silent (up to refresh_interval_s, 5
+ * minutes by default - see net_task() below).
+ *
+ * Added 2026-09-09 chasing intermittent ESP_ERR_HTTP_CONNECT /
+ * FETCH_HEADER / EAGAIN sync failures that recurred across a device
+ * reset and a Wi-Fi channel change, at inconsistent points relative to
+ * boot (once within 25 seconds, twice around 40 minutes in) - ruling out
+ * both an accumulating on-device resource issue (internal RAM was
+ * confirmed flat and healthy, ~46KB free, every single time, including
+ * at the moment of failure) and a fixed uptime-based trigger. The
+ * working theory: a connection sitting completely silent for minutes at
+ * a stretch is more likely to hit router-side connection-tracking/ARP
+ * staleness or a Wi-Fi power-save edge case than one with some regular
+ * traffic on it - matching the observation that a neighbouring device
+ * doing frequent updates never showed the same problem, and that entire
+ * multi-hour stretches with the ambient clock or sleep screen showing
+ * used to have literally zero network activity at all (see
+ * calendar_ui_is_asleep()'s use in net_task() below, removed for the
+ * same reason).
+ *
+ * Deliberately only logs on failure, not every success - a steady
+ * stream of these failing right before a real sync failure would be a
+ * strong confirming signal for the theory above; if they never fail even
+ * when a real sync does, that's useful evidence against it too. Not
+ * itself proven to fix anything yet - this is instrumented well enough
+ * to tell either way from the log. */
+static void keepalive_probe(void)
+{
+    struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM };
+    struct addrinfo *res = NULL;
+    int gai_err = getaddrinfo("www.googleapis.com", "443", &hints, &res);
+    if (gai_err != 0 || res == NULL) {
+        ESP_LOGW(TAG, "keepalive: DNS resolve failed: %d", gai_err);
+        return;
+    }
+
+    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock < 0) {
+        ESP_LOGW(TAG, "keepalive: socket() failed: errno %d", errno);
+        freeaddrinfo(res);
+        return;
+    }
+
+    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    if (connect(sock, res->ai_addr, res->ai_addrlen) != 0) {
+        ESP_LOGW(TAG, "keepalive: connect() failed: errno %d", errno);
+    }
+    close(sock);
+    freeaddrinfo(res);
+}
 
 static bool sync_time(void)
 {
@@ -151,47 +218,78 @@ static void net_task(void *arg)
 
     for (;;) {
         uint32_t wait_ms = s_cfg.refresh_interval_s * 1000;
-        /* Screensaver active (backlight off) - skip this cycle's sync
-         * entirely rather than fetching data nobody can see. */
-        if (!calendar_ui_is_asleep()) {
-            bool all_ok = false;
-            /* Cache window is user-configurable (config_web.c - see
-             * app_settings.h's fetch_past_days/fetch_future_days comment
-             * for why), not a fixed constant. */
-            esp_err_t err = gcal_refresh_all(&s_cfg, s_cfg.fetch_past_days, s_cfg.fetch_future_days, &all_ok);
-            if (err == ESP_OK) {
-                calendar_ui_refresh();
-                /* refresh() above just cleared the warning icon - a
-                 * cycle where at least one calendar came back is still
-                 * an ESP_OK, so a calendar that's been failing every
-                 * cycle would otherwise never show any warning at all. */
-                if (!all_ok) {
-                    calendar_ui_notify_sync_failed();
-                    /* A calendar that failed here almost always failed for
-                     * the same reason a *total* failure below would have -
-                     * transient low internal RAM during the fetch (see
-                     * gcal_client.c's log_heap_state() comment) - not
-                     * "this one calendar is broken." That condition
-                     * reliably clears within seconds (screen redraws
-                     * finish, TLS buffers get released), so there's no
-                     * reason to leave 1-3 stale calendars on screen for
-                     * up to a full refresh_interval_s when a short retry
-                     * would very likely just work. */
-                    ESP_LOGW(TAG, "calendar refresh partially failed (retrying in %ds)", RETRY_BACKOFF_S);
-                    wait_ms = RETRY_BACKOFF_S * 1000;
-                }
-            } else {
-                ESP_LOGW(TAG, "calendar refresh failed: %s (retrying in %ds)",
-                         esp_err_to_name(err), RETRY_BACKOFF_S);
+        /* Syncs every cycle regardless of display state - this used to
+         * skip entirely while asleep ("nobody's looking, don't bother"),
+         * but that meant a display that's been asleep for hours (an
+         * overnight gap, not just the few-minute screensaver windows)
+         * went that whole time with zero network activity at all, which
+         * turned out to matter: see keepalive_probe()'s own comment for
+         * why a connection sitting completely silent for minutes at a
+         * time is suspected of being more prone to
+         * ESP_ERR_HTTP_CONNECT/FETCH_HEADER/EAGAIN sync failures than one
+         * with some regular traffic on it. Syncing while asleep also
+         * means the calendar is already fresh the instant the display
+         * wakes, rather than showing however-stale data until the next
+         * scheduled cycle happens to land. calendar_ui_refresh() and
+         * calendar_ui_notify_sync_failed() touch LVGL objects that just
+         * aren't currently visible while asleep, not wasted work in any
+         * way that matters next to the network fetch itself. */
+        bool all_ok = false;
+        /* Cache window is user-configurable (config_web.c - see
+         * app_settings.h's fetch_past_days/fetch_future_days comment
+         * for why), not a fixed constant. */
+        esp_err_t err = gcal_refresh_all(&s_cfg, s_cfg.fetch_past_days, s_cfg.fetch_future_days, &all_ok);
+        if (err == ESP_OK) {
+            calendar_ui_refresh();
+            /* refresh() above just cleared the warning icon - a
+             * cycle where at least one calendar came back is still
+             * an ESP_OK, so a calendar that's been failing every
+             * cycle would otherwise never show any warning at all. */
+            if (!all_ok) {
                 calendar_ui_notify_sync_failed();
+                /* A calendar that failed here almost always failed for
+                 * the same reason a *total* failure below would have -
+                 * transient low internal RAM during the fetch (see
+                 * gcal_client.c's log_heap_state() comment) - not
+                 * "this one calendar is broken." That condition
+                 * reliably clears within seconds (screen redraws
+                 * finish, TLS buffers get released), so there's no
+                 * reason to leave 1-3 stale calendars on screen for
+                 * up to a full refresh_interval_s when a short retry
+                 * would very likely just work. */
+                ESP_LOGW(TAG, "calendar refresh partially failed (retrying in %ds)", RETRY_BACKOFF_S);
                 wait_ms = RETRY_BACKOFF_S * 1000;
             }
+        } else {
+            ESP_LOGW(TAG, "calendar refresh failed: %s (retrying in %ds)",
+                     esp_err_to_name(err), RETRY_BACKOFF_S);
+            calendar_ui_notify_sync_failed();
+            wait_ms = RETRY_BACKOFF_S * 1000;
         }
         /* Waits for either the refresh/backoff interval above or an early
-         * wake (touch after the screensaver kicked in, or a manual
-         * force-sync tap) - a wake loops straight back around to a fresh
-         * sync instead of waiting out the rest of the interval. */
-        calendar_ui_wait_wake(wait_ms);
+         * wake - which, since 2026-09-10, means only a manual force-sync
+         * tap (the "updated HH:MM" label), not a plain touch waking the
+         * display from the screensaver too. A touch-wake used to set the
+         * same bit and land here as well, but that's ui_screensaver.c's
+         * go_calendar()'s own job now (calendar_ui_restore_active_view(),
+         * straight from event_store's already-cached data, no network) -
+         * see its own comment for why forcing an *extra* fetch right at
+         * that exact moment was actively harmful, not just redundant.
+         * Broken into KEEPALIVE_INTERVAL_MS-sized chunks (instead of one
+         * long wait) so keepalive_probe() can run periodically during
+         * whatever of that interval is still otherwise completely idle -
+         * see that function's own comment. */
+        uint32_t remaining_ms = wait_ms;
+        while (remaining_ms > 0) {
+            uint32_t chunk_ms = remaining_ms < KEEPALIVE_INTERVAL_MS ? remaining_ms : KEEPALIVE_INTERVAL_MS;
+            if (calendar_ui_wait_wake(chunk_ms)) {
+                break; /* early wake - loop back around to a fresh sync now */
+            }
+            remaining_ms -= chunk_ms;
+            if (remaining_ms > 0) {
+                keepalive_probe();
+            }
+        }
     }
 }
 

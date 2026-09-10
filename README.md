@@ -20,12 +20,14 @@ findings from that hardware bring-up (several are called out inline as
 but are still worth knowing about if you hit them on a different board
 revision or IDF version.
 
-Known, still-open issues (three others - the ambient clock's once-a-minute
+Known, still-open issues (four others - the ambient clock's once-a-minute
 digit change occasionally tearing, a boot-time hang/crash inside
-`update_title()`, and a recurring `LoadProhibited` panic inside LVGL's
-layout pass - were root-caused and fixed; see "Ambient clock digit
-tearing (fixed)", "update_title() boot-time crash (fixed)", and
-"Unsynchronized LVGL construction at boot (fixed)" below):
+`update_title()`, a recurring `LoadProhibited` panic inside LVGL's layout
+pass, and intermittent calendar sync failures tied to internal-RAM
+headroom - were root-caused and fixed; see "Ambient clock digit tearing
+(fixed)", "update_title() boot-time crash (fixed)", "Unsynchronized LVGL
+construction at boot (fixed)", and "Calendar sync reliability (internal-RAM
+headroom) (fixed)" below):
 
 - An intermittent crash right after the SD card mounts at boot, landing in
   LVGL's own background redraw task - self-recovers via the panic
@@ -174,6 +176,88 @@ Maintenance cost: any future `esp_lcd` fix or security patch from an
 ESP-IDF upgrade needs to be manually re-applied to this vendored copy too
 - it won't pick them up automatically. If Espressif ever fixes this
 upstream, drop `components/esp_lcd/` and go back to the SDK's own copy.
+
+### Calendar sync reliability (internal-RAM headroom) (fixed)
+
+Intermittent calendar refresh failures (`ESP_ERR_HTTP_FETCH_HEADER`,
+`ESP_ERR_HTTP_CONNECT`, `PK verify failed` certificate errors, even the
+occasional truncated/`bad JSON in response`) - reproducible enough across a
+long overnight test (2026-09-09/10) to rule out simple bad luck, but
+resistant to some of the obvious suspects: a manual device reset didn't
+fix it, neither did switching the router's Wi-Fi channel. Heap poisoning
+(see the boot-crash section above) was briefly re-enabled to check for a
+leak and found none - total free heap stayed essentially flat for hours.
+
+The actual driver: **which display state is active**. This board's
+internal RAM is tight enough (~45-63KB free depending on state - see
+`CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN`'s own comment for the ~45-55KB
+threshold TLS certificate verification needs) that whichever view is
+currently on screen (Month/Week/Day/Up next, all rendered as LVGL objects
+- event bars, badges, chips) measurably eats into the same budget TLS
+handshakes need, and the ICS calendar specifically (a fresh handshake to a
+different host, not reusing an already-warm connection the way the four
+Google Calendar API fetches do) was the first thing to become flaky when
+that budget got tight. Confirmed directly on real hardware: internal RAM
+free jumped by ~14KB the instant the active view's content was released
+(entering the ambient clock or sleep screen), and a previously-failing ICS
+fetch succeeded on the very next cycle with no other change.
+
+Three changes, together:
+
+- **Shared LVGL styles.** Every view (`ui_month.c`, `ui_week.c`,
+  `ui_day.c`, `ui_upnext.c`) plus the top bar's calendar legend
+  (`calendar_ui.c`) used to set every style property - radius, background
+  opacity, font, even text colour where there were really only ever two
+  possible values - directly on each event bar/chip/label object,
+  individually, every single time that content was rebuilt (every sync
+  cycle, every view switch). In LVGL 8, each of those calls that hits an
+  object with no matching style yet allocates that object its own
+  dynamically-sized "local style" out of internal RAM (small allocations
+  are kept off PSRAM entirely by `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL`).
+  Properties that are actually constant now live in a handful of static
+  `lv_style_t`s per file, attached via `lv_obj_add_style()` - free beyond
+  a pointer, instead of paying for a fresh local style on every object,
+  every cycle. Only genuinely per-object properties (mainly `bg_color`,
+  one of many per-calendar colours) stay direct per-object calls.
+- **Sync no longer skips while the display's asleep or showing the
+  ambient clock.** `calendar_ui_is_asleep()` covers both those states, not
+  just the deeper backlight-off sleep - so with presence continuously
+  detected, this used to mean *hours* with zero network activity at all.
+  `main/main.c`'s `net_task()` now syncs on its normal schedule regardless
+  of display state; `calendar_ui_refresh()`/`calendar_ui_notify_sync_failed()`
+  touching LVGL objects that just aren't currently visible costs nothing
+  that matters next to the fetch itself.
+- **A touch waking the display no longer forces an extra sync.** It used
+  to: `ui_screensaver.c`'s `go_calendar()` set the same event bit
+  `calendar_ui_request_sync()` uses for the settings page's manual
+  "tap the updated-HH:MM-label" gesture, which `net_task()` treated as
+  "go sync right now." But `go_calendar()` already repopulates the view
+  from `event_store`'s own cached data first (no network involved), and -
+  now that sync never stops running in the background - that data is
+  never more than `refresh_interval_s` stale to begin with. Forcing an
+  *extra* fetch right at the exact moment the view was being reconstructed
+  was actively harmful, not just redundant: it collided a fresh TLS
+  handshake with precisely the moment internal RAM was tightest. The
+  manual force-sync tap still works exactly as before - only the implicit
+  touch-wake stopped triggering one.
+- **A lightweight keep-alive**, `main.c`'s `keepalive_probe()`: a plain
+  TCP connect-then-close (no TLS, no data) to the same host calendar sync
+  talks to, roughly once a minute during whatever of the wait between
+  sync cycles is still otherwise completely idle. Added on a theory (a
+  connection sitting silent for minutes at a stretch being more exposed
+  to router-side connection-tracking/ARP staleness than one with regular
+  traffic) that didn't end up being the main driver - internal RAM
+  headroom was - but it's cheap, harmless, and logs only on failure, so
+  it was left in as a genuinely useful diagnostic even after the real
+  cause was found.
+
+Confirmed on real hardware afterward: the "view active" internal-RAM
+baseline that used to sit around ~44-45KB now typically sits around
+~57-58KB (matching the "view released" level from before), a deliberate
+worst-case stress test (every calendar enabled, a busy month, a forced
+sync) still succeeded cleanly even at its own tighter ~45-46KB moment, and
+a long run of sync cycles across every display state and several touch
+wakes came back clean throughout.
 
 ## What it does
 

@@ -15,8 +15,43 @@
 
 static lv_obj_t *s_list;
 
+/* Shared styles for the per-event item boxes/labels and the per-day-group
+ * date labels that ui_upnext_populate() creates and destroys fresh every
+ * sync cycle and view navigation - see ui_month.c's ensure_shared_styles()
+ * for the full reasoning (constant properties shared via one static
+ * lv_style_t cost nothing per object beyond a pointer, instead of every
+ * object paying for its own dynamically-sized local style out of internal
+ * RAM). Only bg_color (one of many per-calendar colours) stays a genuine
+ * per-object property. */
+static lv_style_t s_item_style;       /* event item box: radius + bg_opa */
+static lv_style_t s_item_lbl_style;   /* event item's own label: font + white text (always) */
+static lv_style_t s_date_lbl_style;   /* per-day-group date label: font + muted text (always) */
+static bool s_styles_ready;
+
+static void ensure_shared_styles(void)
+{
+    if (s_styles_ready) {
+        return;
+    }
+    s_styles_ready = true;
+
+    lv_style_init(&s_item_style);
+    lv_style_set_radius(&s_item_style, 6);
+    lv_style_set_bg_opa(&s_item_style, LV_OPA_COVER);
+
+    lv_style_init(&s_item_lbl_style);
+    lv_style_set_text_font(&s_item_lbl_style, &gcal_font_14);
+    lv_style_set_text_color(&s_item_lbl_style, lv_color_white());
+
+    lv_style_init(&s_date_lbl_style);
+    lv_style_set_text_font(&s_date_lbl_style, &gcal_font_14);
+    lv_style_set_text_color(&s_date_lbl_style, ui_color(UI_COLOR_TEXT_MUTED));
+}
+
 lv_obj_t *ui_upnext_create(lv_obj_t *parent)
 {
+    ensure_shared_styles();
+
     lv_obj_t *root = lv_obj_create(parent);
     lv_obj_remove_style_all(root);
     lv_obj_set_pos(root, UI_CONTENT_X, UI_CONTENT_Y);
@@ -75,9 +110,8 @@ static void add_item(lv_obj_t *items_col, const gcal_event_t *ev)
     lv_obj_remove_style_all(item);
     lv_obj_set_width(item, LV_PCT(100));
     lv_obj_set_height(item, ITEM_H);
-    lv_obj_set_style_radius(item, 6, 0);
+    lv_obj_add_style(item, &s_item_style, 0);
     lv_obj_set_style_bg_color(item, ui_color(ev->color), 0);
-    lv_obj_set_style_bg_opa(item, LV_OPA_COVER, 0);
     lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
 
     char text[160];
@@ -94,8 +128,7 @@ static void add_item(lv_obj_t *items_col, const gcal_event_t *ev)
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
     lv_obj_set_size(label, LV_PCT(100), ITEM_H - 8);
     lv_obj_align(label, LV_ALIGN_LEFT_MID, 10, 0);
-    lv_obj_set_style_text_font(label, &gcal_font_14, 0);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    lv_obj_add_style(label, &s_item_lbl_style, 0);
     lv_label_set_text(label, text);
 }
 
@@ -167,8 +200,7 @@ void ui_upnext_populate(lv_obj_t *root)
                 lv_obj_t *date_lbl = lv_label_create(group);
                 lv_obj_set_width(date_lbl, DATE_COL_W);
                 lv_label_set_long_mode(date_lbl, LV_LABEL_LONG_CLIP);
-                lv_obj_set_style_text_font(date_lbl, &gcal_font_14, 0);
-                lv_obj_set_style_text_color(date_lbl, ui_color(UI_COLOR_TEXT_MUTED), 0);
+                lv_obj_add_style(date_lbl, &s_date_lbl_style, 0);
                 char day_buf[24];
                 format_day(day, now, day_buf, sizeof(day_buf));
                 lv_label_set_text(date_lbl, day_buf);

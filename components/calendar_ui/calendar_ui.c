@@ -29,6 +29,46 @@ static lv_obj_t *s_nav_btns[4];
 static lv_obj_t *s_view_roots[4];
 static bool s_sync_failed = false;
 
+/* Shared styles for update_legend()'s calendar chips - rebuilt fresh on
+ * every single refresh cycle (now continuous, every refresh_interval_s
+ * regardless of display state - see main.c's net_task()), same
+ * "constant properties in one static lv_style_t instead of every object
+ * paying for its own dynamically-sized local style" reasoning as
+ * ui_month.c's ensure_shared_styles() and its siblings in the other three
+ * view files. Only dot's bg_color (one of many per-calendar colours)
+ * stays a genuine per-object property - chip only ever has two possible
+ * opacity states (enabled/disabled), so both get their own complete
+ * style rather than one shared style plus a per-object opacity call. */
+static lv_style_t s_legend_chip_enabled_style;   /* pad_column + opa=COVER */
+static lv_style_t s_legend_chip_disabled_style;  /* pad_column + opa=40% */
+static lv_style_t s_legend_dot_style;             /* radius=circle + bg_opa */
+static lv_style_t s_legend_lbl_style;              /* font + text_color (always the same) */
+static bool s_legend_styles_ready;
+
+static void ensure_legend_styles(void)
+{
+    if (s_legend_styles_ready) {
+        return;
+    }
+    s_legend_styles_ready = true;
+
+    lv_style_init(&s_legend_chip_enabled_style);
+    lv_style_set_pad_column(&s_legend_chip_enabled_style, 5);
+    lv_style_set_opa(&s_legend_chip_enabled_style, LV_OPA_COVER);
+
+    lv_style_init(&s_legend_chip_disabled_style);
+    lv_style_set_pad_column(&s_legend_chip_disabled_style, 5);
+    lv_style_set_opa(&s_legend_chip_disabled_style, LV_OPA_40);
+
+    lv_style_init(&s_legend_dot_style);
+    lv_style_set_radius(&s_legend_dot_style, LV_RADIUS_CIRCLE);
+    lv_style_set_bg_opa(&s_legend_dot_style, LV_OPA_COVER);
+
+    lv_style_init(&s_legend_lbl_style);
+    lv_style_set_text_font(&s_legend_lbl_style, &gcal_font_14);
+    lv_style_set_text_color(&s_legend_lbl_style, ui_color(UI_COLOR_TEXT));
+}
+
 /* Guards update_title()'s forced lv_refr_now() calls (see its own
  * comment) against running during calendar_ui_init()'s very first
  * select_view() - forcing a synchronous refresh before LVGL's own redraw
@@ -442,24 +482,21 @@ static void update_legend(void)
         lv_obj_remove_style_all(chip);
         lv_obj_set_size(chip, LV_SIZE_CONTENT, 22);
         lv_obj_set_flex_flow(chip, LV_FLEX_FLOW_ROW);
-        lv_obj_set_style_pad_column(chip, 5, 0);
+        lv_obj_add_style(chip, c->enabled ? &s_legend_chip_enabled_style : &s_legend_chip_disabled_style, 0);
         lv_obj_add_flag(chip, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_event_cb(chip, legend_chip_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
-        lv_obj_set_style_opa(chip, c->enabled ? LV_OPA_COVER : LV_OPA_40, 0);
 
         lv_obj_t *dot = lv_obj_create(chip);
         lv_obj_remove_style_all(dot);
         lv_obj_set_size(dot, 14, 14);
-        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_add_style(dot, &s_legend_dot_style, 0);
         lv_obj_set_style_bg_color(dot, ui_color(c->color), 0);
-        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
         lv_obj_set_align(dot, LV_ALIGN_LEFT_MID);
 
         lv_obj_t *lbl = lv_label_create(chip);
         lv_label_set_text(lbl, c->label[0] ? c->label : c->id);
-        lv_obj_set_style_text_font(lbl, &gcal_font_14, 0);
-        lv_obj_set_style_text_color(lbl, ui_color(UI_COLOR_TEXT), 0);
+        lv_obj_add_style(lbl, &s_legend_lbl_style, 0);
     }
 }
 
@@ -591,6 +628,8 @@ static void select_view_force_redraw(void)
 
 void calendar_ui_init(app_settings_t *cfg)
 {
+    ensure_legend_styles();
+
     s_cfg = cfg;
     s_cursor = ui_start_of_day(time(NULL));
 
