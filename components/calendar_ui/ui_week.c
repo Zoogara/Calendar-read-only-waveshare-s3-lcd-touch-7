@@ -22,7 +22,15 @@ static lv_obj_t *s_day_header[WEEK_DAYS];
 static lv_obj_t *s_day_date_label[WEEK_DAYS];
 static lv_obj_t *s_day_allday_box[WEEK_DAYS];
 static lv_obj_t *s_day_col[WEEK_DAYS];
+static lv_obj_t *s_body;                /* the vertically-scrollable hour grid */
 static time_t s_week_start;
+
+/* On entering week view (or navigating / re-syncing while in it) the hour
+ * grid is scrolled so that GRID_LOOKBACK_H hours before the current time
+ * sits at the top of the viewport, rather than always landing on the
+ * configured start hour. Keeps "on now" and "just finished" both visible
+ * without a manual scroll. Mirrors ui_day.c's align_grid_to_now(). */
+#define GRID_LOOKBACK_H 3
 
 static int day_col_w(void)
 {
@@ -175,6 +183,8 @@ lv_obj_t *ui_week_create(lv_obj_t *parent)
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
         lv_obj_set_pos(lbl, 2, h * ROW_H + 2);
     }
+
+    s_body = body;
 
     int colw2 = day_col_w();
     for (int d = 0; d < WEEK_DAYS; d++) {
@@ -331,6 +341,34 @@ void ui_week_release(void)
     }
 }
 
+/* See GRID_LOOKBACK_H's comment. Clamped to the grid's real scroll range,
+ * so early morning it just pins to the top and late at night to the
+ * bottom. body's height is the fixed value ui_week_create() set it to. */
+static void align_grid_to_now(void)
+{
+    if (s_body == NULL) {
+        return;
+    }
+    time_t now;
+    time(&now);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    double now_h = lt.tm_hour + lt.tm_min / 60.0;
+
+    int viewport_px = UI_CONTENT_H - HEADER_H;
+    int target_px = (int)((now_h - GRID_LOOKBACK_H - s_hour_start) * ROW_H);
+    int max_px = (s_hour_end - s_hour_start) * ROW_H - viewport_px;
+    if (max_px < 0) {
+        max_px = 0;
+    }
+    if (target_px < 0) {
+        target_px = 0;
+    } else if (target_px > max_px) {
+        target_px = max_px;
+    }
+    lv_obj_scroll_to_y(s_body, target_px, LV_ANIM_OFF);
+}
+
 void ui_week_populate(lv_obj_t *root, time_t cursor)
 {
     (void)root;
@@ -419,6 +457,8 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
             add_boundary_indicator(s_day_col[d], false);
         }
     }
+
+    align_grid_to_now();
 }
 
 void ui_week_title(time_t cursor, char *out, size_t out_sz)
