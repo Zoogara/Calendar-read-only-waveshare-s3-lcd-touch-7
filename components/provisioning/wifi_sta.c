@@ -76,6 +76,24 @@ esp_err_t wifi_sta_connect(const app_settings_t *cfg, uint32_t timeout_ms)
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
         ESP_ERROR_CHECK(esp_wifi_start());
+        /* Turn OFF modem-sleep power save (ESP-IDF defaults STA to
+         * WIFI_PS_MIN_MODEM). This board is mains-powered - a wall
+         * display - so there's no battery-life reason to have the radio
+         * dozing between DTIM beacons, and on real hardware (2026-09-10)
+         * leaving it on correlated with persistently flaky calendar
+         * syncs: intermittent TLS handshake failures
+         * (FETCH_HEADER/CONNECT/PK-verify) and the occasional 35-second
+         * fetch, all with healthy RAM and a strong-signal AP. The serial
+         * log was full of "wifi:m f null" (failed power-save NULL-data
+         * frames - the station's "going to sleep" / "awake now"
+         * signalling to the AP) and "bcn_timeout,ap_probe_send_start"
+         * (missed beacons entirely), i.e. the AP's view of this station's
+         * power state kept drifting out of sync with reality, which drops
+         * or delays packets mid-transfer. A neighbouring device doing
+         * near-constant traffic (so its radio never actually sleeps)
+         * never had the problem - the tell that this was the cause.
+         * WIFI_PS_NONE keeps the radio always-on and always-listening. */
+        ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
         s_wifi_started = true;
         ESP_LOGI(TAG, "connecting to \"%s\"...", cfg->wifi_ssid);
     } else {
