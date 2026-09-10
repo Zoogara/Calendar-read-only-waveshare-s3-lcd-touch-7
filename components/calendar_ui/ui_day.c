@@ -20,6 +20,14 @@ static int s_hour_end = APP_SETTINGS_DEFAULT_VIEW_END_HOUR;
 
 static lv_obj_t *s_allday_box;
 static lv_obj_t *s_event_col;
+static lv_obj_t *s_body;                /* the vertically-scrollable hour grid */
+
+/* On entering day view (or navigating / re-syncing while in it) the hour
+ * grid is scrolled so that GRID_LOOKBACK_H hours before the current time
+ * sits at the top of the viewport, rather than always landing on the
+ * configured start hour. Keeps "on now" and "just finished" both visible
+ * without a manual scroll. Mirrors ui_week.c's align_grid_to_now(). */
+#define GRID_LOOKBACK_H 3
 
 static int col_w(void)
 {
@@ -147,7 +155,37 @@ lv_obj_t *ui_day_create(lv_obj_t *parent)
     lv_obj_set_size(s_event_col, col_w(), body_content_h);
     lv_obj_clear_flag(s_event_col, LV_OBJ_FLAG_SCROLLABLE);
 
+    s_body = body;
+
     return root;
+}
+
+/* See GRID_LOOKBACK_H's comment. Clamped to the grid's real scroll range,
+ * so early morning it just pins to the top and late at night to the
+ * bottom. body's height is the fixed value ui_day_create() set it to. */
+static void align_grid_to_now(void)
+{
+    if (s_body == NULL) {
+        return;
+    }
+    time_t now;
+    time(&now);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    double now_h = lt.tm_hour + lt.tm_min / 60.0;
+
+    int viewport_px = UI_CONTENT_H - HEADER_H - 1;
+    int target_px = (int)((now_h - GRID_LOOKBACK_H - s_hour_start) * ROW_H);
+    int max_px = (s_hour_end - s_hour_start) * ROW_H - viewport_px;
+    if (max_px < 0) {
+        max_px = 0;
+    }
+    if (target_px < 0) {
+        target_px = 0;
+    } else if (target_px > max_px) {
+        target_px = max_px;
+    }
+    lv_obj_scroll_to_y(s_body, target_px, LV_ANIM_OFF);
 }
 
 /* A small solid badge pinned to the top/bottom edge of the scrollable
@@ -381,6 +419,8 @@ void ui_day_populate(lv_obj_t *root, time_t cursor)
     if (has_after) {
         add_boundary_indicator(s_event_col, false);
     }
+
+    align_grid_to_now();
 }
 
 void ui_day_title(time_t cursor, char *out, size_t out_sz)
