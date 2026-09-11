@@ -261,6 +261,10 @@ wakes came back clean throughout.
 
 ## What it does
 
+![Month view](docs/month_calendar.png)
+![Up next list](docs/up_next.png)
+![Ambient clock](docs/idle_clock.png)
+
 - Pulls events from **multiple Google Calendars** (your primary calendar,
   a family calendar, a work calendar, etc.) and **ICS feeds**, and shows
   each in a colour you pick, with a legend you can tap to show/hide a
@@ -326,6 +330,8 @@ backlight-driver test point, plus an external light sensor - see
 gracefully without either (no presence sensor: idle timeout always goes
 straight to sleep; no light sensor: the backlight just stays wherever it
 last was, no auto-dimming).
+
+![Wiring added for presence sensing and backlight auto-dimming](docs/wiring.svg)
 
 ## Repo layout
 
@@ -677,6 +683,10 @@ controller), mounted away from the screen so it reads room light rather
 than the display's own glow. Together these let the firmware drive real
 PWM brightness control and tie it to ambient light, instead of the simple
 backlight on/off the board offered out of the box.
+
+![Soldered wire to the backlight boost driver's PWM dimming test point](docs/brightness_solder.jpg)
+*Photo: [inytar/waveshare-esp32-s3-touch-lcd-7-esphome](https://github.com/inytar/waveshare-esp32-s3-touch-lcd-7-esphome),
+used to locate the test point before soldering.*
 
 Both additions are optional - without either, the firmware just leaves
 the backlight wherever it last was (`light_sensor_init()` fails at boot,
