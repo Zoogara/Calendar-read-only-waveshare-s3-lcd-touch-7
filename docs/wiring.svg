@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 660" font-family="'Segoe UI',Helvetica,Arial,sans-serif" font-size="13">
+  <rect x="0" y="0" width="980" height="660" fill="#ffffff" stroke="#c9c9c9" stroke-width="1"/>
+
+  <text x="24" y="34" font-size="19" font-weight="700" fill="#1a1a1a">Wiring — added hardware for backlight auto-dimming + presence</text>
+  <text x="24" y="54" fill="#555">Waveshare ESP32-S3-Touch-LCD-7. Everything below is soldered on; the board as sold needs none of it.</text>
+
+  <!-- ================= BOARD ================= -->
+  <rect x="40" y="90" width="300" height="470" rx="10" fill="#f4f7fb" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="60" y="118" font-size="15" font-weight="700" fill="#1a365d">Waveshare ESP32-S3-Touch-LCD-7</text>
+  <text x="60" y="136" fill="#4a5568">ESP32-S3 · stock board, unmodified</text>
+
+  <!-- on-board I2C peripherals -->
+  <rect x="60" y="156" width="260" height="86" rx="6" fill="#eef2f7" stroke="#a0aec0"/>
+  <text x="72" y="176" font-weight="700" fill="#2d3748">Shared I2C bus  (SDA GPIO8 · SCL GPIO9)</text>
+  <text x="72" y="196" fill="#4a5568">• CH422G I/O expander  (on-board)</text>
+  <text x="72" y="214" fill="#4a5568">• GT911 capacitive touch  (on-board)</text>
+  <text x="72" y="232" fill="#4a5568">• BH1750 light sensor  0x23  ← new</text>
+
+  <!-- CH422G backlight gate note -->
+  <rect x="60" y="256" width="260" height="60" rx="6" fill="#eef2f7" stroke="#a0aec0"/>
+  <text x="72" y="276" font-weight="700" fill="#2d3748">CH422G EXIO2 → backlight enable</text>
+  <text x="72" y="294" fill="#4a5568">on/off power gate only — unchanged</text>
+  <text x="72" y="310" fill="#4a5568">from how the board shipped</text>
+
+  <!-- pin header -->
+  <text x="60" y="352" font-weight="700" fill="#2d3748">Pins used for the new wiring</text>
+  <g>
+    <circle cx="316" cy="372" r="4" fill="#e53e3e"/><text x="72" y="376" fill="#2d3748">3V3</text>
+    <circle cx="316" cy="398" r="4" fill="#1a1a1a"/><text x="72" y="402" fill="#2d3748">GND</text>
+    <circle cx="316" cy="424" r="4" fill="#3182ce"/><text x="72" y="428" fill="#2d3748">GPIO8 — I2C SDA</text>
+    <circle cx="316" cy="450" r="4" fill="#0d9488"/><text x="72" y="454" fill="#2d3748">GPIO9 — I2C SCL</text>
+    <circle cx="316" cy="476" r="4" fill="#dd6b20"/><text x="72" y="480" fill="#2d3748">GPIO16 — LEDC PWM  (was unused)</text>
+    <circle cx="316" cy="502" r="4" fill="#805ad5"/><text x="72" y="506" fill="#2d3748">GPIO6 — LD2410 OUT input  (was unused)</text>
+  </g>
+
+  <!-- ================= MODULES ================= -->
+  <!-- BH1750 -->
+  <rect x="560" y="96" width="380" height="120" rx="10" fill="#f0fff4" stroke="#38a169" stroke-width="2"/>
+  <text x="580" y="122" font-size="15" font-weight="700" fill="#22543d">GY-30 / BH1750 ambient light sensor</text>
+  <text x="580" y="142" fill="#2f855a">I2C addr 0x23 (ADDR pin low/floating). Continuous H-res mode,</text>
+  <text x="580" y="160" fill="#2f855a">polled ~1 Hz. Mount away from the screen — reads room light,</text>
+  <text x="580" y="178" fill="#2f855a">not the display's own glow.</text>
+  <text x="580" y="202" fill="#4a5568">VCC→3V3  GND→GND  SDA→GPIO8  SCL→GPIO9</text>
+
+  <!-- Backlight driver PWM test point -->
+  <rect x="560" y="260" width="380" height="120" rx="10" fill="#fffaf0" stroke="#dd6b20" stroke-width="2"/>
+  <text x="580" y="286" font-size="15" font-weight="700" fill="#7b341e">Backlight boost driver — PWM dimming test point</text>
+  <text x="580" y="306" fill="#9c4221">A genuine PWM dimming input on the driver board, with no</text>
+  <text x="580" y="324" fill="#9c4221">ESP32-S3 pin on it from the factory. Now driven by GPIO16 via</text>
+  <text x="580" y="342" fill="#9c4221">LEDC ch0 / timer0 @ 1220 Hz, 14-bit (16384 steps).</text>
+  <text x="580" y="366" fill="#4a5568">test point → GPIO16     (CH422G EXIO2 gate still separate)</text>
+
+  <!-- Presence sensor -->
+  <rect x="560" y="424" width="380" height="120" rx="10" fill="#faf5ff" stroke="#805ad5" stroke-width="2"/>
+  <text x="580" y="450" font-size="15" font-weight="700" fill="#44337a">LD2410 mmWave presence radar  (active-high)</text>
+  <text x="580" y="470" fill="#6b46c1">OUT high = someone there, low = clear. GPIO6 uses its internal</text>
+  <text x="580" y="488" fill="#6b46c1">pull-down — the line floats and gives false triggers without it.</text>
+  <text x="580" y="506" fill="#6b46c1">Polled ~1 Hz. (UART config pins on the LD2410 are unused here.)</text>
+  <text x="580" y="530" fill="#4a5568">OUT → GPIO6     VCC / GND → board power</text>
+
+  <!-- ================= WIRES ================= -->
+  <!-- 3V3 (red) : board 3V3 -> BH1750 & presence -->
+  <path d="M320 372 H430 V150 H560" fill="none" stroke="#e53e3e" stroke-width="2"/>
+  <path d="M430 372 V478 H560" fill="none" stroke="#e53e3e" stroke-width="2"/>
+  <!-- GND (black) -->
+  <path d="M320 398 H446 V168 H560" fill="none" stroke="#1a1a1a" stroke-width="2"/>
+  <path d="M446 398 V496 H560" fill="none" stroke="#1a1a1a" stroke-width="2"/>
+  <!-- SDA (blue) -->
+  <path d="M320 424 H478 V186 H560" fill="none" stroke="#3182ce" stroke-width="2"/>
+  <!-- SCL (teal) -->
+  <path d="M320 450 H494 V204 H560" fill="none" stroke="#0d9488" stroke-width="2"/>
+  <!-- GPIO16 PWM (orange) -->
+  <path d="M320 476 H510 V360 H560" fill="none" stroke="#dd6b20" stroke-width="2.5"/>
+  <!-- GPIO6 presence (purple) -->
+  <path d="M320 502 H524 V524 H560" fill="none" stroke="#805ad5" stroke-width="2.5"/>
+
+  <!-- ================= LEGEND ================= -->
+  <text x="24" y="596" font-weight="700" fill="#2d3748">Wire colours</text>
+  <g transform="translate(24,606)">
+    <line x1="0" y1="12" x2="26" y2="12" stroke="#e53e3e" stroke-width="3"/><text x="34" y="16" fill="#4a5568">3V3</text>
+    <line x1="90" y1="12" x2="116" y2="12" stroke="#1a1a1a" stroke-width="3"/><text x="124" y="16" fill="#4a5568">GND</text>
+    <line x1="190" y1="12" x2="216" y2="12" stroke="#3182ce" stroke-width="3"/><text x="224" y="16" fill="#4a5568">I2C SDA (GPIO8)</text>
+    <line x1="360" y1="12" x2="386" y2="12" stroke="#0d9488" stroke-width="3"/><text x="394" y="16" fill="#4a5568">I2C SCL (GPIO9)</text>
+    <line x1="530" y1="12" x2="556" y2="12" stroke="#dd6b20" stroke-width="3"/><text x="564" y="16" fill="#4a5568">GPIO16 PWM</text>
+    <line x1="680" y1="12" x2="706" y2="12" stroke="#805ad5" stroke-width="3"/><text x="714" y="16" fill="#4a5568">GPIO6 ← LD2410 OUT</text>
+  </g>
+</svg>
