@@ -795,11 +795,12 @@ which you then add here as a normal calendar or ICS source.
 1. Open Google Calendar in your web browser.
 2. In the left sidebar, find **Other calendars**, click the **+** icon,
    and select **Create new calendar**.
-3. Name the calendar **My Tasks Sync** and click **Create calendar**.
+3. Name the calendar **Task Sync** and click **Create calendar**. (This
+   must match `CALENDAR_NAME` in the script below exactly.)
 
 ### Step 2: Retrieve the secret iCal address
 
-1. Under **My calendars** on the left, hover over **My Tasks Sync**,
+1. Under **My calendars** on the left, hover over **Task Sync**,
    click the three dots, and select **Settings and sharing**.
 2. Scroll down to the **Integrate calendar** section.
 3. Locate the **Secret address in iCal format** field.
@@ -815,63 +816,69 @@ which you then add here as a normal calendar or ICS source.
 ```javascript
 function syncTasksToCalendar() {
   // CONFIGURATION
-  const CALENDAR_NAME = "My Tasks Sync";
-  const DAYS_LOOKBACK = 30;  // Includes completed tasks from past 30 days
-  const DAYS_LOOKAHEAD = 30; // Includes upcoming tasks for next 30 days
+  const CALENDAR_NAME = "Task Sync";
+  const DAYS_LOOKBACK = 30;  // Past completed tasks window
+  const DAYS_LOOKAHEAD = 30; // Future tasks window
 
-  // 1. Locate destination calendar
+  // 1. Get the destination calendar
   const calendars = CalendarApp.getCalendarsByName(CALENDAR_NAME);
   if (calendars.length === 0) {
-    Logger.log("Calendar not found! Ensure the name matches CALENDAR_NAME exactly.");
+    Logger.log("Calendar not found! Make sure the name matches exactly.");
     return;
   }
   const calendar = calendars[0];
 
-  // 2. Define sync range
+  // 2. Define date boundaries
   const now = new Date();
   const pastDate = new Date();
   pastDate.setDate(now.getDate() - DAYS_LOOKBACK);
-
   const futureDate = new Date();
   futureDate.setDate(now.getDate() + DAYS_LOOKAHEAD);
 
-  // 3. Clear existing sync events to prevent duplicates
+  // 3. Clear existing calendar events in the date window to prevent duplicates
   const existingEvents = calendar.getEvents(pastDate, futureDate);
   for (const event of existingEvents) {
     event.deleteEvent();
   }
 
-  // 4. Retrieve task lists and items
-  const taskLists = Tasks.Tasklists.list().items;
-  if (!taskLists || taskLists.length === 0) return;
+  // 4. Fetch all user Task Lists
+  const taskListsResponse = Tasks.Tasklists.list();
+  const taskLists = (taskListsResponse && taskListsResponse.items) || [];
+  if (taskLists.length === 0) return;
 
   for (const taskList of taskLists) {
-    // Incomplete tasks due before futureDate
-    const incompleteTasks = Tasks.Tasks.list(taskList.id, {
+    // Fetch incomplete tasks due up to futureDate
+    const incompleteResponse = Tasks.Tasks.list(taskList.id, {
       showCompleted: false,
       showHidden: true,
       dueMax: futureDate.toISOString()
-    }).items || [];
+    });
+    const incompleteTasks = (incompleteResponse && incompleteResponse.items) || [];
 
-    // Tasks completed within past 30 days
-    const completedTasks = Tasks.Tasks.list(taskList.id, {
+    // Fetch completed tasks updated/completed within the past 30 days
+    const completedResponse = Tasks.Tasks.list(taskList.id, {
       showCompleted: true,
       showHidden: true,
       completedMin: pastDate.toISOString()
-    }).items || [];
+    });
+    const completedTasks = (completedResponse && completedResponse.items) || [];
 
+    // Combine both task arrays into one list to process
     const allTasks = incompleteTasks.concat(completedTasks);
 
     for (const task of allTasks) {
       if (!task.title) continue;
 
       const isCompleted = task.status === "completed";
-      // U+2611 (☑) for completed, U+2610 (☐) for incomplete
+      // Select Unicode character: U+2611 (☑) for completed, U+2610 (☐) for incomplete
       const symbol = isCompleted ? "☑" : "☐";
-
+      // Determine the event date:
+      // - For completed tasks: use completion date or due date (fallback to today)
+      // - For incomplete tasks: use due date (fallback to today)
       let targetDateString = isCompleted ? (task.completed || task.due) : task.due;
       let eventDate = targetDateString ? new Date(targetDateString) : new Date();
 
+      // Ensure the task falls within our 30-day lookback/lookahead window
       if (eventDate >= pastDate && eventDate <= futureDate) {
         calendar.createAllDayEvent(`${symbol} ${task.title}`, eventDate, {
           description: task.notes || ''
@@ -881,6 +888,16 @@ function syncTasksToCalendar() {
   }
 }
 ```
+
+   Each run wipes the `Task Sync` calendar's events in the ±30-day window
+   and rebuilds them from scratch, so there are never duplicates. It
+   walks every task list, taking incomplete tasks due within the next 30
+   days and tasks completed in the last 30, and writes each as an all-day
+   event titled `☐ <task>` or `☑ <task>` (the display renders those
+   checkbox glyphs natively). The `Tasks.Tasklists.list()` /
+   `Tasks.Tasks.list()` responses are each null-guarded, so an account
+   with no task lists, or a list that returns no items, is skipped
+   cleanly rather than throwing.
 
 3. Enable the Google Tasks API service:
    - In the left panel, click **Services** (**+**).
@@ -905,7 +922,7 @@ function syncTasksToCalendar() {
 
 ### Step 5: Add it to the display
 
-"My Tasks Sync" is a calendar in your own Google account, so - unlike a
+"Task Sync" is a calendar in your own Google account, so - unlike a
 calendar someone else owns and won't share - the simplest path is to add
 it as a normal **Google**-source calendar rather than an ICS feed:
 share it with the service account's email address exactly as described
