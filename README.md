@@ -1,4 +1,4 @@
-**Caveat:** Developed in conjunction with Claude AI.
+**Caveat:** Developed in conjunction with Claude AI.  Apologies for it's verbosity...
 
 # Google Calendar wall display — Waveshare ESP32-S3-Touch-LCD-7
 
