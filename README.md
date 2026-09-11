@@ -665,27 +665,37 @@ delays (see "Idle screensaver" above) - harmless, just not useful.
 
 ## Backlight auto-dimming
 
-Two physical additions to the board as sold, both optional - without
-either, the firmware just leaves the backlight wherever it last was:
+Two physical changes support the auto-dimming feature. A wire now runs
+from the ESP32-S3's GPIO16 (previously unused) to a dedicated PWM dimming
+test point on the backlight boost driver, soldered on separately from the
+CH422G I/O expander's existing backlight-enable line — that line is
+untouched from how the board shipped and is still used purely as an
+on/off power gate. Separately, a GY-30 (BH1750) ambient light sensor
+module has been wired onto the board's existing shared I2C bus (the same
+SDA/SCL lines already used by the CH422G expander and GT911 touch
+controller), mounted away from the screen so it reads room light rather
+than the display's own glow. Together these let the firmware drive real
+PWM brightness control and tie it to ambient light, instead of the simple
+backlight on/off the board offered out of the box.
 
-- **A wire from `GPIO16` to a PWM dimming test point** on the backlight
-  boost driver. The CH422G expander's own backlight line
-  (`CH422G_EXIO_LCD_BL`) only ever gates the driver fully on/off from the
-  factory - confirmed on real hardware that a separate test point on the
-  driver board is a genuine PWM *dimming* input, unconnected to any
-  ESP32-S3 pin out of the box. `board_bsp.c` drives that test point via
-  GPIO16 and one of the SoC's LEDC PWM channels; the CH422G gate is left
-  exactly as it ships and still used for a true, zero-current off (see
-  `bsp_display_set_brightness_permille()`'s own comment for the exact
-  power-up/power-down sequencing between the two).
-- **A GY-30/BH1750 ambient light sensor breakout**, wired onto the same
-  shared I2C bus as the CH422G expander and GT911 touch controller
-  (`bsp_get_i2c_bus()`), at its default address `0x23` (`ADDR` pin
-  low/floating, how these modules ship - doesn't collide with anything
-  else already on that bus). `components/light_sensor/` starts it in
-  Continuous High-Resolution Mode and polls it once a second, from the
-  same timer that drives the ambient clock and presence sensor
-  (`ui_screensaver.c`'s `ambient_brightness_tick()`).
+Both additions are optional - without either, the firmware just leaves
+the backlight wherever it last was (`light_sensor_init()` fails at boot,
+logged and not fatal). Specifics worth knowing:
+
+- The GPIO16 test point is a genuine PWM *dimming* input to the backlight
+  boost driver (confirmed on real hardware), not an independent supply -
+  it only has any effect while the CH422G enable gate is also on.
+  `board_bsp.c` drives it via one of the SoC's LEDC PWM channels; see
+  `bsp_display_set_brightness_permille()`'s own comment for the
+  power-up/power-down sequencing between the PWM duty and the CH422G gate
+  (which still provides a true, zero-current off).
+- The BH1750 sits at its default I2C address `0x23` (`ADDR` pin
+  low/floating, how these modules ship - no collision with the CH422G or
+  GT911 already on that bus), reached via `bsp_get_i2c_bus()`.
+  `components/light_sensor/` starts it in Continuous High-Resolution Mode
+  and polls it once a second, from the same timer that drives the ambient
+  clock and presence sensor (`ui_screensaver.c`'s
+  `ambient_brightness_tick()`).
 
 The LEDC PWM channel runs at **1220Hz, 14-bit resolution** (16384 duty
 steps) - not an arbitrary choice: this matches
