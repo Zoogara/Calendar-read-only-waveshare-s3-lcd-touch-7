@@ -20,14 +20,21 @@ findings from that hardware bring-up (several are called out inline as
 but are still worth knowing about if you hit them on a different board
 revision or IDF version.
 
-Known, still-open issues (four others - the ambient clock's once-a-minute
-digit change occasionally tearing, a boot-time hang/crash inside
-`update_title()`, a recurring `LoadProhibited` panic inside LVGL's layout
-pass, and intermittent calendar sync failures tied to internal-RAM
-headroom - were root-caused and fixed; see "Ambient clock digit tearing
-(fixed)", "update_title() boot-time crash (fixed)", "Unsynchronized LVGL
-construction at boot (fixed)", and "Calendar sync reliability (internal-RAM
-headroom) (fixed)" below):
+> **This is the "no extra hardware" branch.** It carries every bug fix
+> from the main line but drops the two hardware add-ons (the `GPIO6`
+> presence sensor / ambient clock, and the `GPIO16` PWM backlight
+> dimming + BH1750 light sensor). The idle screensaver is the plain
+> backlight-off noise pattern; backlight is hard on/off only. If you
+> have (or want) those add-ons, use `main` instead.
+
+Known, still-open issues (four others - an RGB-panel framebuffer-restart
+bug that showed up as occasional redraw tearing, a boot-time hang/crash
+inside `update_title()`, a recurring `LoadProhibited` panic inside LVGL's
+layout pass, and intermittent calendar sync failures tied to internal-RAM
+headroom - were root-caused and fixed; see "RGB panel VSYNC framebuffer
+restart (fixed)", "update_title() boot-time crash (fixed)", "Unsynchronized
+LVGL construction at boot (fixed)", and "Calendar sync reliability
+(internal-RAM headroom) (fixed)" below):
 
 - An intermittent crash right after the SD card mounts at boot, landing in
   LVGL's own background redraw task - self-recovers via the panic
@@ -115,7 +122,7 @@ each still worth keeping in mind for anything similar in the future:
   fix, including on fresh boots where no dialog had ever been touched.
 
 The real cause: `calendar_ui_init()` builds the **entire** UI - nav rail,
-top bar, legend, all four views, the ambient clock overlay - running in
+top bar, legend, all four views - running in
 `app_main()`'s own task, with no `bsp_lvgl_lock()` held at all. By the
 time it runs, `board_bsp.c`'s `lvgl_init()` (called earlier, from
 `bsp_display_init()`) has already started `esp_lvgl_port`'s background
@@ -139,10 +146,13 @@ hardware: no recurrence since, and boot completes measurably faster too
 (the background task no longer wastes cycles contending on a half-built
 tree).
 
-### Ambient clock digit tearing (fixed)
+### RGB panel VSYNC framebuffer restart (fixed)
 
-The ambient clock's once-a-minute digit change used to occasionally show a
-single frame of visible tearing before settling on the correct new time.
+A partial-frame redraw on this dual-framebuffer panel used to occasionally
+show a single frame of visible tearing before settling. (It was easiest to
+reproduce on the main branch's ambient clock, whose once-a-minute digit
+change is exactly such an update; this branch has no ambient clock, but the
+same driver bug can bite any redraw that lands in the second framebuffer.)
 Extensive on-device correlation testing (logging which of the RGB panel's
 two physical framebuffers each redraw landed in, then deliberately
 shifting where those buffers land in PSRAM and swapping which one LVGL
@@ -199,7 +209,7 @@ different host, not reusing an already-warm connection the way the four
 Google Calendar API fetches do) was the first thing to become flaky when
 that budget got tight. Confirmed directly on real hardware: internal RAM
 free jumped by ~14KB the instant the active view's content was released
-(entering the ambient clock or sleep screen), and a previously-failing ICS
+(entering the sleep screen), and a previously-failing ICS
 fetch succeeded on the very next cycle with no other change.
 
 Three changes, together:
@@ -219,12 +229,11 @@ Three changes, together:
   a pointer, instead of paying for a fresh local style on every object,
   every cycle. Only genuinely per-object properties (mainly `bg_color`,
   one of many per-calendar colours) stay direct per-object calls.
-- **Sync no longer skips while the display's asleep or showing the
-  ambient clock.** `calendar_ui_is_asleep()` covers both those states, not
-  just the deeper backlight-off sleep - so with presence continuously
-  detected, this used to mean *hours* with zero network activity at all.
-  `main/main.c`'s `net_task()` now syncs on its normal schedule regardless
-  of display state; `calendar_ui_refresh()`/`calendar_ui_notify_sync_failed()`
+- **Sync no longer skips while the display's asleep.** `net_task()` used
+  to gate syncs on `calendar_ui_is_asleep()`, so an overnight idle stretch
+  meant hours with zero network activity at all. `main/main.c`'s
+  `net_task()` now syncs on its normal schedule regardless of display
+  state; `calendar_ui_refresh()`/`calendar_ui_notify_sync_failed()`
   touching LVGL objects that just aren't currently visible costs nothing
   that matters next to the fetch itself.
 - **A touch waking the display no longer forces an extra sync.** It used
@@ -270,44 +279,22 @@ wakes came back clean throughout.
 - **Month view**: a 6x7 grid with coloured event chips per day; tap a day
   to jump into Day view.
 - **Week view**: an hourly grid (6am-10pm by default) across 7 day columns,
-  with an all-day-event strip along the top.
-- **Day view**: the same hourly grid for a single day, full width.
+  with an all-day-event strip along the top. On entry the grid scrolls to
+  3 hours before the current time.
+- **Day view**: the same hourly grid for a single day, full width, with
+  the same "3 hours before now" scroll-on-entry.
 - **Up next**: a scrollable list of upcoming events across all visible
   calendars, soonest first.
 - Auto-refreshes from Google on a timer (default every 5 minutes).
-- **Idle screensaver**: three states, driven by the idle timer and the
-  presence sensor (see "Presence sensor" below). After a configurable idle
-  timeout, the calendar gives way to a big ambient clock - "HH:MM" with
-  each digit tinted using the same colours as your own calendars, vivid
-  during daylight hours and muted at night (no separate setting for this -
-  it reuses the same view_start_hour/view_end_hour that bound the Day/Week
-  views) - but only if someone's actually in front of the presence sensor
-  at that moment; if not, the display goes straight to sleep instead
-  (below). If the clock's showing and presence is then continuously absent
-  for 5 minutes, it goes to sleep too. Independent of all of that, the
-  backlight's actual physical brightness auto-dims off ambient room light
-  whenever a light sensor is fitted (see "Backlight auto-dimming" below) -
-  it runs continuously in both the calendar and ambient-clock states, so a
-  dark room dims the physical backlight *and* mutes the clock's on-screen
-  colours at the same time, from two independent mechanisms. Sleep means
-  the backlight actually turns fully off (not just dimmed) and a
-  slowly-regenerating noise pattern (anti-image-retention, not just a
-  blank screen) replaces whatever was showing - presence returning wakes
-  it back to the ambient clock, never straight to the calendar, at
-  whatever brightness auto-dimming last computed rather than a flash back
-  to full. Only an actual touch brings the calendar back, from any state.
-  If the display's been away from the calendar 15+ minutes by the time
-  that touch happens, it resets to Month view on today's date rather than
-  resuming whatever view/date was showing before - the idea being that
-  whatever day or week you were looking at before walking away is unlikely
-  to still be what you want to see later. The clock icon in the top bar
-  (left of the settings gear) toggles the ambient clock on/off for the
-  current session only - toggling it off makes idle timeout go straight
-  to the backlight-off sleep state instead, regardless of presence,
-  matching the screensaver's pre-clock behaviour. On/off is shown by
-  dimming the icon rather than swapping its shape, since there's no
-  built-in "disabled clock" glyph to switch to. This is a runtime-only
-  switch, not a saved setting: it's always back on after a reboot.
+- **Idle screensaver**: after a configurable idle timeout with no touch,
+  the backlight turns fully off and a slowly-regenerating full-screen
+  noise pattern (anti-image-retention, not just a blank screen) replaces
+  the calendar. Any touch wakes it back to the calendar. If the display
+  has been asleep 15+ minutes by the time that touch happens, it resets to
+  Month view on today's date rather than resuming whatever view/date was
+  showing before - the idea being that whatever day or week you were
+  looking at before walking away is unlikely to still be what you want to
+  see later.
 
 ## Hardware
 
@@ -318,14 +305,10 @@ Waveshare ESP32-S3-Touch-LCD-7:
 - GT911 capacitive touch (I2C)
 - CH422G I2C IO expander for backlight enable + touch reset
 
-The board as sold needs no external wiring at all for display/touch/SD.
-Two optional additions — a presence sensor on `GPIO6` (see "Presence
-sensor" below) and ambient-light-driven backlight dimming (a wire to a
-backlight-driver test point, plus an external light sensor - see
-"Backlight auto-dimming" below) — do need it; the firmware degrades
-gracefully without either (no presence sensor: idle timeout always goes
-straight to sleep; no light sensor: the backlight just stays wherever it
-last was, no auto-dimming).
+The board as sold needs no external wiring at all - this branch uses
+nothing beyond the stock hardware. (The `main` branch adds an optional
+`GPIO6` presence sensor and `GPIO16` PWM backlight dimming; if you want
+those, use `main`.)
 
 ## Repo layout
 
@@ -333,31 +316,22 @@ last was, no auto-dimming).
 main/                    app_main: boot sequence, wires everything together
 components/
   app_common/            shared app_settings_t config struct (header-only)
-  board_bsp/              display + touch + CH422G + LVGL bring-up, plus
-                           the backlight's LEDC PWM dimming channel (see
-                           "Backlight auto-dimming" below)
+  board_bsp/              display + touch + CH422G + LVGL bring-up
   provisioning/            first-boot Wi-Fi AP + web form, NVS config storage,
                            normal-mode Wi-Fi station connect
   gcal/                    Google service-account auth (JWT) + Calendar API
                            client + in-RAM event store
   calendar_ui/             the four LVGL screens (month/week/day/up-next)
                            plus the nav rail / top bar / legend shell, the
-                           idle-timeout ambient clock, and the settings
-                           dialog
+                           idle screensaver, and the settings dialog
   sd_card/                 mounts the TF card slot as FAT at /sdcard, if one
                            is inserted (see "TF/SD card" below); used for a
                            config backup that survives reflashing other
                            firmware onto the board
-  presence_sensor/         reads the GPIO6 presence sensor (see "Presence
-                           sensor" below); drives the ambient clock's
-                           brighten/dim behaviour
-  light_sensor/           reads a BH1750 ambient light sensor over I2C
-                           (see "Backlight auto-dimming" below); drives
-                           the physical backlight brightness
   esp_lcd/                 vendored + patched copy of ESP-IDF's own
                            esp_lcd component (overrides $IDF_PATH's) -
                            fixes a real bug in the RGB panel driver, see
-                           "Ambient clock digit tearing (fixed)" below
+                           "RGB panel VSYNC framebuffer restart (fixed)" above
 ```
 
 ## Building
@@ -648,115 +622,24 @@ its own, without re-running the setup portal.
   and unmounting are wired up so a future feature can reuse the same
   pin/CS wiring without having to re-derive it.
 
-## Presence sensor
-
-An active-high presence/PIR sensor is wired to `GPIO6` (high = someone's
-there, low = clear). `presence_sensor_init()` (`components/presence_sensor/`)
-configures it as an input with the **internal pull-down enabled** - on
-real hardware this line floats and reads intermittent false "detected"
-spikes without it, confirmed by extended monitoring during bring-up. It's
-polled (not interrupt-driven) once a second, from the same timer that
-drives the ambient clock (see "Idle screensaver" above), which is
-plenty of granularity for a presence-driven dim/brighten decision.
-
-No sensor connected reads as a permanent "clear" (GPIO6 pulled low), which
-just means the display always settles into full sleep after the usual
-delays (see "Idle screensaver" above) - harmless, just not useful.
-
-## Backlight auto-dimming
-
-Two physical additions to the board as sold, both optional - without
-either, the firmware just leaves the backlight wherever it last was:
-
-- **A wire from `GPIO16` to a PWM dimming test point** on the backlight
-  boost driver. The CH422G expander's own backlight line
-  (`CH422G_EXIO_LCD_BL`) only ever gates the driver fully on/off from the
-  factory - confirmed on real hardware that a separate test point on the
-  driver board is a genuine PWM *dimming* input, unconnected to any
-  ESP32-S3 pin out of the box. `board_bsp.c` drives that test point via
-  GPIO16 and one of the SoC's LEDC PWM channels; the CH422G gate is left
-  exactly as it ships and still used for a true, zero-current off (see
-  `bsp_display_set_brightness_permille()`'s own comment for the exact
-  power-up/power-down sequencing between the two).
-- **A GY-30/BH1750 ambient light sensor breakout**, wired onto the same
-  shared I2C bus as the CH422G expander and GT911 touch controller
-  (`bsp_get_i2c_bus()`), at its default address `0x23` (`ADDR` pin
-  low/floating, how these modules ship - doesn't collide with anything
-  else already on that bus). `components/light_sensor/` starts it in
-  Continuous High-Resolution Mode and polls it once a second, from the
-  same timer that drives the ambient clock and presence sensor
-  (`ui_screensaver.c`'s `ambient_brightness_tick()`).
-
-The LEDC PWM channel runs at **1220Hz, 14-bit resolution** (16384 duty
-steps) - not an arbitrary choice: this matches
-[ESPHome's own recommendation](https://esphome.io/components/output/ledc.html)
-for LED/backlight dimming specifically, since 1220Hz is where the ESP32
-family's LEDC timer can hit its *maximum* duty resolution (14 bits on
-S2/S3/C3) against an 80MHz APB clock, rather than trading resolution away
-for a higher switching frequency. This isn't just theoretical: an earlier
-5kHz/10-bit configuration measured a real, hard cutoff on this specific
-board's driver at duty 12/1023 (~1.2%) - 11/1023 simply didn't light at
-all - leaving almost no usable dimming range above it ("a bit dimmer,
-then nothing" rather than a smooth fade). Moving to 1220Hz/14-bit fixed
-that outright.
-
-Raw lux is smoothed with an exponential moving average (so a hand or
-shadow briefly crossing the sensor doesn't flicker the screen) and mapped
-to backlight duty through a log curve, not a linear one (perceived
-brightness is roughly logarithmic) - shaped by two settings, both on the
-on-device settings dialog / config web page:
-
-- **Minimum brightness in the dark** (`brightness_min_pct_x10`,
-  10.5%-30.0%, stored internally in tenths of a percent since a whole
-  percent is too coarse a step at this panel's dim end): the floor the
-  backlight settles at in a fully dark room, rather than going to true
-  black. The range itself, like the LEDC frequency/resolution above, was
-  determined by bisecting on real hardware (via a temporary live
-  `/test_brightness?permille=N` endpoint in `config_web.c`, applying a
-  duty directly with no save/restart needed) - the panel's *visually
-  useful* floor turned out to sit noticeably higher than the raw
-  duty-12/1023 driver cutoff mentioned above.
-- **Room brightness where full backlight kicks in**
-  (`brightness_max_lux`, default 150 lux): at or above this ambient
-  level the screen runs at 100%; below it, brightness fades toward the
-  floor above on the log curve.
-
-No sensor connected leaves `light_sensor_init()` failing at boot (logged,
-not fatal) and the backlight simply staying at whatever brightness it was
-last explicitly set to - no auto-dimming, but nothing crashes or hangs
-either.
-
 ## Customizing
 
 - **Refresh interval / fetch window**: `main/main.c` (`FETCH_PAST_DAYS`,
   `FETCH_FUTURE_DAYS`) and the "Refresh interval" field in the setup
   portal.
 - **Week/Day hour range**: `view_start_hour`/`view_end_hour` in the setup
-  portal or settings dialog (default 6am-10pm). The same two hours also
-  decide the ambient clock's day/night colour boundary (see "Idle
-  screensaver" above) - there's no separate setting for that.
+  portal or settings dialog (default 6am-10pm). On entering Week or Day
+  view the grid scrolls to 3 hours before the current time
+  (`GRID_LOOKBACK_H` in `ui_week.c`/`ui_day.c`).
 - **Week starts Monday**: `ui_start_of_week()` in `ui_time.c` — flip to
   Sunday-based by changing the `mon_offset` calculation if you'd rather
   match the US convention.
 - **Colours/theme**: `components/calendar_ui/include/ui_theme.h`.
 - **Screen timeout / idle screensaver**: `screen_timeout_s` in the setup
-  portal or settings dialog (0 disables it). How long away from the
-  calendar (ambient clock and/or sleep, combined) before a touch resets to
-  today/Month instead of resuming the prior view: `LONG_SLEEP_RESET_MS` in
-  `ui_screensaver.c` (default 15 minutes). How long the ambient clock
-  shows before giving up on presence and going to sleep (backlight off):
-  `PRESENCE_AWAY_SLEEP_MS` in `ui_screensaver.c` (default 5 minutes).
-- **Backlight auto-dimming curve**: the dark-room floor and the "full
-  brightness" ambient-light threshold are both settings-page sliders (see
-  "Backlight auto-dimming" above) - `brightness_min_pct_x10` and
-  `brightness_max_lux` in `app_settings.h` for the defaults/valid ranges.
-  How quickly readings smooth out (`LUX_EMA_ALPHA`), how large a change is
-  worth actually writing to the backlight (`BRIGHTNESS_DEADBAND_PERMILLE`),
-  and the flat-floor threshold at the very bottom of the sensor's own
-  range (`LUX_DARK_FLOOR`) are all in `ui_screensaver.c`, not exposed as
-  settings - they shape the curve's responsiveness rather than its
-  endpoints, and haven't needed hardware-specific tuning the way the
-  endpoints themselves did.
+  portal or settings dialog (0 disables it). How long the display has to
+  have been asleep before a touch resets to today/Month instead of
+  resuming the prior view: `LONG_SLEEP_RESET_MS` in `ui_screensaver.c`
+  (default 15 minutes).
 
 ## Bonus: adding Google Tasks to a calendar feed, without OAuth
 

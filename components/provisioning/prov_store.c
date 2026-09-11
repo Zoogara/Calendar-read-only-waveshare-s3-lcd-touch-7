@@ -30,8 +30,6 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddNumberToObject(root, "fetch_past_days", cfg->fetch_past_days);
     cJSON_AddNumberToObject(root, "fetch_future_days", cfg->fetch_future_days);
     cJSON_AddStringToObject(root, "config_web_password", cfg->config_web_password);
-    cJSON_AddNumberToObject(root, "brightness_min_pct_x10", cfg->brightness_min_pct_x10);
-    cJSON_AddNumberToObject(root, "brightness_max_lux", cfg->brightness_max_lux);
 
     cJSON *cals = cJSON_AddArrayToObject(root, "calendars");
     for (int i = 0; i < cfg->calendar_count; i++) {
@@ -98,21 +96,6 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
     out->fetch_future_days = (cJSON_IsNumber(j) && j->valuedouble >= 1 && j->valuedouble <= 365)
                                   ? (uint16_t)j->valuedouble
                                   : APP_SETTINGS_DEFAULT_FETCH_FUTURE_DAYS;
-
-    /* Bounds are 105-300 (10.5%-30.0%), matching config_web.c's slider - see
-     * its hint text for the measured hardware reasoning. A value outside
-     * that saved by an earlier build (before this range was known) falls
-     * back to the default here rather than loading something below the
-     * panel's visually-useful range. */
-    j = cJSON_GetObjectItemCaseSensitive(root, "brightness_min_pct_x10");
-    out->brightness_min_pct_x10 = (cJSON_IsNumber(j) && j->valuedouble >= 105 && j->valuedouble <= 300)
-                                       ? (uint16_t)j->valuedouble
-                                       : APP_SETTINGS_DEFAULT_BRIGHTNESS_MIN_PCT_X10;
-
-    j = cJSON_GetObjectItemCaseSensitive(root, "brightness_max_lux");
-    out->brightness_max_lux = (cJSON_IsNumber(j) && j->valuedouble >= 1 && j->valuedouble <= 65535)
-                                   ? (uint16_t)j->valuedouble
-                                   : APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX;
 
     cJSON *cals = cJSON_GetObjectItemCaseSensitive(root, "calendars");
     if (cJSON_IsArray(cals)) {

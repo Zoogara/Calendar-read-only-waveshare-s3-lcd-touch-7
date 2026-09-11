@@ -44,7 +44,6 @@
 #include "wifi_sta.h"
 #include "board_bsp.h"
 #include "sd_card.h"
-#include "presence_sensor.h"
 #include "calendar_ui.h"
 #include "gcal_client.h"
 #include "event_store.h"
@@ -110,10 +109,10 @@ static void show_provisioning_screen(void)
  * staleness or a Wi-Fi power-save edge case than one with some regular
  * traffic on it - matching the observation that a neighbouring device
  * doing frequent updates never showed the same problem, and that entire
- * multi-hour stretches with the ambient clock or sleep screen showing
- * used to have literally zero network activity at all (see
- * calendar_ui_is_asleep()'s use in net_task() below, removed for the
- * same reason).
+ * multi-hour stretches with the screensaver showing used to have
+ * literally zero network activity at all (net_task() below used to gate
+ * syncs on calendar_ui_is_asleep(); that gate was removed for the same
+ * reason).
  *
  * Deliberately only logs on failure, not every success - a steady
  * stream of these failing right before a real sync failure would be a
@@ -301,12 +300,6 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
-
-    /* Independent of display/Wi-Fi/config, so started as early as
-     * possible. ui_screensaver.c's own idle timer polls
-     * presence_sensor_is_detected() directly once it's up; nothing else
-     * needs a dedicated task for this. */
-    presence_sensor_init();
 
     /* Load config from NVS before anything else - specifically, before
      * bsp_display_init() below creates the LVGL task, whose stack
