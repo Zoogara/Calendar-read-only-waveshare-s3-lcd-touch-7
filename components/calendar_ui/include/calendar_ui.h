@@ -40,11 +40,10 @@ void calendar_ui_notify_sync_failed(void);
  * itself, so it's safe to call from the background network task. */
 void calendar_ui_sync_today(void);
 
-/* True while the display is away from the calendar - either showing the
- * ambient clock (presence detected) or fully asleep with the backlight
- * off (presence absent - see ui_screensaver.c/ui_clock.c). The background
- * refresh task uses this to skip calendar syncs while the calendar isn't
- * the thing on screen. */
+/* True while the display is in its idle "screensaver" state (backlight
+ * off, anti-image-retention noise pattern shown instead of the calendar -
+ * see ui_screensaver.c). The background refresh task uses this to skip
+ * calendar syncs while the screen is off. */
 bool calendar_ui_is_asleep(void);
 
 /* Blocks the calling task until the screensaver wakes (a touch is

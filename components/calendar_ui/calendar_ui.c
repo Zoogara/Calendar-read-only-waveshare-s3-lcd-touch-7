@@ -243,22 +243,6 @@ static void settings_menu_cb(lv_event_t *e)
     }
 }
 
-/* Toggles the ambient clock feature on/off - see ui_screensaver.c's
- * s_clock_feature_enabled for what this actually changes. Runtime-only
- * (resets to enabled every boot), so the icon always starts fully opaque
- * (enabled) - no need to read the current state at build_top_bar() time.
- * The glyph itself (gcal_font_icon_clock's FontAwesome clock icon)
- * doesn't change - LVGL has no built-in "clock with a slash through it"
- * or similar disabled-clock glyph, so on/off is conveyed by dimming the
- * same icon instead, same idea as a greyed-out toolbar button
- * elsewhere. */
-static void clock_toggle_btn_cb(lv_event_t *e)
-{
-    ui_screensaver_toggle_clock_enabled();
-    lv_obj_t *icon = lv_event_get_target(e);
-    lv_obj_set_style_text_opa(icon, ui_screensaver_clock_enabled() ? LV_OPA_COVER : LV_OPA_40, 0);
-}
-
 static void settings_btn_cb(lv_event_t *e)
 {
     (void)e;
@@ -420,22 +404,6 @@ static void build_top_bar(lv_obj_t *parent)
     lv_obj_add_flag(settings, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(settings, 16);
     lv_obj_add_event_cb(settings, settings_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    /* Ambient-clock on/off toggle - a clock icon (gcal_font_icon_clock,
-     * a standalone one-glyph font, see its own header comment for why
-     * LVGL's built-in symbol set couldn't supply this one) that dims
-     * rather than changes shape when the feature's off, since there's no
-     * built-in "disabled clock" glyph to swap to. Sits just left of the
-     * settings gear, same 40px rhythm as the gap between settings and the
-     * "last synced" label. */
-    lv_obj_t *clock_toggle = lv_label_create(bar);
-    lv_label_set_text(clock_toggle, "\xEF\x80\x97" /* U+F017 FontAwesome "clock" */);
-    lv_obj_set_style_text_font(clock_toggle, &gcal_font_icon_clock, 0);
-    lv_obj_set_style_text_color(clock_toggle, ui_color(UI_COLOR_TEXT_MUTED), 0);
-    lv_obj_align(clock_toggle, LV_ALIGN_RIGHT_MID, -210, 0);
-    lv_obj_add_flag(clock_toggle, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_ext_click_area(clock_toggle, 16);
-    lv_obj_add_event_cb(clock_toggle, clock_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
 /* ---------------- legend ---------------- */

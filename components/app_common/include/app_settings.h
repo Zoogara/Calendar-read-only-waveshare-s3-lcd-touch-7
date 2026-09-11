@@ -124,37 +124,6 @@ typedef struct {
      * username is ignored, so any (or no) username works. */
     char config_web_password[64];
 
-    /* Ambient backlight auto-dimming (GY-30/BH1750 lux sensor on the
-     * shared I2C bus, PWM dimming input on GPIO16 - see board_bsp.c's
-     * bsp_display_set_brightness_permille() and
-     * calendar_ui/ui_screensaver.c's ambient_brightness_tick()). At/below
-     * 0 lux the backlight floors out at brightness_min_pct_x10 rather than
-     * going fully black; at/above brightness_max_lux it's 100%; in between
-     * it ramps on a log curve (matches how the eye perceives brightness
-     * better than a straight linear ramp would). Configurable via
-     * config_web.c's sliders only (same "not the initial setup portal"
-     * carve-out as screen_timeout_s/view_*_hour/fetch_*_days above) -
-     * defaults are tuned so a normally lit room already reads as 100%.
-     *
-     * brightness_min_pct_x10 is in TENTHS of a percent (105-300 =
-     * 10.5%-30.0%, enforced in config_web.c/prov_store.c), not whole
-     * percent - a uint8_t 0-100 whole-percent field couldn't express this
-     * finely enough at the dim end where it actually matters.
-     *
-     * The range itself was determined on real hardware, twice, 2026-09-09:
-     * first with the LEDC backlight timer at its original 5kHz/10-bit,
-     * which measured a hard driver cutoff at duty 12/1023 (~1.17%, 11/1023
-     * doesn't light at all) and left almost no usable dimming room above
-     * it ("a bit dimmer, then nothing"); then again after moving the timer
-     * to 1220Hz/14-bit (see board_bsp.c's BACKLIGHT_LEDC_FREQ_HZ comment -
-     * matches ESPHome's recommendation for hitting this SoC family's max
-     * LEDC duty resolution), which fixed the actual dimming behaviour but
-     * whose *visually useful* floor - via the same temporary live test
-     * endpoint - still turned out to sit noticeably higher than the raw
-     * driver cutoff, at 10.5%-30.0%. */
-    uint16_t brightness_min_pct_x10;
-    uint16_t brightness_max_lux;
-
     bool valid; /* true once loaded/saved successfully at least once */
 } app_settings_t;
 
@@ -164,9 +133,6 @@ typedef struct {
 #define APP_SETTINGS_DEFAULT_VIEW_END_HOUR     22
 #define APP_SETTINGS_DEFAULT_FETCH_PAST_DAYS   14
 #define APP_SETTINGS_DEFAULT_FETCH_FUTURE_DAYS 60
-#define APP_SETTINGS_DEFAULT_BRIGHTNESS_MIN_PCT_X10 105 /* 10.5% - backlight floor in full dark,
-                                                             the bottom of the measured-good range */
-#define APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX 150     /* ~typical lit-room lux for 100% */
 
 #ifdef __cplusplus
 }
