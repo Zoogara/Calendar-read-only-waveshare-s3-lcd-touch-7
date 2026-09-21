@@ -22,6 +22,7 @@ static time_t s_cursor; /* the day currently focused, local midnight */
 
 static lv_obj_t *s_screen;
 static lv_obj_t *s_title_label;
+static lv_obj_t *s_clock_label;
 static lv_obj_t *s_updated_label;
 static lv_obj_t *s_legend_row;
 static lv_obj_t *s_nav_btns[4];
@@ -399,10 +400,24 @@ static void build_top_bar(lv_obj_t *parent)
     lv_label_set_long_mode(s_title_label, LV_LABEL_LONG_CLIP);
     lv_obj_align(s_title_label, LV_ALIGN_LEFT_MID, 90, 0);
 
+    /* Live current-time readout, stacked directly above the "last synced"
+     * label at the same right-aligned x - the gap to its left is only
+     * ~10px before the settings/clock-toggle icons (see s_title_label's
+     * own comment on the 400px title width), so there's no room to add
+     * this as a third item in that row; stacking vertically instead
+     * costs nothing horizontally. Ticked once a second by clock_tick_cb()
+     * (a plain lv_timer_t, not gated on presence/idle state like the
+     * ambient clock in ui_screensaver.c - this is the always-visible
+     * calendar header, separate from that feature entirely). */
+    s_clock_label = lv_label_create(bar);
+    lv_obj_set_style_text_font(s_clock_label, &gcal_font_14, 0);
+    lv_obj_set_style_text_color(s_clock_label, ui_color(UI_COLOR_TEXT), 0);
+    lv_obj_align(s_clock_label, LV_ALIGN_RIGHT_MID, -12, -9);
+
     s_updated_label = lv_label_create(bar);
     lv_obj_set_style_text_font(s_updated_label, &gcal_font_14, 0);
     lv_obj_set_style_text_color(s_updated_label, ui_color(UI_COLOR_TEXT_MUTED), 0);
-    lv_obj_align(s_updated_label, LV_ALIGN_RIGHT_MID, -12, 0);
+    lv_obj_align(s_updated_label, LV_ALIGN_RIGHT_MID, -12, 9);
     /* Tappable: forces an immediate sync instead of waiting for the next
      * periodic refresh. Small text label, so extend the hit area well
      * beyond its tight bounding box (same reasoning as the nav arrows). */
@@ -436,6 +451,34 @@ static void build_top_bar(lv_obj_t *parent)
     lv_obj_add_flag(clock_toggle, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(clock_toggle, 16);
     lv_obj_add_event_cb(clock_toggle, clock_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
+}
+
+/* Refreshes s_clock_label from the wall clock - see its creation comment
+ * in build_top_bar(). Ticks every second but only actually touches the
+ * label (and so only invalidates/redraws it) on a real HH:MM change,
+ * same reasoning as update_title()'s "updated HH:MM" text: a
+ * lv_label_set_text() call every second for no visible change would just
+ * be wasted work. No special dual-framebuffer forced-refresh handling
+ * needed here (contrast update_title()'s s_boot_forced_redraw_ok dance) -
+ * that was only ever necessary for updates that might not recur again
+ * for minutes; this one self-corrects within its own next tick if a
+ * single frame is ever missed, the same reasoning the (now driver-level
+ * fixed, see README's "RGB panel VSYNC framebuffer restart") ambient
+ * clock relied on. */
+static void clock_tick_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    static char s_last[8] = "";
+    time_t now;
+    time(&now);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    char buf[8];
+    strftime(buf, sizeof(buf), "%H:%M", &tm);
+    if (strcmp(buf, s_last) != 0) {
+        strcpy(s_last, buf);
+        lv_label_set_text(s_clock_label, buf);
+    }
 }
 
 /* ---------------- legend ---------------- */
@@ -675,6 +718,11 @@ void calendar_ui_init(app_settings_t *cfg)
     build_nav_rail(s_screen);
     build_top_bar(s_screen);
     build_legend(s_screen);
+
+    /* Paint the current time immediately instead of leaving s_clock_label
+     * blank for up to a second until clock_tick_cb()'s first tick. */
+    clock_tick_cb(NULL);
+    lv_timer_create(clock_tick_cb, 1000, NULL);
 
     s_view_roots[UI_VIEW_MONTH] = ui_month_create(s_screen);
     s_view_roots[UI_VIEW_WEEK] = ui_week_create(s_screen);
