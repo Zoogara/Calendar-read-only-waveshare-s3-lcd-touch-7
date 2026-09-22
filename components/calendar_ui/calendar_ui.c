@@ -416,7 +416,7 @@ static void build_top_bar(lv_obj_t *parent)
 
     s_updated_label = lv_label_create(bar);
     lv_obj_set_style_text_font(s_updated_label, &gcal_font_14, 0);
-    lv_obj_set_style_text_color(s_updated_label, ui_color(UI_COLOR_TEXT_MUTED), 0);
+    lv_obj_set_style_text_color(s_updated_label, ui_color(UI_COLOR_TEXT_FAINT), 0);
     lv_obj_align(s_updated_label, LV_ALIGN_RIGHT_MID, -12, 9);
     /* Tappable: forces an immediate sync instead of waiting for the next
      * periodic refresh. Small text label, so extend the hit area well
@@ -581,7 +581,7 @@ static void update_title(void)
     }
     lv_label_set_text(s_updated_label, lbl);
     lv_obj_set_style_text_color(s_updated_label,
-                                 s_sync_failed ? ui_color(UI_COLOR_WARNING) : ui_color(UI_COLOR_TEXT_MUTED), 0);
+                                 s_sync_failed ? ui_color(UI_COLOR_WARNING) : ui_color(UI_COLOR_TEXT_FAINT), 0);
 
     /* This panel's direct_mode + avoid_tearing dual-framebuffer setup
      * means a single invalidate only guarantees ONE of the two buffers

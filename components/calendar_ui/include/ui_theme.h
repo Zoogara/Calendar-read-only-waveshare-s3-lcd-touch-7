@@ -13,6 +13,11 @@ extern "C" {
 #define UI_COLOR_SURFACE      0xFFFFFF
 #define UI_COLOR_TEXT         0x202124
 #define UI_COLOR_TEXT_MUTED   0x5F6368
+/* One shade lighter than UI_COLOR_TEXT_MUTED, following Google's own grey
+ * scale (5F6368 is their "Grey 700", 80868B is "Grey 600") - for text that
+ * should read as even lower-priority than the standard muted tone, e.g.
+ * calendar_ui.c's "last synced" label sitting under the live clock. */
+#define UI_COLOR_TEXT_FAINT   0x80868B
 #define UI_COLOR_ACCENT       0x1A73E8
 #define UI_COLOR_GRID_LINE    0xE3E3E3
 #define UI_COLOR_NAV_BG       0xFFFFFF
