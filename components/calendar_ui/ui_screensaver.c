@@ -29,6 +29,7 @@
 #include "light_sensor.h"
 
 #include <math.h>
+#include <string.h>
 #include "esp_random.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -112,12 +113,60 @@ void ui_screensaver_toggle_clock_enabled(void)
     ESP_LOGI(TAG, "ambient clock feature %s", s_clock_feature_enabled ? "enabled" : "disabled");
 }
 
+/* Fast xorshift32 PRNG, not esp_fill_random() - confirmed on real hardware
+ * (2026-09-23/24, two occurrences roughly 45 minutes apart) as the cause
+ * of a recurring task watchdog timeout: the decoded panic backtrace both
+ * times had the LVGL port task's watchdog expiring while this function
+ * was mid-call, inside regen_snow() -> esp_fill_random(). The canvas
+ * buffer at this resolution and LV_COLOR_DEPTH_16 is ~750KB, and
+ * esp_fill_random() pulls each word from the hardware RNG register one at
+ * a time - fine for the small amounts this project uses it for
+ * elsewhere, but not for three-quarters of a megabyte every
+ * SNOW_REGEN_MS, especially with Wi-Fi active (the ESP32 family's HW RNG
+ * mixes in RF noise, so it can contend with radio activity). None of
+ * that quality matters here - this is anti-image-retention noise, not
+ * anything security-sensitive - so a software PRNG seeded once from a
+ * single (cheap) esp_random() call removes the slow/blocking hardware
+ * path entirely while looking identical on screen. */
+static uint32_t xorshift32(uint32_t *state)
+{
+    uint32_t x = *state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    return x;
+}
+
 static void regen_snow(void)
 {
     if (s_canvas_buf == NULL) {
         return;
     }
-    esp_fill_random(s_canvas_buf, LV_CANVAS_BUF_SIZE_TRUE_COLOR(SS_H_RES, SS_V_RES));
+    static uint32_t s_rng_state;
+    if (s_rng_state == 0) {
+        s_rng_state = esp_random();
+        if (s_rng_state == 0) {
+            s_rng_state = 1; /* xorshift is undefined at a zero state - esp_random()
+                                 returning exactly 0 is astronomically unlikely, but
+                                 cheap to guard against outright. */
+        }
+    }
+    size_t buf_size = LV_CANVAS_BUF_SIZE_TRUE_COLOR(SS_H_RES, SS_V_RES);
+    uint32_t *words = (uint32_t *)s_canvas_buf;
+    size_t word_count = buf_size / sizeof(uint32_t);
+    for (size_t i = 0; i < word_count; i++) {
+        words[i] = xorshift32(&s_rng_state);
+    }
+    /* Any trailing odd bytes LV_CANVAS_BUF_SIZE_TRUE_COLOR's size isn't a
+     * whole number of uint32_t's worth of (none expected at this
+     * resolution/colour depth, but cheap to cover regardless). */
+    uint8_t *tail = s_canvas_buf + word_count * sizeof(uint32_t);
+    size_t tail_bytes = buf_size - word_count * sizeof(uint32_t);
+    if (tail_bytes > 0) {
+        uint32_t r = xorshift32(&s_rng_state);
+        memcpy(tail, &r, tail_bytes);
+    }
     lv_obj_invalidate(s_canvas);
 }
 
