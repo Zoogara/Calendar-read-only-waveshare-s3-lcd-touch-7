@@ -30,7 +30,13 @@ void event_store_replace_all(const gcal_event_t *events, int count);
  * allocates, size max_out), sorted by start time. Returns count copied. */
 int event_store_copy_range(time_t range_start, time_t range_end, gcal_event_t *out, int max_out);
 
-/* Copies up to max_out events starting at/after `now`, soonest first. */
+/* Copies up to max_out events that aren't over yet (end > now, NOT
+ * start >= now - an event already under way still qualifies, which is
+ * exactly what ui_upnext.c's "Up next" list wants: keep showing
+ * something currently happening rather than dropping it right at its own
+ * start time), sorted by start time, soonest first. A caller that only
+ * wants events that haven't started yet (e.g. ui_reminder.c) has to
+ * check `start > now` itself - this function deliberately doesn't. */
 int event_store_copy_upcoming(time_t now, gcal_event_t *out, int max_out);
 
 /* Appends every currently-stored event tagged with the given
