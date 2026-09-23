@@ -83,6 +83,7 @@ static lv_obj_t *s_row;
 static lv_obj_t *s_hh_label;
 static lv_obj_t *s_colon_label;
 static lv_obj_t *s_mm_label;
+static lv_obj_t *s_bell_label;
 
 lv_obj_t *ui_clock_create(lv_obj_t *parent)
 {
@@ -139,6 +140,17 @@ lv_obj_t *ui_clock_create(lv_obj_t *parent)
     s_mm_label = lv_label_create(s_row);
     lv_label_set_recolor(s_mm_label, true);
     lv_obj_set_style_text_font(s_mm_label, &gcal_font_clock, 0);
+
+    /* Small "a reminder's pending" indicator (see ui_reminder.c) - a
+     * sibling of s_row, not a child of it, so it stays put in the corner
+     * regardless of s_row's own every-10-minutes jitter. Hidden by
+     * default; ui_clock_update() shows it only while
+     * ui_reminder_has_pending() is true. */
+    s_bell_label = lv_label_create(s_cont);
+    lv_label_set_text(s_bell_label, "\xEF\x83\xB3" /* U+F0F3 FontAwesome "bell" */);
+    lv_obj_set_style_text_font(s_bell_label, &gcal_font_icon_bell, 0);
+    lv_obj_align(s_bell_label, LV_ALIGN_BOTTOM_LEFT, 16, -16);
+    lv_obj_add_flag(s_bell_label, LV_OBJ_FLAG_HIDDEN);
 
     return s_cont;
 }
@@ -219,12 +231,23 @@ void ui_clock_update(void)
     set_label_if_changed(s_mm_label, mm_buf, s_last_mm, sizeof(s_last_mm));
 
     /* Plain text colour, not recolor - the colon is always one solid
-     * tone, no per-run colour needed. */
+     * tone, no per-run colour needed. The bell indicator (see
+     * ui_reminder.c) shares this exact colour and dims with it, at
+     * night, the same as everything else on this screen - it's meant to
+     * be a subtle "by the way" cue, not something that stands out more
+     * than the clock itself does. */
     static int32_t s_last_colon_color = -1;
     uint32_t colon_color = ui_darken(UI_COLOR_TEXT_MUTED, pct);
     if ((int32_t)colon_color != s_last_colon_color) {
         lv_obj_set_style_text_color(s_colon_label, ui_color(colon_color), 0);
+        lv_obj_set_style_text_color(s_bell_label, ui_color(colon_color), 0);
         s_last_colon_color = (int32_t)colon_color;
+    }
+
+    if (ui_reminder_has_pending()) {
+        lv_obj_clear_flag(s_bell_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_bell_label, LV_OBJ_FLAG_HIDDEN);
     }
 
     /* Nudge the whole group's position every ~10 minutes - see file

@@ -42,6 +42,12 @@ extern const lv_font_t gcal_font_clock;
  * standalone font rather than reusing gcal_font_20's LV_SYMBOL_* set. */
 extern const lv_font_t gcal_font_icon_clock;
 
+/* One glyph only - FontAwesome 5 Solid's "bell" icon (U+F0F3), for the
+ * ambient clock's small "a reminder's pending" indicator. See
+ * gcal_font_icon_bell.c's header comment for why this needed its own
+ * standalone font rather than reusing gcal_font_20's LV_SYMBOL_* set. */
+extern const lv_font_t gcal_font_icon_bell;
+
 /* --- shared context (implemented in calendar_ui.c) --- */
 app_settings_t *ui_get_cfg(void);
 bool ui_calendar_enabled(uint8_t calendar_index);
@@ -109,6 +115,27 @@ lv_obj_t *ui_clock_create(lv_obj_t *parent);
  * function's concern: ui_screensaver.c decides when to show the clock at
  * all based on presence, this just renders it while it's showing. */
 void ui_clock_update(void);
+
+/* --- event reminder pop-over (implemented in ui_reminder.c) - shows a
+ * timed event's details starting 15 minutes before it's due --- */
+/* Creates the (initially hidden) reminder card on `parent`
+ * (ui_screensaver.c passes lv_layer_top()). Call once, from
+ * ui_screensaver_init(). */
+void ui_reminder_init(lv_obj_t *parent);
+/* Scans event_store for a timed event on an enabled calendar starting
+ * within the next 15 minutes, and shows/updates/hides the pop-over
+ * accordingly. `calendar_visible` should be true only while the calendar
+ * itself - not the ambient clock or sleep screen - is what's currently on
+ * screen; the pop-over stays hidden otherwise regardless of whether a
+ * reminder is pending (see ui_reminder_has_pending() for that). Call
+ * every ~1s regardless of display state - cheap, a handful of
+ * event_store reads. */
+void ui_reminder_tick(bool calendar_visible);
+/* True whenever there's a not-yet-dismissed, not-yet-started reminder
+ * candidate, independent of whether the pop-over itself is currently
+ * allowed to be visible - used by ui_clock.c to decide whether to show
+ * its small bell indicator while the ambient clock is up. */
+bool ui_reminder_has_pending(void);
 
 /* --- display settings dialog (implemented in ui_settings_dialog.c) --- */
 void ui_settings_dialog_show(void);
