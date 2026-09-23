@@ -472,6 +472,13 @@ static void check_timer_cb(lv_timer_t *timer)
     bool touched = idle_ms < s_prev_idle_ms;
     bool presence = presence_sensor_is_detected();
 
+    /* Runs every tick regardless of display state - cheap, and its own
+     * `calendar_visible` argument (not just an early-return here) is what
+     * actually decides whether the pop-over is allowed to show, so the
+     * candidate-tracking underneath it (dismissed-list pruning etc.) stays
+     * correct even while the calendar isn't what's on screen. */
+    ui_reminder_tick(s_state == DISPLAY_CALENDAR);
+
     if (s_state != DISPLAY_SLEEP) {
         ambient_brightness_tick();
     }
@@ -545,6 +552,7 @@ void ui_screensaver_init(void)
     /* On lv_layer_top() so both float above whatever view/dialog is
      * currently showing, regardless of calendar_ui's own view switching. */
     s_clock = ui_clock_create(lv_layer_top());
+    ui_reminder_init(lv_layer_top());
 
     size_t buf_size = LV_CANVAS_BUF_SIZE_TRUE_COLOR(SS_H_RES, SS_V_RES);
     s_canvas_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
