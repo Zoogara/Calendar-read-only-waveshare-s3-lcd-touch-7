@@ -81,6 +81,23 @@ static void remember_dismissed(const reminder_key_t *key)
     s_dismissed[s_dismissed_count++] = *key;
 }
 
+/* Clears s_shown_valid, logging only if something actually was showing -
+ * called both when the event's own start time has passed (it ages out of
+ * find_candidate()'s results naturally, since event_store_copy_upcoming()
+ * only ever returns events with start >= now) and when the display
+ * leaves the calendar view entirely. Logging only on that true->false
+ * transition, not every tick, is what keeps this from spamming a line a
+ * second during the routine "nothing to show right now" steady state. */
+static void clear_shown(const char *reason)
+{
+    if (!s_shown_valid) {
+        return;
+    }
+    ESP_LOGI(TAG, "auto-cleared, %s (calendar_index=%u start=%lld)", reason,
+             s_shown_key.calendar_index, (long long)s_shown_key.start);
+    s_shown_valid = false;
+}
+
 static void card_clicked_cb(lv_event_t *e)
 {
     (void)e;
@@ -201,14 +218,14 @@ void ui_reminder_tick(bool calendar_visible)
     if (!calendar_visible) {
         lv_obj_add_flag(s_card, LV_OBJ_FLAG_HIDDEN);
         if (!found) {
-            s_shown_valid = false;
+            clear_shown("start time passed (while calendar wasn't on screen)");
         }
         return;
     }
 
     if (!found) {
         lv_obj_add_flag(s_card, LV_OBJ_FLAG_HIDDEN);
-        s_shown_valid = false;
+        clear_shown("start time passed");
         return;
     }
 
