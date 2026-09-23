@@ -168,7 +168,17 @@ void ui_reminder_init(lv_obj_t *parent)
  * event_store_copy_upcoming() returns events sorted by start time
  * ascending, so the scan can stop the instant it reaches one whose start
  * is already further out than the reminder window - nothing later in the
- * list could possibly be closer. */
+ * list could possibly be closer.
+ *
+ * Despite its name and its own doc comment ("starting at/after now"),
+ * event_store_copy_upcoming() actually filters on end > now - i.e. it
+ * returns anything not yet *finished*, including an event that's already
+ * under way (right for its other caller, ui_upnext.c's "Up next" list,
+ * which should keep showing something currently happening). So `start <=
+ * now` has to be rejected explicitly here too, not just assumed away -
+ * without this an in-progress event kept matching every tick straight
+ * through its own start time and the pop-over never auto-cleared,
+ * confirmed on real hardware 2026-09-23. */
 static bool find_candidate(time_t now, gcal_event_t *out)
 {
     static gcal_event_t buf[SCAN_MAX_EVENTS];
@@ -179,7 +189,7 @@ static bool find_candidate(time_t now, gcal_event_t *out)
         if (ev->start - now > REMIND_BEFORE_S) {
             break;
         }
-        if (ev->all_day || !ui_calendar_enabled(ev->calendar_index)) {
+        if (ev->start <= now || ev->all_day || !ui_calendar_enabled(ev->calendar_index)) {
             continue;
         }
         reminder_key_t key = {ev->calendar_index, ev->start};
