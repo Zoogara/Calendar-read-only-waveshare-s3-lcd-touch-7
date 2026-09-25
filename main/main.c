@@ -86,6 +86,15 @@ static void show_provisioning_screen(void)
  * would silently do nothing until the next scheduled cycle, minutes later. */
 #define RETRY_BACKOFF_S 20
 
+/* After this many consecutive cycles where no calendar at all could be
+ * reached (~1 minute each with RETRY_BACKOFF_S), assume the Wi-Fi link
+ * itself has gone dead - still associated, but carrying no traffic - and
+ * force a reconnect so the station re-scans and joins the strongest mesh
+ * node. See wifi_sta_force_reconnect()/wifi_sta.c for the real-hardware
+ * case this is for. ~5 minutes leaves room for ordinary brief outages
+ * (which clear on their own within a couple of retries) before acting. */
+#define WIFI_RECONNECT_AFTER_FAILED_CYCLES 5
+
 /* How often keepalive_probe() runs during an otherwise idle gap between
  * sync cycles - see that function's own comment. */
 #define KEEPALIVE_INTERVAL_MS (60U * 1000U)
@@ -216,6 +225,7 @@ static void net_task(void *arg)
         calendar_ui_sync_today();
     }
 
+    int failed_cycles = 0; /* consecutive cycles with no calendar reachable at all */
     for (;;) {
         uint32_t wait_ms = s_cfg.refresh_interval_s * 1000;
         /* Syncs every cycle regardless of display state - this used to
@@ -241,6 +251,7 @@ static void net_task(void *arg)
          * for why), not a fixed constant. */
         esp_err_t err = gcal_refresh_all(&s_cfg, s_cfg.fetch_past_days, s_cfg.fetch_future_days, &all_ok);
         if (err == ESP_OK) {
+            failed_cycles = 0;
             calendar_ui_refresh();
             /* refresh() above just cleared the warning icon - a
              * cycle where at least one calendar came back is still
@@ -266,6 +277,11 @@ static void net_task(void *arg)
                      esp_err_to_name(err), RETRY_BACKOFF_S);
             calendar_ui_notify_sync_failed();
             wait_ms = RETRY_BACKOFF_S * 1000;
+            if (++failed_cycles >= WIFI_RECONNECT_AFTER_FAILED_CYCLES) {
+                ESP_LOGW(TAG, "%d consecutive failed syncs - reconnecting Wi-Fi", failed_cycles);
+                wifi_sta_force_reconnect();
+                failed_cycles = 0;
+            }
         }
         /* Waits for either the refresh/backoff interval above or an early
          * wake - which, since 2026-09-10, means only a manual force-sync
