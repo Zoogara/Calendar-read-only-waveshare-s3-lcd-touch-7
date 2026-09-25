@@ -77,6 +77,32 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH=y
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=8192
 
+# mbedTLS allocations use plain calloc(), which (with SPIRAM_USE_MALLOC
+# and SPIRAM_MALLOC_ALWAYSINTERNAL=16384 above) tries internal RAM first
+# for anything up to 16KB - every mbedTLS buffer here - and falls back to
+# PSRAM only if internal RAM can't satisfy it. See heap_caps_malloc_default()
+# in ESP-IDF's heap_caps.c.
+#
+# Why not the other two modes, both tried on real hardware 2026-09-25:
+# - INTERNAL_MEM_ALLOC (the old setting, and ESP-IDF's default): TLS must
+#   fit in whatever internal RAM the UI leaves free. With the calendar on
+#   screen during a sync (the rendered view alone costs ~12KB), internal
+#   RAM sat at ~41KB free and every handshake failed with "PK verify
+#   failed FFFFBD70" until the display went idle.
+# - EXTERNAL_MEM_ALLOC: fixed that completely (syncs succeeded at ~43KB
+#   free with the calendar showing), but TLS traffic then always ran
+#   through PSRAM, competing with the RGB panel's frame buffers, and the
+#   display jittered visibly during every sync - the same reason Wi-Fi's
+#   own buffers are kept internal (CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP).
+#
+# DEFAULT gets both: in the common case (display idle, ~55KB free) TLS
+# stays internal with no PSRAM traffic and no jitter; only when internal
+# RAM is short (calendar on screen during a sync) do the allocations that
+# would otherwise fail spill into PSRAM, so the sync still succeeds and
+# any jitter is limited to that one sync.
+# CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC is not set
+CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y
+
 # --- LVGL (pulled in as a managed component, see board_bsp/idf_component.yml) ---
 CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_MEM_CUSTOM=y
