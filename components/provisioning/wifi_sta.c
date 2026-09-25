@@ -72,6 +72,18 @@ esp_err_t wifi_sta_connect(const app_settings_t *cfg, uint32_t timeout_ms)
         strncpy((char *)wifi_cfg.sta.ssid, cfg->wifi_ssid, sizeof(wifi_cfg.sta.ssid) - 1);
         strncpy((char *)wifi_cfg.sta.password, cfg->wifi_password, sizeof(wifi_cfg.sta.password) - 1);
         wifi_cfg.sta.threshold.authmode = strlen(cfg->wifi_password) == 0 ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+        /* Scan every channel and join the strongest access point for this
+         * SSID, not the first one heard (ESP-IDF's default is
+         * WIFI_FAST_SCAN, where sort_method is ignored). The home network
+         * is a multi-node mesh, and which node the device lands on has
+         * turned out to matter: on real hardware (2026-09-25) one node
+         * silently stopped passing this device's traffic for ~10 minutes
+         * at a time - DNS timeouts, "no route to host", and the device
+         * unpingable from the LAN - while the association stayed up with
+         * no disconnect or beacon loss, so nothing on the device side
+         * noticed. Other nodes on other days were fine. */
+        wifi_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        wifi_cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
 
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
@@ -113,4 +125,18 @@ esp_err_t wifi_sta_connect(const app_settings_t *cfg, uint32_t timeout_ms)
     }
     ESP_LOGE(TAG, "failed to connect to \"%s\" within %lu ms", cfg->wifi_ssid, (unsigned long)timeout_ms);
     return ESP_FAIL;
+}
+
+void wifi_sta_force_reconnect(void)
+{
+    if (!s_wifi_started) {
+        return;
+    }
+    /* event_handler()'s WIFI_EVENT_STA_DISCONNECTED branch already calls
+     * esp_wifi_connect() on every disconnect, so dropping the association
+     * is all that's needed - the reconnect re-scans (all channels, see
+     * wifi_sta_connect()) and joins the strongest node, which may well be
+     * a different one from the node that stopped passing traffic. */
+    ESP_LOGW(TAG, "forcing Wi-Fi reconnect");
+    esp_wifi_disconnect();
 }

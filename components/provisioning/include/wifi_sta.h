@@ -16,6 +16,14 @@ extern "C" {
  * timeout_ms elapses. */
 esp_err_t wifi_sta_connect(const app_settings_t *cfg, uint32_t timeout_ms);
 
+/* Drops the current association so the station re-scans and reconnects,
+ * picking the strongest access point for the SSID - for when the link is
+ * still "up" but carrying no traffic (see the comment in wifi_sta.c).
+ * Returns immediately; reconnection happens in the background via the
+ * existing disconnect handler. No-op if wifi_sta_connect() hasn't brought
+ * the driver up yet. */
+void wifi_sta_force_reconnect(void);
+
 #ifdef __cplusplus
 }
 #endif
