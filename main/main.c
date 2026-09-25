@@ -230,10 +230,11 @@ static void net_task(void *arg)
          * with some regular traffic on it. Syncing while asleep also
          * means the calendar is already fresh the instant the display
          * wakes, rather than showing however-stale data until the next
-         * scheduled cycle happens to land. calendar_ui_refresh() and
-         * calendar_ui_notify_sync_failed() touch LVGL objects that just
-         * aren't currently visible while asleep, not wasted work in any
-         * way that matters next to the network fetch itself. */
+         * scheduled cycle happens to land. While asleep/ambient,
+         * calendar_ui_refresh() only records the result - it deliberately
+         * does NOT rebuild the hidden calendar view (see its own comment
+         * for the internal-RAM reason); touch-wake renders it fresh from
+         * event_store instead. */
         bool all_ok = false;
         /* Cache window is user-configurable (config_web.c - see
          * app_settings.h's fetch_past_days/fetch_future_days comment

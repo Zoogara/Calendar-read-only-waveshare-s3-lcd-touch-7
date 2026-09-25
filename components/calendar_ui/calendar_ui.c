@@ -737,6 +737,20 @@ void calendar_ui_init(app_settings_t *cfg)
     ESP_LOGI(TAG, "UI ready");
 }
 
+/* While the ambient clock or sleep screen is showing, a background sync
+ * only updates event_store (already done by the caller) and the
+ * s_sync_failed flag - it does NOT rebuild the calendar view. go_ambient()
+ * and go_sleep() release the view's rendered content to free internal RAM
+ * while nobody can see it, and rebuilding it behind the overlay on every
+ * sync undid that saving: confirmed on real hardware 2026-09-25 as a
+ * ~12KB internal-RAM step down right after the first sync following an
+ * idle transition, low enough that TLS certificate verification then
+ * failed on every retry ("PK verify failed", 0 of N calendars reachable)
+ * until a reboot. calendar_ui_restore_active_view() /
+ * calendar_ui_reset_to_today_month() render everything fresh from
+ * event_store on touch-wake instead, so the view is never stale once it's
+ * actually visible - at the cost of the render happening at wake time
+ * rather than ahead of it. */
 void calendar_ui_refresh(void)
 {
     if (!bsp_lvgl_lock(2000)) {
@@ -744,9 +758,11 @@ void calendar_ui_refresh(void)
         return;
     }
     s_sync_failed = false;
-    update_legend();
-    render_current_view();
-    update_title();
+    if (!calendar_ui_is_asleep()) {
+        update_legend();
+        render_current_view();
+        update_title();
+    }
     bsp_lvgl_unlock();
 }
 
@@ -757,7 +773,9 @@ void calendar_ui_notify_sync_failed(void)
         return;
     }
     s_sync_failed = true;
-    update_title();
+    if (!calendar_ui_is_asleep()) {
+        update_title();
+    }
     bsp_lvgl_unlock();
 }
 
@@ -768,8 +786,10 @@ void calendar_ui_sync_today(void)
         return;
     }
     s_cursor = ui_start_of_day(time(NULL));
-    render_current_view();
-    update_title();
+    if (!calendar_ui_is_asleep()) {
+        render_current_view();
+        update_title();
+    }
     bsp_lvgl_unlock();
 }
 
@@ -789,7 +809,13 @@ void calendar_ui_restore_active_view(void)
         ESP_LOGW(TAG, "could not get LVGL lock to restore view after wake, skipping");
         return;
     }
+    /* Legend and title too, not just the view - background syncs while
+     * the display was away skipped all three (see calendar_ui_refresh()),
+     * so this is the one place they catch up to the latest event_store /
+     * last-synced / sync-failed state. */
+    update_legend();
     render_current_view();
+    update_title();
     bsp_lvgl_unlock();
 }
 
@@ -800,6 +826,8 @@ void calendar_ui_reset_to_today_month(void)
         return;
     }
     s_cursor = ui_start_of_day(time(NULL));
+    update_legend(); /* see calendar_ui_restore_active_view() - select_view()
+                        below covers the view and title, not the legend */
     select_view(UI_VIEW_MONTH); /* release_view()s the old view itself if
                                     it's not already Month - safe even
                                     though calendar_ui_release_active_view()
