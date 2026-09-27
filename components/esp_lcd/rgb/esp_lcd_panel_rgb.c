@@ -1193,11 +1193,16 @@ static IRAM_ATTR void lcd_rgb_panel_try_restart_transmission(esp_rgb_panel_t *pa
 
     gdma_reset(panel->dma_chan);
     // restart the DMA by a special DMA node
-    // PATCHED: index by cur_fb_index instead of a single hardcoded link, so a VSYNC-triggered
-    // restart always resumes into whichever buffer was actually just drawn into. In bounce-buffer
-    // mode cur_fb_index is never updated away from its 0 initial value, so this is equivalent to
-    // the original single-link behavior there - only the num_fbs>1 direct-framebuffer path changes.
-    gdma_start(panel->dma_chan, gdma_link_get_head_addr(panel->dma_restart_link[panel->cur_fb_index]));
+    // PATCHED: in direct-frame-buffer mode, index by cur_fb_index instead of a single hardcoded
+    // link, so a VSYNC-triggered restart always resumes into whichever buffer was actually just
+    // drawn into. In bounce-buffer mode there is exactly one restart link (index 0, on bounce
+    // buffer 0 - see lcd_rgb_panel_init_trans_link()); which frame buffer gets copied is chosen
+    // separately via bb_fb_index. cur_fb_index DOES still change in bounce mode (rgb_panel_draw_bitmap()
+    // sets it whenever LVGL flushes into fbs[1]), so indexing by it here would hand gdma_start() the
+    // never-created dma_restart_link[1] - a NULL link, inside this ISR.
+    gdma_link_list_handle_t restart_link = panel->bb_size ? panel->dma_restart_link[0]
+                                                          : panel->dma_restart_link[panel->cur_fb_index];
+    gdma_start(panel->dma_chan, gdma_link_get_head_addr(restart_link));
 
     if (panel->bb_size) {
         // Fill 2nd bounce buffer while 1st is being sent out, if needed.

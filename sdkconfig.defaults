@@ -15,6 +15,16 @@ CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+# Run code and read-only data out of PSRAM (copied there from flash at boot)
+# instead of straight from flash. Required by the RGB LCD bounce buffers in
+# board_bsp.c: without it, every flash write (Wi-Fi's NVS write at boot,
+# config saves, OTA) disables the cache for PSRAM as well, and the
+# bounce-buffer refill ISR - which reads the PSRAM frame buffer - panics
+# with "Cache disabled but cached memory region accessed". With XIP from
+# PSRAM, flash writes no longer need to disable the PSRAM cache. Selects
+# SPIRAM_FETCH_INSTRUCTIONS + SPIRAM_RODATA. Costs PSRAM equal to the
+# app's code+rodata size (a couple of MB out of 8MB).
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 # Keep Wi-Fi's RX/TX buffers in internal RAM rather than PSRAM - the RGB LCD
 # panel's frame buffers already live in PSRAM (esp_lcd_rgb_panel_config_t in
 # board_bsp.c), and letting Wi-Fi compete for the same PSRAM bus bandwidth
@@ -77,31 +87,30 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH=y
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=8192
 
-# mbedTLS allocations use plain calloc(), which (with SPIRAM_USE_MALLOC
-# and SPIRAM_MALLOC_ALWAYSINTERNAL=16384 above) tries internal RAM first
-# for anything up to 16KB - every mbedTLS buffer here - and falls back to
-# PSRAM only if internal RAM can't satisfy it. See heap_caps_malloc_default()
-# in ESP-IDF's heap_caps.c.
+# All mbedTLS allocations go to PSRAM (heap_caps_calloc(MALLOC_CAP_SPIRAM)),
+# leaving internal RAM for Wi-Fi/lwIP, which have no PSRAM fallback.
 #
-# Why not the other two modes, both tried on real hardware 2026-09-25:
-# - INTERNAL_MEM_ALLOC (the old setting, and ESP-IDF's default): TLS must
-#   fit in whatever internal RAM the UI leaves free. With the calendar on
-#   screen during a sync (the rendered view alone costs ~12KB), internal
-#   RAM sat at ~41KB free and every handshake failed with "PK verify
-#   failed FFFFBD70" until the display went idle.
-# - EXTERNAL_MEM_ALLOC: fixed that completely (syncs succeeded at ~43KB
-#   free with the calendar showing), but TLS traffic then always ran
-#   through PSRAM, competing with the RGB panel's frame buffers, and the
-#   display jittered visibly during every sync - the same reason Wi-Fi's
-#   own buffers are kept internal (CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP).
-#
-# DEFAULT gets both: in the common case (display idle, ~55KB free) TLS
-# stays internal with no PSRAM traffic and no jitter; only when internal
-# RAM is short (calendar on screen during a sync) do the allocations that
-# would otherwise fail spill into PSRAM, so the sync still succeeds and
-# any jitter is limited to that one sync.
+# History, all on real hardware:
+# - INTERNAL_MEM_ALLOC (ESP-IDF's default): TLS must fit in whatever
+#   internal RAM the UI leaves free. With the calendar on screen during a
+#   sync (the rendered view alone costs ~12KB), internal RAM sat at ~41KB
+#   free and every handshake failed with "PK verify failed FFFFBD70" until
+#   the display went idle.
+# - EXTERNAL_MEM_ALLOC (2026-09-25, before bounce buffers): fixed that
+#   completely, but TLS traffic then ran through PSRAM while the RGB panel
+#   DMA-read its frame buffers straight from PSRAM, and the display
+#   jittered visibly during every sync.
+# - DEFAULT_MEM_ALLOC (internal first, PSRAM fallback): less jitter, but
+#   some tearing during syncs remained, from the rest of the sync's PSRAM
+#   traffic.
+# - EXTERNAL_MEM_ALLOC again (2026-09-27, current): the RGB panel now
+#   scans out through internal-RAM bounce buffers (board_bsp.c), so PSRAM
+#   contention no longer disturbs the display - and those bounce buffers
+#   cost 32KB of internal RAM, which DEFAULT left too little of (~6KB free
+#   at the low point of a calendar-visible sync).
 # CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC is not set
-CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y
+# CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC is not set
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
 # --- LVGL (pulled in as a managed component, see board_bsp/idf_component.yml) ---
 CONFIG_LV_COLOR_DEPTH_16=y
@@ -164,3 +173,17 @@ CONFIG_FATFS_LFN_HEAP=y
 # is even read, causing "431 Header Fields Too Large".
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 CONFIG_HTTPD_MAX_URI_LEN=1024
+
+# --- RGB LCD bounce-buffer throughput ---
+# With bounce buffers (board_bsp.c), a CPU interrupt copies the next ~10
+# lines from the PSRAM frame buffer into internal RAM while the LCD DMA
+# scans out the previous 10. If that copy runs late, the DMA sends a
+# partially-refilled buffer and a stray line of old pixels flickers on
+# screen - seen on real hardware (2026-09-27) as occasional flickering
+# lines and speckles in the left quarter of the display, with 32-byte data
+# cache lines and -Og. Espressif's LCD guidance for bounce-buffer mode is
+# 64-byte data cache lines (PSRAM reads burst more efficiently) and
+# performance optimisation; neither costs internal RAM. (Their other
+# suggestion, bigger caches, does - cache is carved out of internal SRAM.)
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+CONFIG_COMPILER_OPTIMIZATION_PERF=y

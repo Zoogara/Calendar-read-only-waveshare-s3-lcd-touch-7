@@ -38,6 +38,16 @@ static const char *TAG = "board_bsp";
  * causes a slow rightward creep on this panel - stay under it. */
 #define LCD_PCLK_HZ    (12900 * 1000)
 
+/* Bounce-buffer height, in lines (see lcd_panel_init()). Each of the two
+ * bounce buffers is LCD_H_RES * LCD_BB_LINES * 2 bytes of internal RAM
+ * (10 lines = 16KB each, 32KB total), and the refill ISR has one buffer's
+ * worth of scan-out time (~620us at 10 lines) to copy the next one out of
+ * PSRAM - more lines gives more slack under PSRAM contention, fewer saves
+ * internal RAM. 10 is the size Espressif's own RGB LCD examples use.
+ * LCD_V_RES / LCD_BB_LINES must be even (the driver requires the frame
+ * buffer to be an even multiple of the bounce buffer). */
+#define LCD_BB_LINES   10
+
 /* Data-bit order matches the ESP32-S3 <-> LCD signal table on Waveshare's
  * wiki: index 0 = blue LSB (panel pin "B3") ... index 15 = red MSB
  * (panel pin "R7"), i.e. B3..B7, G2..G7, R3..R7 for RGB565. */
@@ -134,22 +144,25 @@ static esp_err_t lcd_panel_init(void)
         .bits_per_pixel = 16,
         .num_fbs = 2,
         .psram_trans_align = 64,
-        /* NOTE: a bounce-buffer (small internal-SRAM staging buffers copied
-         * from the PSRAM frame buffer in the DMA EOF ISR) was tried here to
-         * fight jitter, but ESP-IDF's own docs are explicit that this mode
-         * "CAN NOT work if we disable the cache of the external memory, via
-         * e.g. OTA or NVS write to the main flash" - and on real hardware it
-         * reliably panics ("Cache disabled but cached memory region
-         * accessed") the moment Wi-Fi's NVS write happens at boot. Fixing
-         * that properly needs CONFIG_SPIRAM_FETCH_INSTRUCTIONS +
-         * CONFIG_SPIRAM_RODATA (PSRAM XIP) so flash writes never disable the
-         * PSRAM cache - a bigger, riskier change than jitter alone
-         * justifies. Straight double-buffering in PSRAM (below) is what the
-         * RGB LCD driver docs call the simplest anti-tearing option; PSRAM
-         * bandwidth contention is mitigated instead by keeping Wi-Fi's
-         * buffers out of PSRAM (see CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP in
-         * sdkconfig.defaults) and, if jitter persists, by lowering
-         * LCD_PCLK_HZ. */
+        /* Bounce buffers: the RGB DMA streams from two small internal-SRAM
+         * buffers, which the CPU refills from the PSRAM frame buffer in the
+         * DMA EOF interrupt, instead of reading PSRAM directly. Without
+         * them, any heavy PSRAM traffic elsewhere (a calendar sync: TLS
+         * spilling into PSRAM, HTTP/JSON buffers, the event store) starved
+         * the RGB DMA and tore the picture for a couple of seconds per sync.
+         *
+         * This needs CONFIG_SPIRAM_XIP_FROM_PSRAM (see sdkconfig.defaults):
+         * without it, any flash write (Wi-Fi's NVS write at boot, config
+         * saves, OTA) disables the cache for PSRAM too, and the bounce-buffer
+         * refill ISR reading the PSRAM frame buffer panics ("Cache disabled
+         * but cached memory region accessed") - confirmed on real hardware
+         * the first time this was tried, before XIP. Also depends on the
+         * restart-link fix in components/esp_lcd/rgb/esp_lcd_panel_rgb.c's
+         * lcd_rgb_panel_try_restart_transmission().
+         *
+         * Cost: 2 x LCD_BB_LINES lines of internal RAM (see LCD_BB_LINES),
+         * plus the CPU copying ~26MB/s from PSRAM in the ISR at this pclk. */
+        .bounce_buffer_size_px = LCD_H_RES * LCD_BB_LINES,
         .hsync_gpio_num = LCD_HSYNC_GPIO,
         .vsync_gpio_num = LCD_VSYNC_GPIO,
         .de_gpio_num = LCD_DE_GPIO,
@@ -332,7 +345,10 @@ static esp_err_t lvgl_init(void)
     };
     const lvgl_port_display_rgb_cfg_t rgb_cfg = {
         .flags = {
-            .bb_mode = false,        /* full PSRAM frame buffers, see lcd_panel_init */
+            .bb_mode = true,         /* bounce buffers in front of the PSRAM frame
+                                        buffers - see lcd_panel_init(). Makes
+                                        esp_lvgl_port signal flush-ready from
+                                        on_bounce_frame_finish instead of on_vsync. */
             /* With this, esp_lvgl_port draws directly into the RGB panel's
              * own two PSRAM frame buffers (from num_fbs=2 in
              * lcd_panel_init) instead of writing into whichever buffer is
