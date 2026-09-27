@@ -114,14 +114,17 @@ static void add_item(lv_obj_t *items_col, const gcal_event_t *ev)
     lv_obj_set_style_bg_color(item, ui_color(ev->color), 0);
     lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
 
+    /* The summary is capped explicitly (the label clips to one line anyway)
+     * so the output provably fits text[] - -O2's -Wformat-truncation
+     * otherwise rejects the unbounded %s. 120 + 4 + 15 + 3 + 15 < 160. */
     char text[160];
     if (ev->all_day) {
-        snprintf(text, sizeof(text), "%s", ev->summary);
+        snprintf(text, sizeof(text), "%.159s", ev->summary);
     } else {
         char start_s[16], end_s[16];
         format_time12(ev->start, start_s, sizeof(start_s));
         format_time12(ev->end, end_s, sizeof(end_s));
-        snprintf(text, sizeof(text), "%s    %s - %s", ev->summary, start_s, end_s);
+        snprintf(text, sizeof(text), "%.120s    %s - %s", ev->summary, start_s, end_s);
     }
 
     lv_obj_t *label = lv_label_create(item);
