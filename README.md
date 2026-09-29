@@ -8,256 +8,12 @@ the Google Calendar Android app: Month / Week / Day views you can drill into
 by tapping a day, an "Up next" list, and multiple calendars shown side by
 side, each in its own colour.
 
-**Important, read first:** this has since been built, flashed, and run
-extensively on real hardware (an actual Waveshare ESP32-S3-Touch-LCD-7,
-against ESP-IDF v5.3.2) - display/touch/backlight bring-up, Wi-Fi
-provisioning, the Google Calendar and ICS-feed fetch paths, the TF card and
-its config backup, the on-device settings dialog, and the idle screensaver
-have all been exercised and confirmed working, not just reviewed on paper.
-The items under **Bring-up troubleshooting** below are a mix of real
-findings from that hardware bring-up (several are called out inline as
-"confirmed on real hardware") and a few things that never needed a tweak
-but are still worth knowing about if you hit them on a different board
-revision or IDF version.
-
-Known, still-open issues (four others - the ambient clock's once-a-minute
-digit change occasionally tearing, a boot-time hang/crash inside
-`update_title()`, a recurring `LoadProhibited` panic inside LVGL's layout
-pass, and intermittent calendar sync failures tied to internal-RAM
-headroom - were root-caused and fixed; see "Ambient clock digit tearing
-(fixed)", "update_title() boot-time crash (fixed)", "Unsynchronized LVGL
-construction at boot (fixed)", and "Calendar sync reliability (internal-RAM
-headroom) (fixed)" below):
-
-- An intermittent crash right after the SD card mounts at boot, landing in
-  LVGL's own background redraw task - self-recovers via the panic
-  handler's own automatic reboot within about a second, on roughly a
-  quarter to two-fifths of boots in repeated testing. It has never once
-  failed to recover in testing (never a hard loop), and root cause hasn't
-  been pinned down after a real investigation (stack size, heap
-  corruption, an NVS-vs-LVGL-task race, and SD SPI clock speed were all
-  ruled out) - see the comment above the settling-delay `vTaskDelay()` in
-  `main/main.c`'s `app_main()` for the full writeup and the leading
-  remaining theory (a GDMA channel-sharing interaction between the SD SPI
-  bus and the RGB panel's own continuous-refresh DMA).
-
-### update_title() boot-time crash (fixed)
-
-`calendar_ui.c`'s `update_title()` calls `lv_refr_now()` twice, synchronously,
-as part of its own dual-framebuffer sync dance (documented in its own
-comment) - and it runs unconditionally on every `select_view()` call,
-including the one at boot, inside `calendar_ui_init()`. That's exactly the
-category of problem `select_view_force_redraw()`'s own doc comment already
-warned about: calling `lv_refr_now()` before LVGL's redraw timer has ticked
-even once wedges LVGL's buffer-sync logic, because nothing's ready yet for
-the synchronous `refr_sync_areas()`/`lv_draw_sw_buffer_copy()` path it
-forces. `select_view_force_redraw()` was deliberately never called that
-early for exactly this reason, but `update_title()` wasn't written with the
-same guard, since it's called from many more places than just view
-switches.
-
-First seen (2026-09-05) as a non-self-recovering watchdog hang - this
-board's task watchdog isn't configured to reset on timeout, so it needed a
-manual reset. Seen again (2026-09-09) as a hard `Guru Meditation Error:
-Cache disabled but cached memory region accessed` panic instead - same root
-cause hit at the same call site, just a different failure mode depending on
-what else was going on at that exact moment (in this case, right at boot,
-likely mid something else in the early-flash-cache-sensitive window).
-
-Fixed by gating `update_title()`'s two `lv_refr_now()` calls behind a new
-`s_boot_forced_redraw_ok` flag, set `true` right after
-`calendar_ui_init()`'s own initial `select_view()` call returns. Before
-that point a plain `lv_obj_invalidate()` (no forced synchronous refresh) is
-enough - nothing's been shown on screen yet at boot, so there's no stale
-second buffer to catch up on, and the next regular LVGL timer tick paints
-the very first frame correctly on its own. Every other caller of
-`update_title()` runs after that flag flips, so this only changes behaviour
-during the exact narrow window that was actually unsafe.
-
-### Unsynchronized LVGL construction at boot (fixed)
-
-A recurring `Guru Meditation Error: Core 0 panic'ed (LoadProhibited)`,
-always inside LVGL's own periodic redraw pass (`_lv_disp_refr_timer` →
-`layout_update_core`, recursing several levels deep into the object tree)
-but always in a *different* leaf function - `lv_obj_get_child_cnt()`,
-`get_prop_core()` (a style property read), `lv_obj_get_scroll_bottom()`,
-`lv_obj_scrollbar_invalidate()` - with no single obviously-wrong call site
-in common between occurrences. First seen once, then recurring more often
-(three times in one short burst) during 2026-09-09's testing.
-
-Two theories were tested and ruled out before finding the real cause,
-each still worth keeping in mind for anything similar in the future:
-
-- **Heap corruption** (an out-of-bounds write or heap-metadata corruption
-  making the object tree's own memory garbage) - ruled out by briefly
-  enabling `CONFIG_HEAP_POISONING_COMPREHENSIVE`, which wraps every heap
-  block in canary bytes and fully verifies heap integrity on every
-  malloc/free/realloc. It never caught a corruption event before two
-  further crashes while it was on - a genuinely useful negative result,
-  since a real overflow or metadata corruption would have aborted
-  immediately with a precise stack trace pointing at the actual bad
-  write. (Heap poisoning has real overhead - enough, on this board's
-  already-tight internal-RAM budget, to break TLS certificate
-  verification on calendar sync. Not something to leave on; re-enable
-  only to chase something similarly corruption-shaped, then turn it back
-  off.)
-- **A stale pointer to a validly-freed object** - `ui_settings_dialog.c`
-  turned out to have a real, separate bug matching this shape exactly:
-  four places (`pw_confirm()`, `pw_dismiss()`, `cancel_cb()`, `save_cb()`)
-  called `lv_obj_del()` on a dialog *synchronously, from inside a click
-  handler on that dialog's own child button* - a well-known LVGL
-  foot-gun (their own docs: use `lv_obj_del_async()`, not `lv_obj_del()`,
-  for exactly this case, since LVGL's input-device/event-dispatch
-  machinery can still reference the object after the callback returns).
-  Fixed by deferring each delete-and-redraw sequence through
-  `lv_async_call()` instead. A real bug worth having fixed regardless,
-  but *not* this crash's actual cause - it kept recurring even after this
-  fix, including on fresh boots where no dialog had ever been touched.
-
-The real cause: `calendar_ui_init()` builds the **entire** UI - nav rail,
-top bar, legend, all four views, the ambient clock overlay - running in
-`app_main()`'s own task, with no `bsp_lvgl_lock()` held at all. By the
-time it runs, `board_bsp.c`'s `lvgl_init()` (called earlier, from
-`bsp_display_init()`) has already started `esp_lvgl_port`'s background
-task, which independently calls `lv_timer_handler()` on its own loop from
-the moment it's created - including LVGL's own periodic layout/redraw
-pass over whatever object tree exists at that instant. Two unsynchronized
-tasks touching the same object tree is a textbook LVGL thread-safety
-violation: LVGL's own task could walk into an object mid-construction,
-its children or style list not yet linked up, and read garbage - which
-exactly explains the symptom (a different leaf function each time,
-whichever object happened to be mid-construction when the race hit) and
-its rarity/inconsistency across boots (purely a timing race).
-
-Fixed by wrapping `calendar_ui_init()`'s entire body in
-`bsp_lvgl_lock()`/`bsp_lvgl_unlock()`. `bsp_lvgl_lock()` is `esp_lvgl_port`'s
-own mutex (`lvgl_port_lock()`), the identical one its background task
-already takes non-blockingly (`lvgl_port_lock(0)`) before each
-`lv_timer_handler()` call - so holding it for the whole init just makes
-that task skip a few cycles and retry, no deadlock risk. Confirmed on real
-hardware: no recurrence since, and boot completes measurably faster too
-(the background task no longer wastes cycles contending on a half-built
-tree).
-
-### Ambient clock digit tearing (fixed)
-
-The ambient clock's once-a-minute digit change used to occasionally show a
-single frame of visible tearing before settling on the correct new time.
-Extensive on-device correlation testing (logging which of the RGB panel's
-two physical framebuffers each redraw landed in, then deliberately
-shifting where those buffers land in PSRAM and swapping which one LVGL
-calls "buf1" vs "buf2") showed the tearing tracked one specific physical
-framebuffer slot - `rgb_panel->fbs[0]` - regardless of its PSRAM address
-or which LVGL buffer role currently pointed at it, which ruled out both a
-memory/alignment explanation and an LVGL/`esp_lvgl_port`-level one.
-
-The actual bug: ESP-IDF's own RGB LCD driver
-(`esp_lcd_panel_rgb.c`'s `lcd_rgb_panel_try_restart_transmission()`, gated
-by `CONFIG_LCD_RGB_RESTART_IN_VSYNC`) restarts the GDMA chain via a single
-link hardcoded to `fbs[0]` on every VSYNC, regardless of which buffer was
-actually current - so with two frame buffers, every VSYNC-triggered
-restart silently re-anchored the scan-out back to `fbs[0]`'s stale content
-whenever the most recent redraw had actually landed in the other buffer.
-Simply disabling `CONFIG_LCD_RGB_RESTART_IN_VSYNC` "fixed" the flash but
-traded it for a worse, permanent ~300px horizontal shift (this flag turns
-out to be genuinely needed on this board/timing, guarding against a real
-GDMA-vs-LCD-FIFO desync) - so the real fix is a vendored, patched copy of
-the whole `esp_lcd` component under `components/esp_lcd/` (project-local
-`components/<name>` overrides `$IDF_PATH/components/<name>` of the same
-name - ESP-IDF's own documented mechanism for exactly this), which builds
-one restart link per frame buffer instead of one hardcoded to slot 0 and
-selects among them by `cur_fb_index` at restart time. See that file's own
-header comment for the full patch writeup. `CONFIG_LCD_RGB_RESTART_IN_VSYNC`
-stays enabled with this patch in place - do a clean `idf.py fullclean`
-before rebuilding after pulling this component in fresh, so CMake actually
-picks up the local override instead of a previously-cached SDK path.
-
-Maintenance cost: any future `esp_lcd` fix or security patch from an
-ESP-IDF upgrade needs to be manually re-applied to this vendored copy too
-- it won't pick them up automatically. If Espressif ever fixes this
-upstream, drop `components/esp_lcd/` and go back to the SDK's own copy.
-
-### Calendar sync reliability (internal-RAM headroom) (fixed)
-
-Intermittent calendar refresh failures (`ESP_ERR_HTTP_FETCH_HEADER`,
-`ESP_ERR_HTTP_CONNECT`, `PK verify failed` certificate errors, even the
-occasional truncated/`bad JSON in response`) - reproducible enough across a
-long overnight test (2026-09-09/10) to rule out simple bad luck, but
-resistant to some of the obvious suspects: a manual device reset didn't
-fix it, neither did switching the router's Wi-Fi channel. Heap poisoning
-(see the boot-crash section above) was briefly re-enabled to check for a
-leak and found none - total free heap stayed essentially flat for hours.
-
-The actual driver: **which display state is active**. This board's
-internal RAM is tight enough (~45-63KB free depending on state - see
-`CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN`'s own comment for the ~45-55KB
-threshold TLS certificate verification needs) that whichever view is
-currently on screen (Month/Week/Day/Up next, all rendered as LVGL objects
-- event bars, badges, chips) measurably eats into the same budget TLS
-handshakes need, and the ICS calendar specifically (a fresh handshake to a
-different host, not reusing an already-warm connection the way the four
-Google Calendar API fetches do) was the first thing to become flaky when
-that budget got tight. Confirmed directly on real hardware: internal RAM
-free jumped by ~14KB the instant the active view's content was released
-(entering the ambient clock or sleep screen), and a previously-failing ICS
-fetch succeeded on the very next cycle with no other change.
-
-Three changes, together:
-
-- **Shared LVGL styles.** Every view (`ui_month.c`, `ui_week.c`,
-  `ui_day.c`, `ui_upnext.c`) plus the top bar's calendar legend
-  (`calendar_ui.c`) used to set every style property - radius, background
-  opacity, font, even text colour where there were really only ever two
-  possible values - directly on each event bar/chip/label object,
-  individually, every single time that content was rebuilt (every sync
-  cycle, every view switch). In LVGL 8, each of those calls that hits an
-  object with no matching style yet allocates that object its own
-  dynamically-sized "local style" out of internal RAM (small allocations
-  are kept off PSRAM entirely by `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL`).
-  Properties that are actually constant now live in a handful of static
-  `lv_style_t`s per file, attached via `lv_obj_add_style()` - free beyond
-  a pointer, instead of paying for a fresh local style on every object,
-  every cycle. Only genuinely per-object properties (mainly `bg_color`,
-  one of many per-calendar colours) stay direct per-object calls.
-- **Sync no longer skips while the display's asleep or showing the
-  ambient clock.** `calendar_ui_is_asleep()` covers both those states, not
-  just the deeper backlight-off sleep - so with presence continuously
-  detected, this used to mean *hours* with zero network activity at all.
-  `main/main.c`'s `net_task()` now syncs on its normal schedule regardless
-  of display state; `calendar_ui_refresh()`/`calendar_ui_notify_sync_failed()`
-  touching LVGL objects that just aren't currently visible costs nothing
-  that matters next to the fetch itself.
-- **A touch waking the display no longer forces an extra sync.** It used
-  to: `ui_screensaver.c`'s `go_calendar()` set the same event bit
-  `calendar_ui_request_sync()` uses for the settings page's manual
-  "tap the updated-HH:MM-label" gesture, which `net_task()` treated as
-  "go sync right now." But `go_calendar()` already repopulates the view
-  from `event_store`'s own cached data first (no network involved), and -
-  now that sync never stops running in the background - that data is
-  never more than `refresh_interval_s` stale to begin with. Forcing an
-  *extra* fetch right at the exact moment the view was being reconstructed
-  was actively harmful, not just redundant: it collided a fresh TLS
-  handshake with precisely the moment internal RAM was tightest. The
-  manual force-sync tap still works exactly as before - only the implicit
-  touch-wake stopped triggering one.
-- **A lightweight keep-alive**, `main.c`'s `keepalive_probe()`: a plain
-  TCP connect-then-close (no TLS, no data) to the same host calendar sync
-  talks to, roughly once a minute during whatever of the wait between
-  sync cycles is still otherwise completely idle. Added on a theory (a
-  connection sitting silent for minutes at a stretch being more exposed
-  to router-side connection-tracking/ARP staleness than one with regular
-  traffic) that didn't end up being the main driver - internal RAM
-  headroom was - but it's cheap, harmless, and logs only on failure, so
-  it was left in as a genuinely useful diagnostic even after the real
-  cause was found.
-
-Confirmed on real hardware afterward: the "view active" internal-RAM
-baseline that used to sit around ~44-45KB now typically sits around
-~57-58KB (matching the "view released" level from before), a deliberate
-worst-case stress test (every calendar enabled, a busy month, a forced
-sync) still succeeded cleanly even at its own tighter ~45-46KB moment, and
-a long run of sync cycles across every display state and several touch
-wakes came back clean throughout.
+This has been built, flashed, and run extensively on real hardware (an
+actual Waveshare ESP32-S3-Touch-LCD-7, against ESP-IDF v5.3.2), and is
+stable in day-to-day use. Known limitations, bring-up tips for other board
+revisions or IDF versions, and the history of the bugs found and fixed
+along the way are all collected at the end, under **Known issues and
+history**.
 
 ## What it does
 
@@ -460,150 +216,6 @@ In the setup portal form:
 Nothing here needs Google's OAuth consent screen to be published/verified
 — service-account server-to-server auth doesn't go through that flow, so
 there's no "unverified app" warning to fight with.
-
-## Known limitations
-
-- **Pagination**: each calendar fetch requests up to 250 events in the
-  fetch window (`FETCH_PAST_DAYS`/`FETCH_FUTURE_DAYS` in `main/main.c`,
-  14 days back / 60 days forward by default). Google's `nextPageToken`
-  pagination isn't implemented, so an extremely busy calendar could be
-  truncated — 250 events over ~10 weeks is generous for a household
-  calendar, but widen the window with care.
-- **Legend toggle isn't persisted** — hiding a calendar via the legend
-  chip is a live UI filter that resets on reboot (all calendars fetched
-  every cycle either way, so this is instant either way).
-- **TF/SD card is only used for a config backup, nothing else yet** — see
-  "TF/SD card" below. No event cache, no logging - `sd_card_init()`'s
-  mount is otherwise idle once boot finishes (and is in fact deinited
-  right after boot, freeing its SPI bus/DMA resources — see below).
-- **Partition table has OTA slots, but nothing writes to them** — `ota_0`/
-  `ota_1` exist in `partitions.csv`, but no code calls `esp_https_ota` or
-  otherwise switches the active slot, so a flashed image never gets
-  replaced except by re-flashing over serial.
-
-## Bring-up troubleshooting
-
-Things most likely to need a tweak on real hardware, roughly in the order
-you'd hit them:
-
-1. **`esp_lcd_rgb_panel_config_t` field names** (`lcd_panel_init()` in
-   `board_bsp.c`): the RGB panel config struct in `esp_lcd_panel_rgb.h`
-   has had minor field reshuffles across IDF releases (e.g. exactly
-   which fields live directly on the struct vs. nested under `.flags`).
-   If a field name doesn't compile, check the struct definition shipped
-   with your IDF version and adjust - the set of fields being configured
-   (timings, data width, frame buffer count/placement, pin numbers)
-   is stable even if a name or two moves.
-2. **`esp_lcd_new_panel_io_i2c()` signature** (`components/board_bsp/board_bsp.c`,
-   `touch_init()`): written for ESP-IDF ≥5.3, which takes the
-   `i2c_master_bus_handle_t` from `i2c_new_master_bus()` directly. Older
-   5.2.x builds used a different signature. If this doesn't compile,
-   check `esp_lcd_panel_io_i2c.h` for your installed IDF version.
-3. **`lvgl_port_add_disp_rgb()`** (`lvgl_init()` in the same file): the
-   exact struct fields on `lvgl_port_display_rgb_cfg_t` have shifted
-   across `esp_lvgl_port` releases. If it doesn't compile, check the
-   README/example in whatever version the component manager pulled
-   (`managed_components/espressif__esp_lvgl_port/`), or fall back to the
-   generic `lvgl_port_add_disp()` with the same `lvgl_port_display_cfg_t`.
-4. **Picture doesn't show your UI at all — screen cycles through solid
-   colour bars/blocks instead**: this means the panel never left its own
-   built-in test pattern, regardless of anything happening on the
-   LVGL/software side (a rendering bug would show a *distorted version* of
-   your UI, not a clean colour-bar cycle that's completely unaffected by
-   what you draw, or by RGB timing changes). On real hardware this turned
-   out to be a missing physical reset pulse: this board's RGB panel has its
-   own reset line wired through the CH422G expander (`CH422G_EXIO_LCD_RST`,
-   EXIO3) rather than an ESP32 GPIO, and `esp_lcd`'s RGB panel driver has no
-   `reset_gpio_num` field of its own to handle that automatically. Without
-   `lcd_reset_pulse()` (called from `bsp_display_init()` before
-   `lcd_panel_init()`) the panel simply never came out of reset, no matter
-   what RGB timing values were used. This was found by cross-referencing a
-   working ESPHome config for this exact board, which declares an explicit
-   `reset_pin` under its CH422G `io_ex` hub that this firmware had no
-   equivalent of.
-5. **Picture shows your UI but shifted, rolling, has noise, or jitters**:
-   with the reset pulse above in place, `lcd_panel_init()`'s RGB timing
-   values are what's left to tune. The values currently in `board_bsp.c`
-   (12.9MHz pclk, hsync/vsync pulse=2, all porches=4, `pclk_active_neg =
-   false`, from a community report for this exact panel/pinout —
-   lvgl_micropython repo, discussion #333) tested rock solid on real
-   hardware; a working ESPHome config for this same board (16MHz pclk,
-   hsync pulse/back/front = 4/8/8, vsync pulse/back/front = 4/16/16,
-   `pclk_active_neg = true`, also noted in that comment) had occasional
-   jitter on the same unit. If you still get jitter, that ESPHome
-   alternative or the underlying community report are the best next things
-   to try, not blind guessing at new values from scratch — and that report
-   also found this panel tolerates pixel clocks up to ~12.9MHz but starts a
-   slow rightward "creep" at 13.0MHz and above. If the picture is otherwise
-   stable but shows brief horizontal jitter/wobble rather than a steady
-   drift or colour bars, that's more likely PSRAM bus contention starving
-   the RGB DMA than a timing problem, since both frame buffers
-   live in PSRAM (`.flags.fb_in_psram = true`). Do **not** "fix" this with
-   a bounce buffer (`bounce_buffer_size_px`) unless you also enable
-   `CONFIG_SPIRAM_FETCH_INSTRUCTIONS` + `CONFIG_SPIRAM_RODATA` (PSRAM XIP)
-   — without those, ESP-IDF's own RGB LCD driver docs warn that mode
-   "CAN NOT work if we disable the cache of the external memory, via e.g.
-   OTA or NVS write to the main flash", and in practice it panics
-   (`Cache disabled but cached memory region accessed`) the moment Wi-Fi
-   does its NVS write at boot. Safer first move: turn off
-   `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP` in `sdkconfig.defaults` so Wi-Fi's
-   RX/TX buffers land in internal RAM instead of PSRAM (there's ~260KB of
-   internal RAM free at boot, plenty of headroom) and stop competing with
-   the LCD DMA for PSRAM bandwidth.
-6. **Colours look swapped/wrong (e.g. red and blue swapped)**: check
-   `s_lcd_data_gpios[]` in `board_bsp.c` against the "ESP32-S3 ↔ LCD"
-   pin table on the [Waveshare wiki page](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7) —
-   the array is ordered blue-LSB→red-MSB (B3..B7, G2..G7, R3..R7) to
-   match that table, which is the standard convention for this
-   `esp_lcd_panel_rgb` config, but double-check.
-7. **Backlight stays off / touch doesn't respond**: the CH422G register
-   addresses and EXIO-bit-to-pin mapping in `ch422g.c` come from the
-   community-maintained ESPHome CH422G driver (WCH's own datasheet is
-   Chinese-only and thin on I2C protocol detail), not from Waveshare's
-   demo source directly. If EXIO1 (touch reset) / EXIO2 (backlight)
-   don't do what's expected, check Waveshare's own
-   `ESP32-S3-Touch-LCD-7-Demo` repo (linked from the wiki page) for
-   their exact expander init sequence.
-8. **Wrong calendar/timezone displayed**: double check the POSIX TZ
-   string — a wrong DST rule silently shifts events by an hour for part
-   of the year rather than erroring out.
-9. **A hard abort inside `spi_flash_disable_interrupts_caches_and_other_cpu()`
-   (or any "Cache disabled but cached memory region accessed" panic) the
-   first time a new background task does a raw NVS/flash write**: that
-   kind of write needs the calling task's *own stack* to be in internal
-   RAM, not PSRAM — PSRAM itself is briefly unreachable while the flash
-   cache is disabled for the write, so a task whose stack lives there
-   can't safely be the one doing it (or receiving an interrupt while it's
-   in progress). This project already puts a couple of tasks' stacks in
-   PSRAM on purpose, specifically to keep internal RAM free for exactly
-   this kind of operation elsewhere (see `net_task`'s creation comment in
-   `main/main.c` and `lvgl_init()`'s in `board_bsp.c`) — but the first time
-   *any new* task you add does its own NVS/flash write (a settings save, a
-   first-time driver init that touches its own NVS blob — Wi-Fi's own
-   `esp_wifi_init()` hit this on-device, the very first time it ever ran),
-   check what stack that task is running on before assuming it's a logic
-   bug. Fix is always the same: split that one write onto a small,
-   short-lived task with a plain (`xTaskCreate`, internal-RAM) stack — see
-   `reconfigure_task` in `calendar_ui.c`, `save_task` in `config_web.c`, or
-   `wifi_bringup_task` in `main.c` for three examples of the same pattern.
-10. **`main_task` hangs forever after boot, tripping the task watchdog
-    every few seconds with `IDLE0` never getting to run**: if this
-    started after adding a forced `lv_refr_now()` (e.g. to fix tearing
-    somewhere — see the dual-framebuffer note under item 5 above), check
-    whether that code path can run as part of the *very first* screen
-    ever shown (`calendar_ui_init()`'s own initial view selection, before
-    LVGL's own redraw timer has ticked even once) — calling
-    `lv_refr_now()` synchronously that early deadlocked inside LVGL's
-    buffer-sync logic on-device. `select_view_force_redraw()` in
-    `calendar_ui.c` is deliberately called only from *interactive*
-    view-switch call sites (a nav rail tap, drilling into a day, waking
-    from a long sleep), never from the startup path, for exactly this
-    reason.
-
-None of these are architectural problems — they're exactly the kind of
-"tune the board bring-up constants" work you'd expect when porting to a
-7" RGB panel for the first time, just called out explicitly instead of
-left for you to discover blind.
 
 ## TF/SD card
 
@@ -936,3 +548,477 @@ If you'd rather not share it with the service account, the secret iCal
 address from Step 2 works too - add it as an **ICS URL**-source calendar
 instead, no sharing required. Either way, pending tasks show up
 prefixed with ☐ (U+2610), completed ones with ☑ (U+2611).
+
+## Known issues and history
+
+The project is stable in daily use; nothing below affects normal
+operation. This section is for anyone modifying the firmware or porting
+it to a different board revision or IDF version.
+
+### Known limitations
+
+- **Pagination**: each calendar fetch requests up to 250 events in the
+  fetch window (`FETCH_PAST_DAYS`/`FETCH_FUTURE_DAYS` in `main/main.c`,
+  14 days back / 60 days forward by default). Google's `nextPageToken`
+  pagination isn't implemented, so an extremely busy calendar could be
+  truncated — 250 events over ~10 weeks is generous for a household
+  calendar, but widen the window with care.
+- **Legend toggle isn't persisted** — hiding a calendar via the legend
+  chip is a live UI filter that resets on reboot (all calendars fetched
+  every cycle either way, so this is instant either way).
+- **TF/SD card is only used for a config backup, nothing else yet** — see
+  "TF/SD card" below. No event cache, no logging - `sd_card_init()`'s
+  mount is otherwise idle once boot finishes (and is in fact deinited
+  right after boot, freeing its SPI bus/DMA resources — see below).
+- **Partition table has OTA slots, but nothing writes to them** — `ota_0`/
+  `ota_1` exist in `partitions.csv`, but no code calls `esp_https_ota` or
+  otherwise switches the active slot, so a flashed image never gets
+  replaced except by re-flashing over serial.
+
+### Open issue: occasional crash right after the SD card mounts at boot
+
+An intermittent crash right after the SD card mounts at boot, landing in
+LVGL's own background redraw task. It self-recovers via the panic
+handler's automatic reboot within about a second, on roughly a quarter to
+two-fifths of boots in repeated testing, and has never once failed to
+recover (never a hard loop). Root cause hasn't been pinned down after a
+real investigation (stack size, heap corruption, an NVS-vs-LVGL-task race,
+and SD SPI clock speed were all ruled out) - see the comment above the
+settling-delay `vTaskDelay()` in `main/main.c`'s `app_main()` for the full
+writeup and the leading remaining theory (a GDMA channel-sharing
+interaction between the SD SPI bus and the RGB panel's own
+continuous-refresh DMA).
+
+### Bring-up troubleshooting
+
+Things most likely to need a tweak on real hardware, roughly in the order
+you'd hit them:
+
+1. **`esp_lcd_rgb_panel_config_t` field names** (`lcd_panel_init()` in
+   `board_bsp.c`): the RGB panel config struct in `esp_lcd_panel_rgb.h`
+   has had minor field reshuffles across IDF releases (e.g. exactly
+   which fields live directly on the struct vs. nested under `.flags`).
+   If a field name doesn't compile, check the struct definition shipped
+   with your IDF version and adjust - the set of fields being configured
+   (timings, data width, frame buffer count/placement, pin numbers)
+   is stable even if a name or two moves.
+2. **`esp_lcd_new_panel_io_i2c()` signature** (`components/board_bsp/board_bsp.c`,
+   `touch_init()`): written for ESP-IDF ≥5.3, which takes the
+   `i2c_master_bus_handle_t` from `i2c_new_master_bus()` directly. Older
+   5.2.x builds used a different signature. If this doesn't compile,
+   check `esp_lcd_panel_io_i2c.h` for your installed IDF version.
+3. **`lvgl_port_add_disp_rgb()`** (`lvgl_init()` in the same file): the
+   exact struct fields on `lvgl_port_display_rgb_cfg_t` have shifted
+   across `esp_lvgl_port` releases. If it doesn't compile, check the
+   README/example in whatever version the component manager pulled
+   (`managed_components/espressif__esp_lvgl_port/`), or fall back to the
+   generic `lvgl_port_add_disp()` with the same `lvgl_port_display_cfg_t`.
+4. **Picture doesn't show your UI at all — screen cycles through solid
+   colour bars/blocks instead**: this means the panel never left its own
+   built-in test pattern, regardless of anything happening on the
+   LVGL/software side (a rendering bug would show a *distorted version* of
+   your UI, not a clean colour-bar cycle that's completely unaffected by
+   what you draw, or by RGB timing changes). On real hardware this turned
+   out to be a missing physical reset pulse: this board's RGB panel has its
+   own reset line wired through the CH422G expander (`CH422G_EXIO_LCD_RST`,
+   EXIO3) rather than an ESP32 GPIO, and `esp_lcd`'s RGB panel driver has no
+   `reset_gpio_num` field of its own to handle that automatically. Without
+   `lcd_reset_pulse()` (called from `bsp_display_init()` before
+   `lcd_panel_init()`) the panel simply never came out of reset, no matter
+   what RGB timing values were used. This was found by cross-referencing a
+   working ESPHome config for this exact board, which declares an explicit
+   `reset_pin` under its CH422G `io_ex` hub that this firmware had no
+   equivalent of.
+5. **Picture shows your UI but shifted, rolling, has noise, or jitters**:
+   with the reset pulse above in place, `lcd_panel_init()`'s RGB timing
+   values are what's left to tune. The values currently in `board_bsp.c`
+   (12.9MHz pclk, hsync/vsync pulse=2, all porches=4, `pclk_active_neg =
+   false`, from a community report for this exact panel/pinout —
+   lvgl_micropython repo, discussion #333) tested rock solid on real
+   hardware; a working ESPHome config for this same board (16MHz pclk,
+   hsync pulse/back/front = 4/8/8, vsync pulse/back/front = 4/16/16,
+   `pclk_active_neg = true`, also noted in that comment) had occasional
+   jitter on the same unit. If you still get jitter, that ESPHome
+   alternative or the underlying community report are the best next things
+   to try, not blind guessing at new values from scratch — and that report
+   also found this panel tolerates pixel clocks up to ~12.9MHz but starts a
+   slow rightward "creep" at 13.0MHz and above. If the picture is otherwise
+   stable but shows brief horizontal jitter/wobble rather than a steady
+   drift or colour bars, that's more likely PSRAM bus contention than a
+   timing problem, since both frame buffers live in PSRAM
+   (`.flags.fb_in_psram = true`). This firmware already scans out through
+   internal-RAM bounce buffers to prevent exactly that (see "Display
+   tearing during calendar syncs (fixed)" below). If you change that setup,
+   keep `CONFIG_SPIRAM_XIP_FROM_PSRAM` enabled alongside it: without PSRAM
+   XIP, ESP-IDF's own RGB LCD driver docs warn bounce-buffer mode "CAN NOT
+   work if we disable the cache of the external memory, via e.g. OTA or
+   NVS write to the main flash", and in practice it panics (`Cache disabled
+   but cached memory region accessed`) the moment Wi-Fi does its NVS write
+   at boot. If stray lines of pixels flicker instead, the bounce-buffer
+   refill is running late - check the 64-byte data cache line and `-O2`
+   settings in `sdkconfig.defaults` are still in effect.
+6. **Colours look swapped/wrong (e.g. red and blue swapped)**: check
+   `s_lcd_data_gpios[]` in `board_bsp.c` against the "ESP32-S3 ↔ LCD"
+   pin table on the [Waveshare wiki page](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7) —
+   the array is ordered blue-LSB→red-MSB (B3..B7, G2..G7, R3..R7) to
+   match that table, which is the standard convention for this
+   `esp_lcd_panel_rgb` config, but double-check.
+7. **Backlight stays off / touch doesn't respond**: the CH422G register
+   addresses and EXIO-bit-to-pin mapping in `ch422g.c` come from the
+   community-maintained ESPHome CH422G driver (WCH's own datasheet is
+   Chinese-only and thin on I2C protocol detail), not from Waveshare's
+   demo source directly. If EXIO1 (touch reset) / EXIO2 (backlight)
+   don't do what's expected, check Waveshare's own
+   `ESP32-S3-Touch-LCD-7-Demo` repo (linked from the wiki page) for
+   their exact expander init sequence.
+8. **Wrong calendar/timezone displayed**: double check the POSIX TZ
+   string — a wrong DST rule silently shifts events by an hour for part
+   of the year rather than erroring out.
+9. **A hard abort inside `spi_flash_disable_interrupts_caches_and_other_cpu()`
+   (or any "Cache disabled but cached memory region accessed" panic) the
+   first time a new background task does a raw NVS/flash write**: that
+   kind of write needs the calling task's *own stack* to be in internal
+   RAM, not PSRAM — PSRAM itself is briefly unreachable while the flash
+   cache is disabled for the write, so a task whose stack lives there
+   can't safely be the one doing it (or receiving an interrupt while it's
+   in progress). This project already puts a couple of tasks' stacks in
+   PSRAM on purpose, specifically to keep internal RAM free for exactly
+   this kind of operation elsewhere (see `net_task`'s creation comment in
+   `main/main.c` and `lvgl_init()`'s in `board_bsp.c`) — but the first time
+   *any new* task you add does its own NVS/flash write (a settings save, a
+   first-time driver init that touches its own NVS blob — Wi-Fi's own
+   `esp_wifi_init()` hit this on-device, the very first time it ever ran),
+   check what stack that task is running on before assuming it's a logic
+   bug. Fix is always the same: split that one write onto a small,
+   short-lived task with a plain (`xTaskCreate`, internal-RAM) stack — see
+   `reconfigure_task` in `calendar_ui.c`, `save_task` in `config_web.c`, or
+   `wifi_bringup_task` in `main.c` for three examples of the same pattern.
+10. **`main_task` hangs forever after boot, tripping the task watchdog
+    every few seconds with `IDLE0` never getting to run**: if this
+    started after adding a forced `lv_refr_now()` (e.g. to fix tearing
+    somewhere — see the dual-framebuffer note under item 5 above), check
+    whether that code path can run as part of the *very first* screen
+    ever shown (`calendar_ui_init()`'s own initial view selection, before
+    LVGL's own redraw timer has ticked even once) — calling
+    `lv_refr_now()` synchronously that early deadlocked inside LVGL's
+    buffer-sync logic on-device. `select_view_force_redraw()` in
+    `calendar_ui.c` is deliberately called only from *interactive*
+    view-switch call sites (a nav rail tap, drilling into a day, waking
+    from a long sleep), never from the startup path, for exactly this
+    reason.
+
+None of these are architectural problems — they're exactly the kind of
+"tune the board bring-up constants" work you'd expect when porting to a
+7" RGB panel for the first time, just called out explicitly instead of
+left for you to discover blind.
+
+### Fixed issues
+
+Bugs found and fixed on real hardware, kept here because the reasoning
+behind several non-obvious settings lives in them.
+
+#### update_title() boot-time crash (fixed)
+
+`calendar_ui.c`'s `update_title()` calls `lv_refr_now()` twice, synchronously,
+as part of its own dual-framebuffer sync dance (documented in its own
+comment) - and it runs unconditionally on every `select_view()` call,
+including the one at boot, inside `calendar_ui_init()`. That's exactly the
+category of problem `select_view_force_redraw()`'s own doc comment already
+warned about: calling `lv_refr_now()` before LVGL's redraw timer has ticked
+even once wedges LVGL's buffer-sync logic, because nothing's ready yet for
+the synchronous `refr_sync_areas()`/`lv_draw_sw_buffer_copy()` path it
+forces. `select_view_force_redraw()` was deliberately never called that
+early for exactly this reason, but `update_title()` wasn't written with the
+same guard, since it's called from many more places than just view
+switches.
+
+First seen (2026-09-05) as a non-self-recovering watchdog hang - this
+board's task watchdog isn't configured to reset on timeout, so it needed a
+manual reset. Seen again (2026-09-09) as a hard `Guru Meditation Error:
+Cache disabled but cached memory region accessed` panic instead - same root
+cause hit at the same call site, just a different failure mode depending on
+what else was going on at that exact moment (in this case, right at boot,
+likely mid something else in the early-flash-cache-sensitive window).
+
+Fixed by gating `update_title()`'s two `lv_refr_now()` calls behind a new
+`s_boot_forced_redraw_ok` flag, set `true` right after
+`calendar_ui_init()`'s own initial `select_view()` call returns. Before
+that point a plain `lv_obj_invalidate()` (no forced synchronous refresh) is
+enough - nothing's been shown on screen yet at boot, so there's no stale
+second buffer to catch up on, and the next regular LVGL timer tick paints
+the very first frame correctly on its own. Every other caller of
+`update_title()` runs after that flag flips, so this only changes behaviour
+during the exact narrow window that was actually unsafe.
+
+#### Unsynchronized LVGL construction at boot (fixed)
+
+A recurring `Guru Meditation Error: Core 0 panic'ed (LoadProhibited)`,
+always inside LVGL's own periodic redraw pass (`_lv_disp_refr_timer` →
+`layout_update_core`, recursing several levels deep into the object tree)
+but always in a *different* leaf function - `lv_obj_get_child_cnt()`,
+`get_prop_core()` (a style property read), `lv_obj_get_scroll_bottom()`,
+`lv_obj_scrollbar_invalidate()` - with no single obviously-wrong call site
+in common between occurrences. First seen once, then recurring more often
+(three times in one short burst) during 2026-09-09's testing.
+
+Two theories were tested and ruled out before finding the real cause,
+each still worth keeping in mind for anything similar in the future:
+
+- **Heap corruption** (an out-of-bounds write or heap-metadata corruption
+  making the object tree's own memory garbage) - ruled out by briefly
+  enabling `CONFIG_HEAP_POISONING_COMPREHENSIVE`, which wraps every heap
+  block in canary bytes and fully verifies heap integrity on every
+  malloc/free/realloc. It never caught a corruption event before two
+  further crashes while it was on - a genuinely useful negative result,
+  since a real overflow or metadata corruption would have aborted
+  immediately with a precise stack trace pointing at the actual bad
+  write. (Heap poisoning has real overhead - enough, on this board's
+  already-tight internal-RAM budget, to break TLS certificate
+  verification on calendar sync. Not something to leave on; re-enable
+  only to chase something similarly corruption-shaped, then turn it back
+  off.)
+- **A stale pointer to a validly-freed object** - `ui_settings_dialog.c`
+  turned out to have a real, separate bug matching this shape exactly:
+  four places (`pw_confirm()`, `pw_dismiss()`, `cancel_cb()`, `save_cb()`)
+  called `lv_obj_del()` on a dialog *synchronously, from inside a click
+  handler on that dialog's own child button* - a well-known LVGL
+  foot-gun (their own docs: use `lv_obj_del_async()`, not `lv_obj_del()`,
+  for exactly this case, since LVGL's input-device/event-dispatch
+  machinery can still reference the object after the callback returns).
+  Fixed by deferring each delete-and-redraw sequence through
+  `lv_async_call()` instead. A real bug worth having fixed regardless,
+  but *not* this crash's actual cause - it kept recurring even after this
+  fix, including on fresh boots where no dialog had ever been touched.
+
+The real cause: `calendar_ui_init()` builds the **entire** UI - nav rail,
+top bar, legend, all four views, the ambient clock overlay - running in
+`app_main()`'s own task, with no `bsp_lvgl_lock()` held at all. By the
+time it runs, `board_bsp.c`'s `lvgl_init()` (called earlier, from
+`bsp_display_init()`) has already started `esp_lvgl_port`'s background
+task, which independently calls `lv_timer_handler()` on its own loop from
+the moment it's created - including LVGL's own periodic layout/redraw
+pass over whatever object tree exists at that instant. Two unsynchronized
+tasks touching the same object tree is a textbook LVGL thread-safety
+violation: LVGL's own task could walk into an object mid-construction,
+its children or style list not yet linked up, and read garbage - which
+exactly explains the symptom (a different leaf function each time,
+whichever object happened to be mid-construction when the race hit) and
+its rarity/inconsistency across boots (purely a timing race).
+
+Fixed by wrapping `calendar_ui_init()`'s entire body in
+`bsp_lvgl_lock()`/`bsp_lvgl_unlock()`. `bsp_lvgl_lock()` is `esp_lvgl_port`'s
+own mutex (`lvgl_port_lock()`), the identical one its background task
+already takes non-blockingly (`lvgl_port_lock(0)`) before each
+`lv_timer_handler()` call - so holding it for the whole init just makes
+that task skip a few cycles and retry, no deadlock risk. Confirmed on real
+hardware: no recurrence since, and boot completes measurably faster too
+(the background task no longer wastes cycles contending on a half-built
+tree).
+
+#### Ambient clock digit tearing (fixed)
+
+The ambient clock's once-a-minute digit change used to occasionally show a
+single frame of visible tearing before settling on the correct new time.
+Extensive on-device correlation testing (logging which of the RGB panel's
+two physical framebuffers each redraw landed in, then deliberately
+shifting where those buffers land in PSRAM and swapping which one LVGL
+calls "buf1" vs "buf2") showed the tearing tracked one specific physical
+framebuffer slot - `rgb_panel->fbs[0]` - regardless of its PSRAM address
+or which LVGL buffer role currently pointed at it, which ruled out both a
+memory/alignment explanation and an LVGL/`esp_lvgl_port`-level one.
+
+The actual bug: ESP-IDF's own RGB LCD driver
+(`esp_lcd_panel_rgb.c`'s `lcd_rgb_panel_try_restart_transmission()`, gated
+by `CONFIG_LCD_RGB_RESTART_IN_VSYNC`) restarts the GDMA chain via a single
+link hardcoded to `fbs[0]` on every VSYNC, regardless of which buffer was
+actually current - so with two frame buffers, every VSYNC-triggered
+restart silently re-anchored the scan-out back to `fbs[0]`'s stale content
+whenever the most recent redraw had actually landed in the other buffer.
+Simply disabling `CONFIG_LCD_RGB_RESTART_IN_VSYNC` "fixed" the flash but
+traded it for a worse, permanent ~300px horizontal shift (this flag turns
+out to be genuinely needed on this board/timing, guarding against a real
+GDMA-vs-LCD-FIFO desync) - so the real fix is a vendored, patched copy of
+the whole `esp_lcd` component under `components/esp_lcd/` (project-local
+`components/<name>` overrides `$IDF_PATH/components/<name>` of the same
+name - ESP-IDF's own documented mechanism for exactly this), which builds
+one restart link per frame buffer instead of one hardcoded to slot 0 and
+selects among them by `cur_fb_index` at restart time. See that file's own
+header comment for the full patch writeup. `CONFIG_LCD_RGB_RESTART_IN_VSYNC`
+stays enabled with this patch in place - do a clean `idf.py fullclean`
+before rebuilding after pulling this component in fresh, so CMake actually
+picks up the local override instead of a previously-cached SDK path.
+
+Maintenance cost: any future `esp_lcd` fix or security patch from an
+ESP-IDF upgrade needs to be manually re-applied to this vendored copy too
+- it won't pick them up automatically. If Espressif ever fixes this
+upstream, drop `components/esp_lcd/` and go back to the SDK's own copy.
+
+#### Calendar sync reliability (internal-RAM headroom) (fixed)
+
+Intermittent calendar refresh failures (`ESP_ERR_HTTP_FETCH_HEADER`,
+`ESP_ERR_HTTP_CONNECT`, `PK verify failed` certificate errors, even the
+occasional truncated/`bad JSON in response`) - reproducible enough across a
+long overnight test (2026-09-09/10) to rule out simple bad luck, but
+resistant to some of the obvious suspects: a manual device reset didn't
+fix it, neither did switching the router's Wi-Fi channel. Heap poisoning
+(see the boot-crash section above) was briefly re-enabled to check for a
+leak and found none - total free heap stayed essentially flat for hours.
+
+The actual driver: **which display state is active**. This board's
+internal RAM is tight enough (~45-63KB free depending on state - see
+`CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN`'s own comment for the ~45-55KB
+threshold TLS certificate verification needs) that whichever view is
+currently on screen (Month/Week/Day/Up next, all rendered as LVGL objects
+- event bars, badges, chips) measurably eats into the same budget TLS
+handshakes need, and the ICS calendar specifically (a fresh handshake to a
+different host, not reusing an already-warm connection the way the four
+Google Calendar API fetches do) was the first thing to become flaky when
+that budget got tight. Confirmed directly on real hardware: internal RAM
+free jumped by ~14KB the instant the active view's content was released
+(entering the ambient clock or sleep screen), and a previously-failing ICS
+fetch succeeded on the very next cycle with no other change.
+
+Three changes, together:
+
+- **Shared LVGL styles.** Every view (`ui_month.c`, `ui_week.c`,
+  `ui_day.c`, `ui_upnext.c`) plus the top bar's calendar legend
+  (`calendar_ui.c`) used to set every style property - radius, background
+  opacity, font, even text colour where there were really only ever two
+  possible values - directly on each event bar/chip/label object,
+  individually, every single time that content was rebuilt (every sync
+  cycle, every view switch). In LVGL 8, each of those calls that hits an
+  object with no matching style yet allocates that object its own
+  dynamically-sized "local style" out of internal RAM (small allocations
+  are kept off PSRAM entirely by `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL`).
+  Properties that are actually constant now live in a handful of static
+  `lv_style_t`s per file, attached via `lv_obj_add_style()` - free beyond
+  a pointer, instead of paying for a fresh local style on every object,
+  every cycle. Only genuinely per-object properties (mainly `bg_color`,
+  one of many per-calendar colours) stay direct per-object calls.
+- **Sync no longer skips while the display's asleep or showing the
+  ambient clock.** `calendar_ui_is_asleep()` covers both those states, not
+  just the deeper backlight-off sleep - so with presence continuously
+  detected, this used to mean *hours* with zero network activity at all.
+  `main/main.c`'s `net_task()` now syncs on its normal schedule regardless
+  of display state; `calendar_ui_refresh()`/`calendar_ui_notify_sync_failed()`
+  touching LVGL objects that just aren't currently visible costs nothing
+  that matters next to the fetch itself.
+- **A touch waking the display no longer forces an extra sync.** It used
+  to: `ui_screensaver.c`'s `go_calendar()` set the same event bit
+  `calendar_ui_request_sync()` uses for the settings page's manual
+  "tap the updated-HH:MM-label" gesture, which `net_task()` treated as
+  "go sync right now." But `go_calendar()` already repopulates the view
+  from `event_store`'s own cached data first (no network involved), and -
+  now that sync never stops running in the background - that data is
+  never more than `refresh_interval_s` stale to begin with. Forcing an
+  *extra* fetch right at the exact moment the view was being reconstructed
+  was actively harmful, not just redundant: it collided a fresh TLS
+  handshake with precisely the moment internal RAM was tightest. The
+  manual force-sync tap still works exactly as before - only the implicit
+  touch-wake stopped triggering one.
+- **A lightweight keep-alive**, `main.c`'s `keepalive_probe()`: a plain
+  TCP connect-then-close (no TLS, no data) to the same host calendar sync
+  talks to, roughly once a minute during whatever of the wait between
+  sync cycles is still otherwise completely idle. Added on a theory (a
+  connection sitting silent for minutes at a stretch being more exposed
+  to router-side connection-tracking/ARP staleness than one with regular
+  traffic) that didn't end up being the main driver - internal RAM
+  headroom was - but it's cheap, harmless, and logs only on failure, so
+  it was left in as a genuinely useful diagnostic even after the real
+  cause was found.
+
+Confirmed on real hardware afterward: the "view active" internal-RAM
+baseline that used to sit around ~44-45KB now typically sits around
+~57-58KB (matching the "view released" level from before), a deliberate
+worst-case stress test (every calendar enabled, a busy month, a forced
+sync) still succeeded cleanly even at its own tighter ~45-46KB moment, and
+a long run of sync cycles across every display state and several touch
+wakes came back clean throughout.
+
+#### Syncs failing permanently until reboot (fixed)
+
+After the event reminder pop-up, the ambient clock's bell and the header
+clock were added, the device would sync fine for a while and then fail
+every sync, for hours, until rebooted - `PK verify failed FFFFBD70` (TLS
+certificate verification running out of memory) on every attempt, even
+though the display itself kept working.
+
+The cause was internal RAM again, from a different angle: every sync
+re-rendered the active calendar view even while the ambient clock was
+covering it, and a rendered view costs roughly 12KB of internal RAM - right
+when the TLS handshake needed it most. The earlier build showed the same dip
+but recovered; the new features' extra 3-4KB tipped it into never
+recovering.
+
+Fixed in two parts:
+
+- **No rendering behind the clock.** `calendar_ui_refresh()`,
+  `calendar_ui_notify_sync_failed()` and `calendar_ui_sync_today()` still
+  store the new data but skip rebuilding the view while
+  `calendar_ui_is_asleep()`; `calendar_ui_restore_active_view()` paints
+  the latest data when a touch brings the calendar back. The extra render
+  on wake isn't noticeable.
+- **mbedTLS allowed into PSRAM.** Covers the remaining case, a sync while
+  the calendar is actually on screen. First internal-first with PSRAM
+  fallback (`CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC`), since fully-PSRAM TLS
+  made the display jitter at the time; now fully PSRAM - see "Display
+  tearing during calendar syncs" below.
+
+Verified over 22.5 hours: 266 of 266 syncs succeeded, no certificate
+failures, one boot.
+
+#### Wi-Fi connected but passing no traffic (fixed)
+
+On a multi-node mesh network, the device occasionally lost all
+connectivity for about ten minutes at a time - DNS lookups timing out
+(`getaddrinfo() 202`), "no route to host", and the device unpingable from
+the LAN - while the Wi-Fi association itself stayed up, with no disconnect
+or beacon loss. Every outage was on the same mesh node, which the device
+had joined simply because it was the first one heard.
+
+Fixed in `components/provisioning/wifi_sta.c` and `main/main.c`:
+
+- **Join the strongest node.** `WIFI_ALL_CHANNEL_SCAN` with
+  `WIFI_CONNECT_AP_BY_SIGNAL`, instead of ESP-IDF's default fast scan,
+  which takes the first access point it finds for the SSID.
+- **Reconnect after repeated dead syncs.** If 5 sync cycles in a row fail
+  completely (`WIFI_RECONNECT_AFTER_FAILED_CYCLES`),
+  `wifi_sta_force_reconnect()` drops the association; the normal
+  disconnect handler then re-scans and rejoins, possibly on a different
+  node. This path has been built but hasn't yet been exercised by a real
+  outage.
+
+#### Display tearing during calendar syncs (fixed)
+
+The RGB panel's DMA used to read both frame buffers straight out of PSRAM,
+so any heavy PSRAM traffic elsewhere - a calendar sync's TLS, HTTP and JSON
+work - could starve it, and the picture tore or jittered for a couple of
+seconds on every sync that happened while the calendar was on screen.
+Moving mbedTLS's allocations into PSRAM made this much worse; keeping them
+internal-first made it tolerable but not gone.
+
+Fixed with **bounce buffers** (`bounce_buffer_size_px` in `board_bsp.c`'s
+`lcd_panel_init()`, plus `bb_mode` on the `esp_lvgl_port` side): the LCD
+DMA now scans out of two small (10-line, 16KB each) internal-RAM buffers
+that an interrupt refills from the PSRAM frame buffer, so PSRAM contention
+no longer reaches the display. That needed three supporting changes, all
+found on real hardware:
+
+- `CONFIG_SPIRAM_XIP_FROM_PSRAM` - without it, any flash write (Wi-Fi's NVS
+  write at boot, a config save) disables the PSRAM cache under the refill
+  interrupt and panics with `Cache disabled but cached memory region
+  accessed`.
+- A fix to the vendored `esp_lcd` patch (see "Ambient clock digit tearing"
+  above): in bounce-buffer mode only one DMA restart link exists, so the
+  VSYNC restart must not index it by frame buffer.
+- 64-byte data cache lines and `-O2` (`CONFIG_ESP32S3_DATA_CACHE_LINE_64B`,
+  `CONFIG_COMPILER_OPTIMIZATION_PERF`) - with 32-byte lines and `-Og` the
+  refill occasionally ran late and stray lines of pixels flickered in the
+  left quarter of the screen.
+
+The bounce buffers cost 32KB of internal RAM, so the internal-RAM figures
+quoted in "Calendar sync reliability" above are no longer current. mbedTLS
+now allocates from PSRAM (`CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC` - safe again
+now that PSRAM traffic can't disturb the display), which leaves roughly
+20KB of internal RAM free at the low point of a sync with the calendar
+showing. Verified over a 14-hour run: 167 syncs, no failures.
