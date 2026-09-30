@@ -12,6 +12,7 @@
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "board_bsp";
 
@@ -181,6 +182,43 @@ static esp_err_t lcd_panel_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
     return ESP_OK;
+}
+
+/* esp_lcd_new_rgb_panel() allocates its interrupts - the LCD one and, in
+ * bounce-buffer mode, the GDMA end-of-buffer one that refills each bounce
+ * buffer - on whichever core calls it. app_main runs on core 0, alongside
+ * Wi-Fi's own interrupts and critical sections, and there the refill
+ * interrupt occasionally started late: the DMA wrapped back into a buffer
+ * still being refilled and sent the start of it (the left end of a line)
+ * stale, showing as stray flickering lines in the left quarter of the
+ * screen (real hardware, 2026-09-30). Creating the panel from a short task
+ * pinned to core 1 puts both interrupts on the quieter core. */
+typedef struct {
+    SemaphoreHandle_t done;
+    esp_err_t err;
+} lcd_init_ctx_t;
+
+static void lcd_panel_init_task(void *arg)
+{
+    lcd_init_ctx_t *ctx = arg;
+    ctx->err = lcd_panel_init();
+    xSemaphoreGive(ctx->done);
+    vTaskDelete(NULL);
+}
+
+static esp_err_t lcd_panel_init_on_core1(void)
+{
+    lcd_init_ctx_t ctx = { .done = xSemaphoreCreateBinary(), .err = ESP_FAIL };
+    if (ctx.done == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    if (xTaskCreatePinnedToCore(lcd_panel_init_task, "lcd_init", 4096, &ctx, 5, NULL, 1) != pdPASS) {
+        vSemaphoreDelete(ctx.done);
+        return ESP_ERR_NO_MEM;
+    }
+    xSemaphoreTake(ctx.done, portMAX_DELAY);
+    vSemaphoreDelete(ctx.done);
+    return ctx.err;
 }
 
 static esp_err_t backlight_pwm_init(void)
@@ -384,7 +422,7 @@ esp_err_t bsp_display_init(void)
     ESP_ERROR_CHECK(i2c_bus_init());
     ESP_ERROR_CHECK(ch422g_init(s_i2c_bus, &s_expander));
     lcd_reset_pulse();
-    ESP_ERROR_CHECK(lcd_panel_init());
+    ESP_ERROR_CHECK(lcd_panel_init_on_core1());
     ESP_ERROR_CHECK(touch_init());
     ESP_ERROR_CHECK(lvgl_init());
     ESP_ERROR_CHECK(backlight_pwm_init());
