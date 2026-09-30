@@ -192,7 +192,12 @@ static esp_err_t lcd_panel_init(void)
  * still being refilled and sent the start of it (the left end of a line)
  * stale, showing as stray flickering lines in the left quarter of the
  * screen (real hardware, 2026-09-30). Creating the panel from a short task
- * pinned to core 1 puts both interrupts on the quieter core. */
+ * pinned to core 1 puts both interrupts on the quieter core. Measured with a
+ * refill-timing diagnostic (local branch bb-refill-diag), 6 hours each:
+ * refills starting over half a buffer late fell from 37 on core 0 to 3 on
+ * core 1. The worst single delay (~0.5 of a buffer) was similar on both, so
+ * a rare glitch may still be possible; raising the GDMA interrupt's
+ * priority would be the next step if the flicker comes back. */
 typedef struct {
     SemaphoreHandle_t done;
     esp_err_t err;
