@@ -70,6 +70,15 @@ esp_err_t bsp_display_set_brightness(uint8_t percent);
  * elsewhere on this board. */
 esp_err_t bsp_display_set_brightness_permille(uint16_t permille);
 
+/* Like bsp_display_set_brightness_permille(), but the LEDC hardware ramps
+ * the PWM duty smoothly from its current value to the new one over
+ * fade_ms, instead of jumping. Returns immediately; a later call (fade or
+ * immediate) takes over from wherever the duty has got to. Turning the
+ * backlight fully off or back on from off can't be faded (that's the
+ * CH422G power gate), so those, and fade_ms == 0, fall back to the
+ * immediate setter. */
+esp_err_t bsp_display_fade_brightness_permille(uint16_t permille, uint32_t fade_ms);
+
 /* Must be held for any lv_* call made outside of LVGL's own task/timer
  * context. Re-entrant-safe is NOT assumed - don't nest. */
 bool bsp_lvgl_lock(uint32_t timeout_ms);

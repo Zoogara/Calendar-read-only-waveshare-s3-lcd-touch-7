@@ -256,6 +256,13 @@ static esp_err_t backlight_pwm_init(void)
         return err;
     }
 
+    /* Hardware duty fading, for bsp_display_fade_brightness_permille(). */
+    err = ledc_fade_func_install(0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "backlight LEDC fade install failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
     ESP_LOGI(TAG, "backlight PWM ready (GPIO%d, %dHz, %d-bit)",
              BACKLIGHT_PWM_GPIO, BACKLIGHT_LEDC_FREQ_HZ, BACKLIGHT_LEDC_RES);
     return ESP_OK;
@@ -442,6 +449,10 @@ esp_err_t bsp_display_set_brightness_permille(uint16_t permille)
         permille = 1000;
     }
 
+    /* An immediate set overrides any fade still in progress - otherwise the
+     * fade would carry on and overwrite the duty set below. */
+    ledc_fade_stop(BACKLIGHT_LEDC_MODE, BACKLIGHT_LEDC_CHANNEL);
+
     if (permille == 0) {
         /* Duty to 0 before cutting power, not after - avoids a brief
          * window where the gate is live but the PWM channel is still
@@ -475,6 +486,23 @@ esp_err_t bsp_display_set_brightness_permille(uint16_t permille)
         err = ledc_update_duty(BACKLIGHT_LEDC_MODE, BACKLIGHT_LEDC_CHANNEL);
     }
     return err;
+}
+
+esp_err_t bsp_display_fade_brightness_permille(uint16_t permille, uint32_t fade_ms)
+{
+    if (permille > 1000) {
+        permille = 1000;
+    }
+    /* Powering the backlight on or off goes through the CH422G gate, which
+     * can't be faded - use the immediate path for those. */
+    if (permille == 0 || !s_bl_powered || fade_ms == 0) {
+        return bsp_display_set_brightness_permille(permille);
+    }
+    ledc_fade_stop(BACKLIGHT_LEDC_MODE, BACKLIGHT_LEDC_CHANNEL);
+    uint32_t max_duty = (1u << BACKLIGHT_LEDC_RES) - 1;
+    uint32_t duty = (max_duty * permille) / 1000;
+    return ledc_set_fade_time_and_start(BACKLIGHT_LEDC_MODE, BACKLIGHT_LEDC_CHANNEL,
+                                        duty, fade_ms, LEDC_FADE_NO_WAIT);
 }
 
 esp_err_t bsp_display_set_brightness(uint8_t percent)
