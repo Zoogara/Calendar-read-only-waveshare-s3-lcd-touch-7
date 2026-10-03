@@ -350,6 +350,56 @@ static void go_calendar(void)
  * at all, this only caps how far in one go once it does. */
 #define BRIGHTNESS_RAMP_STEP_PERMILLE 150
 
+/* Largest *relative* change per tick: 40%, i.e. each tick may take the
+ * backlight's light output (see BRIGHTNESS_LIGHT_OFFSET_PERMILLE below) to
+ * at most 1.4x (or 1/1.4 of) its current level. Eyes judge
+ * brightness by ratio, not absolute amount, so a fixed-permille cap alone
+ * isn't enough: on real hardware (2026-10-04) a dark-to-room-light change
+ * (8 lux) never reached the 150-permille cap at all, and its pace came
+ * from the lux EMA instead, which closes 30% of the gap each tick - so
+ * each ramp started with its biggest jump (12.8% -> 19.6% in one second,
+ * about 50% brighter), and how big depended on where in the sensor's
+ * integration the light changed, reading as "sometimes smooth, sometimes
+ * skips steps". Capping by ratio makes every second of a ramp look like
+ * the same size of change. Combined with BRIGHTNESS_RAMP_STEP_PERMILLE
+ * (which only bites above ~60%), a full floor-to-100% swing takes about
+ * 10 seconds. */
+#define BRIGHTNESS_RAMP_RATIO 1.4f
+
+/* The ratio and ease-out limits are applied to (duty - this), not to the
+ * raw duty. This board's backlight driver gives almost no light below
+ * about 10% duty (see brightness_min_pct_x10 in app_settings.h - the
+ * visually useful floor starts at 10.5%), so light output behaves roughly
+ * like duty minus 10%, and equal duty ratios near the floor are huge
+ * changes in actual light. With the raw duty, a dark-to-light ramp did
+ * nearly all its visible change in the first 2-3 seconds and a
+ * light-to-dark one saved it for the end (real hardware, 2026-10-04),
+ * even though both took the same ~6 seconds. An estimate from those floor
+ * measurements, not a direct light measurement - adjust if ramps still
+ * look lopsided. Must stay below the lowest allowed floor (105). */
+#define BRIGHTNESS_LIGHT_OFFSET_PERMILLE 100
+
+/* Ease-out: on top of the limits above, each tick moves at most halfway
+ * (in ratio terms - the geometric midpoint) from the current level to the
+ * target, so a ramp slows progressively over its last couple of seconds
+ * instead of arriving at full speed and stopping dead. Without it, a ramp
+ * ran at a steady 25%/s right up to its last and largest step and then
+ * dropped to a crawl, and that sudden change of pace read on real
+ * hardware (2026-10-04) as a jump in brightness at the end. The halfway
+ * rule only takes over within about 2x (BRIGHTNESS_RAMP_RATIO squared)
+ * of the target; the deadband ends the tail. Applied in
+ * ambient_brightness_tick(); no tunable value of its own. */
+
+/* Each tick's step is applied as a hardware fade over this long (see
+ * bsp_display_fade_brightness_permille()) rather than an instant jump,
+ * so a multi-tick ramp is one continuous fade instead of a staircase.
+ * Instant 150-permille jumps once a second read on real hardware
+ * (2026-10-04) as the backlight flashing brighter and darker on the way
+ * up - each step a sudden change the backlight boost driver visibly
+ * caught up with. Just under the 1-second tick, so each fade finishes as
+ * the next one starts. */
+#define BRIGHTNESS_FADE_MS 950
+
 /* Ambient light -> backlight brightness. Runs every tick this timer
  * fires except during DISPLAY_SLEEP (where the backlight is deliberately
  * off regardless of ambient light) - piggybacks on the same 1-second
@@ -452,14 +502,35 @@ static void ambient_brightness_tick(void)
     int32_t delta = (int32_t)target_permille - (int32_t)s_last_applied_permille;
     bool changed = (delta >= BRIGHTNESS_DEADBAND_PERMILLE || -delta >= BRIGHTNESS_DEADBAND_PERMILLE);
     if (changed) {
+        /* Per-tick limits: a ratio (BRIGHTNESS_RAMP_RATIO), the ease-out
+         * halfway rule (see BRIGHTNESS_RAMP_RATIO) and an absolute cap
+         * (BRIGHTNESS_RAMP_STEP_PERMILLE), whichever is tightest - but
+         * always at least the deadband, so a ramp can't stall. */
+        /* Light-output terms: see BRIGHTNESS_LIGHT_OFFSET_PERMILLE. */
+        float cur_l = (float)s_last_applied_permille - BRIGHTNESS_LIGHT_OFFSET_PERMILLE;
+        float tgt_l = (float)target_permille - BRIGHTNESS_LIGHT_OFFSET_PERMILLE;
+        if (cur_l < 1.0f) cur_l = 1.0f;
+        if (tgt_l < 1.0f) tgt_l = 1.0f;
+        int32_t up_limit = (int32_t)(cur_l * (BRIGHTNESS_RAMP_RATIO - 1.0f));
+        int32_t down_limit = (int32_t)(cur_l - cur_l / BRIGHTNESS_RAMP_RATIO);
+        {
+            float halfway = cur_l * sqrtf(tgt_l / cur_l);
+            int32_t ease = (int32_t)fabsf(halfway - cur_l);
+            if (ease < up_limit) up_limit = ease;
+            if (ease < down_limit) down_limit = ease;
+        }
+        if (up_limit > BRIGHTNESS_RAMP_STEP_PERMILLE) up_limit = BRIGHTNESS_RAMP_STEP_PERMILLE;
+        if (down_limit > BRIGHTNESS_RAMP_STEP_PERMILLE) down_limit = BRIGHTNESS_RAMP_STEP_PERMILLE;
+        if (up_limit < BRIGHTNESS_DEADBAND_PERMILLE) up_limit = BRIGHTNESS_DEADBAND_PERMILLE;
+        if (down_limit < BRIGHTNESS_DEADBAND_PERMILLE) down_limit = BRIGHTNESS_DEADBAND_PERMILLE;
         int32_t step = delta;
-        if (step > BRIGHTNESS_RAMP_STEP_PERMILLE) {
-            step = BRIGHTNESS_RAMP_STEP_PERMILLE;
-        } else if (step < -BRIGHTNESS_RAMP_STEP_PERMILLE) {
-            step = -BRIGHTNESS_RAMP_STEP_PERMILLE;
+        if (step > up_limit) {
+            step = up_limit;
+        } else if (step < -down_limit) {
+            step = -down_limit;
         }
         uint16_t permille = (uint16_t)((int32_t)s_last_applied_permille + step);
-        bsp_display_set_brightness_permille(permille);
+        bsp_display_fade_brightness_permille(permille, BRIGHTNESS_FADE_MS);
         s_last_applied_permille = permille;
     }
 
