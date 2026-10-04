@@ -48,6 +48,7 @@
 #include "calendar_ui.h"
 #include "gcal_client.h"
 #include "event_store.h"
+#include "ha_weather.h"
 
 static const char *TAG = "main";
 static app_settings_t s_cfg;
@@ -283,6 +284,15 @@ static void net_task(void *arg)
                 failed_cycles = 0;
             }
         }
+        /* Home Assistant weather for the ambient clock (components/ha_weather).
+         * Deliberately outside everything above: an HA outage must never
+         * count towards failed_cycles or change wait_ms. It runs after the
+         * calendar fetch has finished, so its few KB of internal RAM for
+         * the HTTP request never overlap a calendar TLS handshake. */
+        if (s_cfg.ha_base_url[0] != '\0') {
+            ha_weather_refresh(&s_cfg);
+        }
+
         /* Waits for either the refresh/backoff interval above or an early
          * wake - which, since 2026-09-10, means only a manual force-sync
          * tap (the "updated HH:MM" label), not a plain touch waking the

@@ -32,6 +32,10 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddStringToObject(root, "config_web_password", cfg->config_web_password);
     cJSON_AddNumberToObject(root, "brightness_min_pct_x10", cfg->brightness_min_pct_x10);
     cJSON_AddNumberToObject(root, "brightness_max_lux", cfg->brightness_max_lux);
+    cJSON_AddStringToObject(root, "ha_base_url", cfg->ha_base_url);
+    cJSON_AddStringToObject(root, "ha_token", cfg->ha_token);
+    cJSON_AddStringToObject(root, "ha_temp_entity", cfg->ha_temp_entity);
+    cJSON_AddStringToObject(root, "ha_desc_entity", cfg->ha_desc_entity);
 
     cJSON *cals = cJSON_AddArrayToObject(root, "calendars");
     for (int i = 0; i < cfg->calendar_count; i++) {
@@ -65,6 +69,19 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
     COPY_STR(posix_tz, "posix_tz");
     COPY_STR(ota_url, "ota_url");
     COPY_STR(config_web_password, "config_web_password");
+    COPY_STR(ha_base_url, "ha_base_url");
+    COPY_STR(ha_token, "ha_token");
+    /* The entity IDs default only when the key is absent entirely (a blob
+     * saved before these fields existed) - a deliberately blank
+     * description entity must stay blank. */
+    j = cJSON_GetObjectItemCaseSensitive(root, "ha_temp_entity");
+    strncpy(out->ha_temp_entity, cJSON_IsString(j) && j->valuestring ? j->valuestring
+                                                                      : APP_SETTINGS_DEFAULT_HA_TEMP_ENTITY,
+            sizeof(out->ha_temp_entity) - 1);
+    j = cJSON_GetObjectItemCaseSensitive(root, "ha_desc_entity");
+    strncpy(out->ha_desc_entity, cJSON_IsString(j) && j->valuestring ? j->valuestring
+                                                                      : APP_SETTINGS_DEFAULT_HA_DESC_ENTITY,
+            sizeof(out->ha_desc_entity) - 1);
 #undef COPY_STR
 
     j = cJSON_GetObjectItemCaseSensitive(root, "refresh_interval_s");

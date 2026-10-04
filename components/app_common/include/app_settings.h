@@ -19,6 +19,7 @@ extern "C" {
 #define APP_SETTINGS_MAX_STR         96
 #define APP_SETTINGS_MAX_KEY         2200   /* PEM RSA private keys are ~1.7KB */
 #define APP_SETTINGS_MAX_TZ          64
+#define APP_SETTINGS_MAX_HA_TOKEN    256    /* HA long-lived access tokens are ~180 chars */
 #define APP_SETTINGS_MAX_CAL_ID      220    /* fits a Google calendar ID (short)
                                                 or an ICS feed URL (some hosts'
                                                 secret/token URLs run long) */
@@ -155,6 +156,20 @@ typedef struct {
     uint16_t brightness_min_pct_x10;
     uint16_t brightness_max_lux;
 
+    /* Home Assistant weather on the ambient clock (see
+     * components/ha_weather). Configured via config_web.c only. A blank
+     * ha_base_url turns the feature off entirely - no requests, no label.
+     * Plain http:// on the LAN only (ha_weather refuses https://, which
+     * would add a TLS handshake to the tight internal-RAM budget).
+     * ha_token is a long-lived access token from the HA user profile page;
+     * like sa_private_key_pem it's stored in NVS and written in plaintext
+     * to the SD-card config backup. ha_desc_entity may be blank to show
+     * the temperature only. */
+    char ha_base_url[APP_SETTINGS_MAX_STR];
+    char ha_token[APP_SETTINGS_MAX_HA_TOKEN];
+    char ha_temp_entity[64];
+    char ha_desc_entity[64];
+
     bool valid; /* true once loaded/saved successfully at least once */
 } app_settings_t;
 
@@ -166,6 +181,8 @@ typedef struct {
 #define APP_SETTINGS_DEFAULT_FETCH_FUTURE_DAYS 60
 #define APP_SETTINGS_DEFAULT_BRIGHTNESS_MIN_PCT_X10 105 /* 10.5% - backlight floor in full dark,
                                                              the bottom of the measured-good range */
+#define APP_SETTINGS_DEFAULT_HA_TEMP_ENTITY "sensor.rutherglen_temp"
+#define APP_SETTINGS_DEFAULT_HA_DESC_ENTITY "sensor.rutherglen_icon_descriptor_0"
 #define APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX 150     /* ~typical lit-room lux for 100% */
 
 #ifdef __cplusplus

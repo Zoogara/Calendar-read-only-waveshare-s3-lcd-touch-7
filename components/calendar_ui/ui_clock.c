@@ -60,9 +60,12 @@
 #include "calendar_ui_internal.h"
 #include "ui_theme.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+
+#include "ha_weather.h"
 
 #define CLOCK_H_RES 800
 #define CLOCK_V_RES 480
@@ -84,6 +87,72 @@ static lv_obj_t *s_hh_label;
 static lv_obj_t *s_colon_label;
 static lv_obj_t *s_mm_label;
 static lv_obj_t *s_bell_label;
+static lv_obj_t *s_weather_row;
+static lv_obj_t *s_weather_icon;
+static lv_obj_t *s_weather_label;
+static lv_obj_t *s_date_label;
+
+/* Home Assistant condition (the description sensor's raw state) -> Weather
+ * Icons glyph, day and night. The night icons replace the sun with a moon
+ * where the font has one. Every codepoint here must also be in
+ * gcal_font_weather.c's -r list. Unknown conditions show no icon. */
+typedef struct {
+    const char *cond;
+    const char *day;
+    const char *night;
+} weather_glyph_t;
+
+static const weather_glyph_t s_weather_glyphs[] = {
+    { "clear",            "\xEF\x80\x8D" /* f00d day-sunny */,          "\xEF\x80\xAE" /* f02e night-clear */ },
+    { "sunny",            "\xEF\x80\x8D" /* f00d day-sunny */,          "\xEF\x80\xAE" /* f02e night-clear */ },
+    { "mostly_sunny",     "\xEF\x80\x8C" /* f00c day-sunny-overcast */, "\xEF\x82\x86" /* f086 night-alt-cloudy */ },
+    { "partly_cloudy",    "\xEF\x80\x82" /* f002 day-cloudy */,         "\xEF\x82\x81" /* f081 night-alt-partly-cloudy */ },
+    { "cloudy",           "\xEF\x80\x93" /* f013 cloudy */,             "\xEF\x80\x93" },
+    { "cyclone",          "\xEF\x81\xB3" /* f073 hurricane */,          "\xEF\x81\xB3" },
+    { "tropical_cyclone", "\xEF\x81\xB3" /* f073 hurricane */,          "\xEF\x81\xB3" },
+    { "dust",             "\xEF\x81\xA3" /* f063 dust */,               "\xEF\x81\xA3" },
+    { "dusty",            "\xEF\x81\xA3" /* f063 dust */,               "\xEF\x81\xA3" },
+    { "fog",              "\xEF\x80\x83" /* f003 day-fog */,            "\xEF\x81\x8A" /* f04a night-fog */ },
+    { "haze",             "\xEF\x82\xB6" /* f0b6 day-haze */,           "\xEF\x81\x8A" /* f04a night-fog */ },
+    { "hazy",             "\xEF\x82\xB6" /* f0b6 day-haze */,           "\xEF\x81\x8A" /* f04a night-fog */ },
+    { "frost",            "\xEF\x81\xB6" /* f076 snowflake-cold */,     "\xEF\x81\xB6" },
+    { "light_rain",       "\xEF\x80\x8B" /* f00b day-sprinkle */,       "\xEF\x80\xAB" /* f02b night-alt-sprinkle */ },
+    { "light_shower",     "\xEF\x80\x89" /* f009 day-showers */,        "\xEF\x80\xA9" /* f029 night-alt-showers */ },
+    { "light_showers",    "\xEF\x80\x89" /* f009 day-showers */,        "\xEF\x80\xA9" /* f029 night-alt-showers */ },
+    { "shower",           "\xEF\x80\x89" /* f009 day-showers */,        "\xEF\x80\xA9" /* f029 night-alt-showers */ },
+    { "showers",          "\xEF\x80\x89" /* f009 day-showers */,        "\xEF\x80\xA9" /* f029 night-alt-showers */ },
+    { "heavy_shower",     "\xEF\x80\x9A" /* f01a showers */,            "\xEF\x80\x9A" },
+    { "heavy_showers",    "\xEF\x80\x9A" /* f01a showers */,            "\xEF\x80\x9A" },
+    { "rain",             "\xEF\x80\x99" /* f019 rain */,               "\xEF\x80\x99" },
+    { "snow",             "\xEF\x80\x8A" /* f00a day-snow */,           "\xEF\x80\xAA" /* f02a night-alt-snow */ },
+    { "storm",            "\xEF\x80\x90" /* f010 day-thunderstorm */,   "\xEF\x80\xAD" /* f02d night-alt-thunderstorm */ },
+    { "storms",           "\xEF\x80\x90" /* f010 day-thunderstorm */,   "\xEF\x80\xAD" /* f02d night-alt-thunderstorm */ },
+    { "wind",             "\xEF\x80\xA1" /* f021 windy */,              "\xEF\x80\xA1" },
+    { "windy",            "\xEF\x80\xA1" /* f021 windy */,              "\xEF\x80\xA1" },
+};
+
+static const char *weather_glyph(const char *cond, bool night)
+{
+    for (size_t i = 0; i < sizeof(s_weather_glyphs) / sizeof(s_weather_glyphs[0]); i++) {
+        if (strcmp(cond, s_weather_glyphs[i].cond) == 0) {
+            return night ? s_weather_glyphs[i].night : s_weather_glyphs[i].day;
+        }
+    }
+    return "";
+}
+
+/* Home Assistant weather, top right (see components/ha_weather). Base
+ * offset from the corner; the same s_jitter nudge as the clock is added
+ * on top so it doesn't sit pixel-static for hours. */
+#define WEATHER_X (-24)
+#define WEATHER_Y 20
+
+/* Date, top left - mirrors the weather line's offset and jitter. Its y is
+ * WEATHER_Y plus however far the temperature sits below the top of the
+ * weather row (centred against the taller icon), so the two text lines are
+ * level; worked out from the fonts in ui_clock_create(). */
+#define DATE_X 24
+static lv_coord_t s_date_y = WEATHER_Y;
 
 lv_obj_t *ui_clock_create(lv_obj_t *parent)
 {
@@ -151,6 +220,43 @@ lv_obj_t *ui_clock_create(lv_obj_t *parent)
     lv_obj_set_style_text_font(s_bell_label, &gcal_font_icon_bell, 0);
     lv_obj_align(s_bell_label, LV_ALIGN_BOTTOM_LEFT, 16, -16);
     lv_obj_add_flag(s_bell_label, LV_OBJ_FLAG_HIDDEN);
+
+    /* Weather from Home Assistant: a condition icon then the temperature,
+     * e.g. [cloud] "16°C", in a row so they move together - a sibling of
+     * s_row like the bell, in the colon's colour. Empty when there's no
+     * fresh data (or the feature is off). */
+    s_weather_row = lv_obj_create(s_cont);
+    lv_obj_remove_style_all(s_weather_row);
+    lv_obj_set_size(s_weather_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(s_weather_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(s_weather_row, LV_FLEX_FLOW_ROW);
+    /* Main-axis START, not END: the row sizes itself to its contents and is
+     * pinned to the corner by lv_obj_align() below. END alignment inside a
+     * content-sized row pushed the icon past the row's left edge, where the
+     * row clipped it - on real hardware the row measured only the
+     * temperature's width and the icon never appeared. The temperature is
+     * centred vertically against the taller icon; the date is moved down
+     * to match (see s_date_y). */
+    lv_obj_set_flex_align(s_weather_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(s_weather_row, 10, 0);
+    lv_obj_align(s_weather_row, LV_ALIGN_TOP_RIGHT, WEATHER_X, WEATHER_Y);
+
+    /* Date, top left, e.g. "Sun, 4 Oct" - same font and colour as the
+     * weather line opposite it. */
+    s_date_y = WEATHER_Y + (lv_font_get_line_height(&gcal_font_weather) -
+                            lv_font_get_line_height(&gcal_font_20)) / 2;
+    s_date_label = lv_label_create(s_cont);
+    lv_obj_set_style_text_font(s_date_label, &gcal_font_20, 0);
+    lv_label_set_text(s_date_label, "");
+    lv_obj_align(s_date_label, LV_ALIGN_TOP_LEFT, DATE_X, s_date_y);
+
+    s_weather_icon = lv_label_create(s_weather_row);
+    lv_obj_set_style_text_font(s_weather_icon, &gcal_font_weather, 0);
+    lv_label_set_text(s_weather_icon, "");
+
+    s_weather_label = lv_label_create(s_weather_row);
+    lv_obj_set_style_text_font(s_weather_label, &gcal_font_20, 0);
+    lv_label_set_text(s_weather_label, "");
 
     return s_cont;
 }
@@ -241,6 +347,9 @@ void ui_clock_update(void)
     if ((int32_t)colon_color != s_last_colon_color) {
         lv_obj_set_style_text_color(s_colon_label, ui_color(colon_color), 0);
         lv_obj_set_style_text_color(s_bell_label, ui_color(colon_color), 0);
+        lv_obj_set_style_text_color(s_weather_label, ui_color(colon_color), 0);
+        lv_obj_set_style_text_color(s_weather_icon, ui_color(colon_color), 0);
+        lv_obj_set_style_text_color(s_date_label, ui_color(colon_color), 0);
         s_last_colon_color = (int32_t)colon_color;
     }
 
@@ -250,6 +359,37 @@ void ui_clock_update(void)
         lv_obj_add_flag(s_bell_label, LV_OBJ_FLAG_HIDDEN);
     }
 
+    ha_weather_t wx;
+    char wx_buf[64] = "";
+    const char *wx_icon = "";
+    if (ha_weather_get(&wx)) {
+        /* Day/night from HA's sun.sun; the clock's own day hours if that
+         * wasn't available. */
+        bool night = wx.night >= 0 ? (wx.night == 1) : !is_daytime;
+        wx_icon = weather_glyph(wx.cond, night);
+        /* One decimal place, as Home Assistant reports it. A reading that
+         * rounds to zero from below would print as "-0.0"; show "0.0". */
+        float t = wx.temp_c;
+        if (fabsf(t) < 0.05f) {
+            t = 0.0f;
+        }
+        snprintf(wx_buf, sizeof(wx_buf), "%.1f\xC2\xB0" "C", (double)t);
+    }
+    static char s_last_wx[64] = {0};
+    static char s_last_wx_icon[8] = {0};
+    set_label_if_changed(s_weather_label, wx_buf, s_last_wx, sizeof(s_last_wx));
+    set_label_if_changed(s_weather_icon, wx_icon, s_last_wx_icon, sizeof(s_last_wx_icon));
+
+    /* "Sun, 4 Oct" - strftime's %a/%b are the C locale's English
+     * abbreviations; the day is formatted separately to avoid a leading
+     * zero (or %e's leading space). */
+    char wday[8], mon[8], date_buf[24];
+    strftime(wday, sizeof(wday), "%a", &tm_now);
+    strftime(mon, sizeof(mon), "%b", &tm_now);
+    snprintf(date_buf, sizeof(date_buf), "%s, %d %s", wday, tm_now.tm_mday, mon);
+    static char s_last_date[24] = {0};
+    set_label_if_changed(s_date_label, date_buf, s_last_date, sizeof(s_last_date));
+
     /* Nudge the whole group's position every ~10 minutes - see file
      * header comment. Applied to s_row (all three objects move together)
      * rather than any one label. */
@@ -257,6 +397,10 @@ void ui_clock_update(void)
     static int s_last_jitter_idx = -1;
     if (jitter_idx != s_last_jitter_idx) {
         lv_obj_align(s_row, LV_ALIGN_CENTER, s_jitter[jitter_idx][0], s_jitter[jitter_idx][1]);
+        lv_obj_align(s_date_label, LV_ALIGN_TOP_LEFT,
+                     DATE_X + s_jitter[jitter_idx][0], s_date_y + s_jitter[jitter_idx][1]);
+        lv_obj_align(s_weather_row, LV_ALIGN_TOP_RIGHT,
+                     WEATHER_X + s_jitter[jitter_idx][0], WEATHER_Y + s_jitter[jitter_idx][1]);
         s_last_jitter_idx = jitter_idx;
     }
 }

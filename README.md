@@ -15,6 +15,13 @@ revisions or IDF versions, and the history of the bugs found and fixed
 along the way are all collected at the end, under **Known issues and
 history**.
 
+> **This is the `with-weather` branch.** It adds the current temperature
+> and a weather icon to the ambient clock, read from a Home Assistant
+> server on the local network (see "Home Assistant weather" below). It
+> depends on one particular home setup - a Home Assistant install with
+> Bureau of Meteorology sensors for a specific town - so it won't work as-is
+> anywhere else. `main` is the general-purpose version.
+
 ## What it does
 
 ![Month view](docs/month_calendar.png)
@@ -116,6 +123,10 @@ components/
   light_sensor/           reads a BH1750 ambient light sensor over I2C
                            (see "Backlight auto-dimming" below); drives
                            the physical backlight brightness
+  ha_weather/              (with-weather branch) reads temperature,
+                           condition and sun state from Home Assistant's
+                           REST API for the ambient clock (see "Home
+                           Assistant weather" below)
   esp_lcd/                 vendored + patched copy of ESP-IDF's own
                            esp_lcd component (overrides $IDF_PATH's) -
                            fixes a real bug in the RGB panel driver, see
@@ -357,6 +368,65 @@ No sensor connected leaves `light_sensor_init()` failing at boot (logged,
 not fatal) and the backlight simply staying at whatever brightness it was
 last explicitly set to - no auto-dimming, but nothing crashes or hangs
 either.
+
+## Home Assistant weather (this branch only)
+
+The ambient clock shows the date at the top left (e.g. "Sun, 4 Oct") and,
+at the top right, a weather icon and the outside temperature (e.g.
+"20.2°C"), all in the colon's colour so they dim with it at night. The
+weather comes from Home Assistant's REST API over plain `http://` on the
+local network, read by `components/ha_weather/` after each calendar sync.
+
+What it reads:
+
+- **Temperature sensor** (default `sensor.rutherglen_temp`): a number in
+  °C, shown to one decimal place.
+- **Description sensor** (default `sensor.rutherglen_icon_descriptor_0`):
+  the Bureau of Meteorology's condition word, such as `mostly_sunny`, used
+  only to choose the icon. Conditions without an icon show the
+  temperature alone.
+- **`sun.sun`**, Home Assistant's built-in sun entity, to choose a day or
+  night icon. If it can't be read, the clock's own day hours
+  (`view_start_hour`/`view_end_hour`) decide instead.
+
+Setup, on the runtime config page (not the first-boot portal):
+
+1. **Home Assistant URL**, with the port, e.g. `http://192.168.0.10:8123`.
+   Leaving it blank turns the whole feature off - no requests, nothing on
+   screen. `https://` is refused: a TLS handshake every refresh would eat
+   into the internal RAM calendar sync depends on.
+2. **Long-lived access token**, created in Home Assistant under your user
+   profile > Security. It's never shown on the page again; leaving the box
+   blank on a later save keeps the saved one.
+3. The two sensor entity IDs, if yours differ from the defaults.
+
+Things to know:
+
+- **The token is stored in plain text** - in NVS, and in the TF card's
+  config backup (`/sdcard/gcal/config.json`), the same as the Google
+  service account's private key. Treat that card accordingly.
+- **Reload the config page before changing anything.** A page left open
+  from before the Home Assistant fields were filled in will save them
+  blank again - which happened once during testing.
+- **Weather never affects calendar sync.** It's fetched after the calendar
+  sync has finished, doesn't count towards sync failures or the Wi-Fi
+  reconnect logic, and a Home Assistant outage just makes the weather
+  disappear once the last reading is 45 minutes old.
+- **Memory:** about 2KB less internal RAM free at rest than `main` (roughly
+  30.6KB vs 32.5KB at the start of a calendar sync, measured on
+  hardware) - the new settings fields and the clock's extra labels. Each
+  weather fetch borrows another 0.6-2.4KB for well under a second, after
+  the calendar sync has finished, never during it. An hour-long run (13
+  calendar syncs, 12 weather fetches, no failures) showed free internal RAM
+  flat throughout - no leak.
+
+The icons are from Erik Flowers' [Weather Icons](https://github.com/erikflowers/weather-icons)
+(font licensed under the SIL OFL 1.1), converted with `lv_font_conv` to
+`components/calendar_ui/gcal_font_weather.c` - only the glyphs used. The
+condition-to-icon table is `s_weather_glyphs[]` in
+`components/calendar_ui/ui_clock.c`; adding an icon means adding its
+codepoint there and to the font's `-r` list (the regenerate command is in
+the font file's header).
 
 ## Customizing
 

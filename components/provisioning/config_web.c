@@ -148,6 +148,16 @@ static const char *HTML_HEAD =
     ".btn-cancel{background:#fff;color:#333;border:1px solid #ccc}"
     "</style></head><body>";
 
+/* httpd_resp_sendstr_chunk() with an empty string sends a zero-length
+ * chunk, which HTTP chunked encoding treats as the end of the response -
+ * the page silently stops there. Use this for any value that can be blank. */
+static void send_value_chunk(httpd_req_t *req, const char *value)
+{
+    if (value[0] != '\0') {
+        httpd_resp_sendstr_chunk(req, value);
+    }
+}
+
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
     if (!check_auth(req)) {
@@ -205,6 +215,38 @@ static esp_err_t root_get_handler(httpd_req_t *req)
             i, (c && c->daily_only) ? "checked" : "");
         httpd_resp_sendstr_chunk(req, row);
     }
+
+    /* Own chunk, not part of other[] below - that buffer is already close
+     * to full, and snprintf would silently cut off the end of the page. */
+    httpd_resp_sendstr_chunk(req,
+        "<h2>Home Assistant weather</h2>"
+        "<div class='hint'>Shows the temperature and a short description at "
+        "the top right of the ambient clock. Leave the URL blank to turn this "
+        "off. Plain http:// on your local network only (e.g. "
+        "http://192.168.0.10:8123) - https:// is refused, since a TLS "
+        "handshake every minute would eat into the device's scarce internal "
+        "RAM.</div>"
+        "<label>Home Assistant URL</label>"
+        "<input type='text' name='ha_base_url' placeholder='http://homeassistant.local:8123' value='");
+    send_value_chunk(req, s_cfg->ha_base_url);
+    httpd_resp_sendstr_chunk(req,
+        "'>"
+        "<label>Long-lived access token</label>"
+        "<input type='password' name='ha_token' autocomplete='off' placeholder='");
+    httpd_resp_sendstr_chunk(req, s_cfg->ha_token[0] ? "(saved - leave blank to keep)" : "(not set)");
+    httpd_resp_sendstr_chunk(req,
+        "'>"
+        "<div class='hint'>Create one under your Home Assistant user profile "
+        "&gt; Security. Never shown here once saved.</div>"
+        "<label>Temperature sensor entity</label>"
+        "<input type='text' name='ha_temp_entity' value='");
+    send_value_chunk(req, s_cfg->ha_temp_entity);
+    httpd_resp_sendstr_chunk(req,
+        "'>"
+        "<label>Description sensor entity (optional)</label>"
+        "<input type='text' name='ha_desc_entity' value='");
+    send_value_chunk(req, s_cfg->ha_desc_entity);
+    httpd_resp_sendstr_chunk(req, "'>");
 
     char other[3600];
     snprintf(other, sizeof(other),
@@ -395,6 +437,17 @@ static esp_err_t save_post_handler(httpd_req_t *req)
             s_cfg->brightness_max_lux = (uint16_t)v;
         }
     }
+
+    form_get(body, "ha_base_url", s_cfg->ha_base_url, sizeof(s_cfg->ha_base_url));
+    form_get(body, "ha_temp_entity", s_cfg->ha_temp_entity, sizeof(s_cfg->ha_temp_entity));
+    form_get(body, "ha_desc_entity", s_cfg->ha_desc_entity, sizeof(s_cfg->ha_desc_entity));
+    /* The token is never sent back to the page, so a blank field means
+     * "keep the saved one". (Blanking the URL turns the feature off.) */
+    char token[APP_SETTINGS_MAX_HA_TOKEN];
+    if (form_get(body, "ha_token", token, sizeof(token)) && token[0] != '\0') {
+        strcpy(s_cfg->ha_token, token);
+    }
+    memset(token, 0, sizeof(token));
 
     app_calendar_cfg_t new_cals[APP_SETTINGS_MAX_CALENDARS];
     memset(new_cals, 0, sizeof(new_cals));
