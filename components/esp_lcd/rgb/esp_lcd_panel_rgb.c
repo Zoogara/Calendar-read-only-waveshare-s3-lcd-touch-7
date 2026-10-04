@@ -26,8 +26,10 @@
  * the pre-existing per-buffer dma_fb_links[] pattern), each concatenated
  * onto its own buffer's link list, and the restart call now indexes by
  * cur_fb_index instead of always using a single link. Search this file for
- * "PATCHED" to find every changed spot. Bounce-buffer mode's behavior is
- * unchanged (it only ever used index 0).
+ * "PATCHED" to find every changed spot. Bounce-buffer mode (used since
+ * 2026-09-27) has two patches of its own in
+ * lcd_rgb_panel_try_restart_transmission(): it always restarts on restart
+ * link 0, and it re-anchors the bounce-buffer refill state on every restart.
  *
  * Maintenance cost of vendoring the whole esp_lcd component this way: any
  * future esp_lcd fix/security patch from an ESP-IDF upgrade needs to be
@@ -1181,14 +1183,23 @@ static IRAM_ATTR void lcd_rgb_panel_try_restart_transmission(esp_rgb_panel_t *pa
     }
 
     if (panel->bb_size) {
-        // Catch de-synced frame buffer and reset if needed.
-        if (panel->bounce_pos_px > bb_size_px * 2) {
+        // PATCHED: re-anchor the whole bounce-buffer state machine on every restart, not just
+        // bounce_pos_px. The DMA always restarts on bounce buffer 0, and in normal running the
+        // EOF ISR has already refilled both buffers with the new frame's first two chunks
+        // (bounce_pos_px == 2 buffers). Upstream only reset bounce_pos_px when it had run *past*
+        // that, and with CONFIG_LCD_RGB_RESTART_IN_VSYNC never reset bb_eof_count at all - so a
+        // single lost or late EOF interrupt left the EOF ISR permanently one buffer out of step:
+        // refilling the buffer the DMA had just started reading instead of the one it had just
+        // finished. The start of every buffer (the left end of every 10th row) then went out
+        // stale - the row from two buffers (20 lines) higher - over the whole screen height,
+        // until reboot (seen on real hardware, 2026-10-04). Now any slip lasts one frame.
+        if (panel->bounce_pos_px != bb_size_px * 2) {
             panel->bounce_pos_px = 0;
-        }
-        // Pre-fill bounce buffer 0, if the EOF ISR didn't do that already
-        if (panel->bounce_pos_px < bb_size_px) {
             lcd_rgb_panel_fill_bounce_buffer(panel, panel->bounce_buffer[0]);
         }
+        portENTER_CRITICAL_ISR(&panel->spinlock);
+        panel->bb_eof_count = 0;   // the next EOF is bounce buffer 0's
+        portEXIT_CRITICAL_ISR(&panel->spinlock);
     }
 
     gdma_reset(panel->dma_chan);
