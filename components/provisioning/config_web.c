@@ -243,6 +243,17 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     send_value_chunk(req, s_cfg->ha_temp_entity);
     httpd_resp_sendstr_chunk(req,
         "'>"
+        "<label>Second temperature sensor entity (optional)</label>"
+        "<input type='text' name='ha_temp2_entity' placeholder='e.g. a local weather station or feels-like sensor' value='");
+    send_value_chunk(req, s_cfg->ha_temp2_entity);
+    httpd_resp_sendstr_chunk(req, "'><label>Temperature to show</label>");
+    httpd_resp_sendstr_chunk(req, s_cfg->ha_temp_select == 1
+        ? "<label style='margin:0;font-weight:400'><input type='radio' name='ha_temp_select' value='0' style='width:auto'> first</label>"
+          "<label style='margin:0;font-weight:400'><input type='radio' name='ha_temp_select' value='1' checked style='width:auto'> second</label>"
+        : "<label style='margin:0;font-weight:400'><input type='radio' name='ha_temp_select' value='0' checked style='width:auto'> first</label>"
+          "<label style='margin:0;font-weight:400'><input type='radio' name='ha_temp_select' value='1' style='width:auto'> second</label>");
+    httpd_resp_sendstr_chunk(req,
+        "<div class='hint'>With no second sensor, the first is always shown.</div>"
         "<label>Description sensor entity (optional)</label>"
         "<input type='text' name='ha_desc_entity' value='");
     send_value_chunk(req, s_cfg->ha_desc_entity);
@@ -441,6 +452,11 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     form_get(body, "ha_base_url", s_cfg->ha_base_url, sizeof(s_cfg->ha_base_url));
     form_get(body, "ha_temp_entity", s_cfg->ha_temp_entity, sizeof(s_cfg->ha_temp_entity));
     form_get(body, "ha_desc_entity", s_cfg->ha_desc_entity, sizeof(s_cfg->ha_desc_entity));
+    form_get(body, "ha_temp2_entity", s_cfg->ha_temp2_entity, sizeof(s_cfg->ha_temp2_entity));
+    char sel[4];
+    if (form_get(body, "ha_temp_select", sel, sizeof(sel))) {
+        s_cfg->ha_temp_select = (strcmp(sel, "1") == 0) ? 1 : 0;
+    }
     /* The token is never sent back to the page, so a blank field means
      * "keep the saved one". (Blanking the URL turns the feature off.) */
     char token[APP_SETTINGS_MAX_HA_TOKEN];

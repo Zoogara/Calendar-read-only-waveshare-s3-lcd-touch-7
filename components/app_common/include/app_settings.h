@@ -169,6 +169,12 @@ typedef struct {
     char ha_token[APP_SETTINGS_MAX_HA_TOKEN];
     char ha_temp_entity[64];
     char ha_desc_entity[64];
+    /* Optional second temperature sensor (e.g. a local weather station, or
+     * a "feels like" sensor) and which of the two to show: 0 = ha_temp_entity,
+     * 1 = ha_temp2_entity. With ha_temp2_entity blank, the first is always
+     * shown whatever ha_temp_select says. */
+    char ha_temp2_entity[64];
+    uint8_t ha_temp_select;
 
     bool valid; /* true once loaded/saved successfully at least once */
 } app_settings_t;

@@ -184,15 +184,20 @@ esp_err_t ha_weather_refresh(const app_settings_t *cfg)
 
 static esp_err_t refresh_now(const app_settings_t *cfg)
 {
+    /* Only the selected temperature sensor is read - the second one when
+     * chosen and configured, otherwise the first. */
+    const char *temp_entity = (cfg->ha_temp_select == 1 && cfg->ha_temp2_entity[0] != '\0')
+                                  ? cfg->ha_temp2_entity
+                                  : cfg->ha_temp_entity;
     char state[48];
-    esp_err_t err = fetch_entity_state(cfg, cfg->ha_temp_entity, state, sizeof(state));
+    esp_err_t err = fetch_entity_state(cfg, temp_entity, state, sizeof(state));
     if (err != ESP_OK) {
         return err;
     }
     char *end = NULL;
     float temp = strtof(state, &end);
     if (end == state || is_unusable_state(state) || temp < -60.0f || temp > 70.0f) {
-        ESP_LOGW(TAG, "%s: unusable temperature state \"%s\"", cfg->ha_temp_entity, state);
+        ESP_LOGW(TAG, "%s: unusable temperature state \"%s\"", temp_entity, state);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -224,7 +229,7 @@ static esp_err_t refresh_now(const app_settings_t *cfg)
     s_last_ok_us = esp_timer_get_time();
     taskEXIT_CRITICAL(&s_lock);
 
-    ESP_LOGI(TAG, "%.1f C, \"%s\" (%s, %s)", fresh.temp_c, fresh.desc, fresh.cond,
+    ESP_LOGI(TAG, "%.1f C from %s, \"%s\" (%s, %s)", fresh.temp_c, temp_entity, fresh.desc, fresh.cond,
              fresh.night < 0 ? "sun unknown" : fresh.night ? "night" : "day");
     return ESP_OK;
 }
