@@ -381,6 +381,10 @@ What it reads:
 
 - **Temperature sensor** (default `sensor.rutherglen_temp`): a number in
   °C, shown to one decimal place.
+- **Second temperature sensor** (optional, e.g. a local weather station or
+  a "feels like" sensor): a radio button on the config page chooses which
+  of the two is shown, and only that one is read. With no second sensor
+  set, the first is always shown.
 - **Description sensor** (default `sensor.rutherglen_icon_descriptor_0`):
   the Bureau of Meteorology's condition word, such as `mostly_sunny`, used
   only to choose the icon. Conditions without an icon show the
@@ -398,7 +402,8 @@ Setup, on the runtime config page (not the first-boot portal):
 2. **Long-lived access token**, created in Home Assistant under your user
    profile > Security. It's never shown on the page again; leaving the box
    blank on a later save keeps the saved one.
-3. The two sensor entity IDs, if yours differ from the defaults.
+3. The sensor entity IDs, if yours differ from the defaults, and which
+   temperature to show.
 
 Things to know:
 

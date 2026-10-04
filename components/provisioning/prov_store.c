@@ -36,6 +36,8 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddStringToObject(root, "ha_token", cfg->ha_token);
     cJSON_AddStringToObject(root, "ha_temp_entity", cfg->ha_temp_entity);
     cJSON_AddStringToObject(root, "ha_desc_entity", cfg->ha_desc_entity);
+    cJSON_AddStringToObject(root, "ha_temp2_entity", cfg->ha_temp2_entity);
+    cJSON_AddNumberToObject(root, "ha_temp_select", cfg->ha_temp_select);
 
     cJSON *cals = cJSON_AddArrayToObject(root, "calendars");
     for (int i = 0; i < cfg->calendar_count; i++) {
@@ -71,6 +73,7 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
     COPY_STR(config_web_password, "config_web_password");
     COPY_STR(ha_base_url, "ha_base_url");
     COPY_STR(ha_token, "ha_token");
+    COPY_STR(ha_temp2_entity, "ha_temp2_entity");   /* blank if absent */
     /* The entity IDs default only when the key is absent entirely (a blob
      * saved before these fields existed) - a deliberately blank
      * description entity must stay blank. */
@@ -130,6 +133,9 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
     out->brightness_max_lux = (cJSON_IsNumber(j) && j->valuedouble >= 1 && j->valuedouble <= 65535)
                                    ? (uint16_t)j->valuedouble
                                    : APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX;
+
+    j = cJSON_GetObjectItemCaseSensitive(root, "ha_temp_select");
+    out->ha_temp_select = (cJSON_IsNumber(j) && j->valuedouble == 1) ? 1 : 0;
 
     cJSON *cals = cJSON_GetObjectItemCaseSensitive(root, "calendars");
     if (cJSON_IsArray(cals)) {
