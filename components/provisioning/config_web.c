@@ -148,6 +148,16 @@ static const char *HTML_HEAD =
     ".btn-cancel{background:#fff;color:#333;border:1px solid #ccc}"
     "</style></head><body>";
 
+/* httpd_resp_sendstr_chunk() with an empty string sends a zero-length
+ * chunk, which HTTP chunked encoding treats as the end of the response -
+ * the page silently stops there. Use this for any value that can be blank. */
+static void send_value_chunk(httpd_req_t *req, const char *value)
+{
+    if (value[0] != '\0') {
+        httpd_resp_sendstr_chunk(req, value);
+    }
+}
+
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
     if (!check_auth(req)) {
@@ -164,13 +174,13 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<h2>Google service account</h2>"
         "<label>Service account email (client_email)</label>");
     httpd_resp_sendstr_chunk(req, "<input type='text' name='sa_client_email' value='");
-    httpd_resp_sendstr_chunk(req, s_cfg->sa_client_email);
+    send_value_chunk(req, s_cfg->sa_client_email);
     httpd_resp_sendstr_chunk(req,
         "' required>"
         "<label>Private key (private_key field from the downloaded JSON key, "
         "including the BEGIN/END PRIVATE KEY lines)</label>"
         "<textarea name='sa_private_key_pem' rows='10' required>");
-    httpd_resp_sendstr_chunk(req, s_cfg->sa_private_key_pem);
+    send_value_chunk(req, s_cfg->sa_private_key_pem);
     httpd_resp_sendstr_chunk(req,
         "</textarea>"
         "<h2>Calendars</h2>"
