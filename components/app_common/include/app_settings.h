@@ -175,6 +175,15 @@ typedef struct {
      * shown whatever ha_temp_select says. */
     char ha_temp2_entity[64];
     uint8_t ha_temp_select;
+    /* Screen lock (see calendar_ui/ui_lock.c). lock_pin is exactly 4 digits,
+     * or empty for no lock at all - no lock icon, no auto-lock, never
+     * locked. Set on the config web page only. Stored in plain text in NVS
+     * and the SD-card backup: with only 10,000 possible PINs, hashing it
+     * wouldn't stop anyone who can read the card anyway. lock_after_min:
+     * lock this many minutes after the last touch, 0 = only when the
+     * top-bar lock icon is tapped. */
+    char lock_pin[5];
+    uint16_t lock_after_min;
 
     bool valid; /* true once loaded/saved successfully at least once */
 } app_settings_t;

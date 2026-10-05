@@ -1,20 +1,18 @@
 /*******************************************************************************
- * Generated (via `npx lv_font_conv`), not hand-written - see the "Opts" line
- * below to regenerate. One glyph only: FontAwesome 5 Solid's "clock" icon
- * (U+F017), from the same FontAwesome5-Solid+Brands+Regular.woff already
- * used to build gcal_font_20.c's LV_SYMBOL_* set - but "clock" isn't one of
- * LVGL's own built-in LV_SYMBOL_* glyphs (see lv_symbol_def.h - there's no
- * LV_SYMBOL_CLOCK), so it was never pulled into gcal_font_20.c and needs
- * its own tiny standalone font instead. Used only for the ambient-clock
- * toggle icon in calendar_ui.c's top bar (see build_top_bar()) - reference
- * the glyph directly by its raw UTF-8 bytes ("\xEF\x80\x97", the 3-byte
- * UTF-8 encoding of U+F017) rather than via an LV_SYMBOL_* define, since
- * this codepoint has no such define of its own.
+ * Generated (via `npx lv_font_conv`, run from components/calendar_ui/), not
+ * hand-written - see the "Opts" line below to regenerate. Two glyphs from
+ * FontAwesome 5 Solid (the same FontAwesome5-Solid+Brands+Regular.woff
+ * gcal_font_20.c's LV_SYMBOL_* set comes from, in LVGL's
+ * scripts/built_in_font/): "clock" (U+F017, "\xEF\x80\x97") for the
+ * ambient-clock toggle and "lock" (U+F023, "\xEF\x80\xA3") for the
+ * screen-lock button, both in calendar_ui.c's top bar (see
+ * build_top_bar()). Neither is one of LVGL's built-in LV_SYMBOL_* glyphs,
+ * so they're referenced by their raw UTF-8 bytes.
  *
- * Size: 20 px (matches gcal_font_20, so it drops into the same top-bar
- * icon row at the same visual size as the neighbouring settings gear)
+ * Size: 20 px (matches gcal_font_20, so the icons sit in the same top-bar
+ * row at the same visual size as the settings gear)
  * Bpp: 4
- * Opts: --no-compress --no-prefilter --bpp 4 --size 20 --font FontAwesome5-Solid+Brands+Regular.woff -r 0xf017 --format lvgl -o gcal_font_icon_clock.c --lv-font-name gcal_font_icon_clock --force-fast-kern-format
+ * Opts: --no-compress --no-prefilter --bpp 4 --size 20 --font FontAwesome5-Solid+Brands+Regular.woff -r 0xf017,0xf023 --format lvgl -o gcal_font_icon_clock.c --lv-font-name gcal_font_icon_clock --force-fast-kern-format
  ******************************************************************************/
 
 #include "lvgl.h"
@@ -58,7 +56,33 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
     0xff, 0xff, 0xff, 0xf5, 0x0, 0x0, 0x0, 0x0,
     0x5, 0xcf, 0xff, 0xff, 0xe9, 0x10, 0x0, 0x0,
     0x0, 0x0, 0x0, 0x1, 0x34, 0x42, 0x0, 0x0,
-    0x0, 0x0
+    0x0, 0x0,
+
+    /* U+F023 "" */
+    0x0, 0x0, 0x0, 0x2, 0x43, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x5, 0xdf, 0xff, 0xfa, 0x10,
+    0x0, 0x0, 0x0, 0x0, 0x8f, 0xff, 0xff, 0xff,
+    0xe2, 0x0, 0x0, 0x0, 0x5, 0xff, 0xff, 0xef,
+    0xff, 0xfd, 0x0, 0x0, 0x0, 0xd, 0xff, 0xd2,
+    0x0, 0x7f, 0xff, 0x50, 0x0, 0x0, 0x1f, 0xff,
+    0x20, 0x0, 0xa, 0xff, 0x90, 0x0, 0x0, 0x2f,
+    0xff, 0x0, 0x0, 0x7, 0xff, 0xa0, 0x0, 0x0,
+    0x3f, 0xff, 0x0, 0x0, 0x7, 0xff, 0xb0, 0x0,
+    0x0, 0x3f, 0xff, 0x0, 0x0, 0x7, 0xff, 0xb0,
+    0x0, 0x4d, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xa0, 0xef, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xf6, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf8, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf8,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xf8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xf8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xf7, 0x9f, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xf2, 0x3, 0x44, 0x44, 0x44,
+    0x44, 0x44, 0x44, 0x44, 0x10
 };
 
 
@@ -68,21 +92,24 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
 
 static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
     {.bitmap_index = 0, .adv_w = 0, .box_w = 0, .box_h = 0, .ofs_x = 0, .ofs_y = 0} /* id = 0 reserved */,
-    {.bitmap_index = 0, .adv_w = 320, .box_w = 20, .box_h = 21, .ofs_x = 0, .ofs_y = -3}
+    {.bitmap_index = 0, .adv_w = 320, .box_w = 20, .box_h = 21, .ofs_x = 0, .ofs_y = -3},
+    {.bitmap_index = 210, .adv_w = 280, .box_w = 18, .box_h = 21, .ofs_x = 0, .ofs_y = -3}
 };
 
 /*---------------------
  *  CHARACTER MAPPING
  *--------------------*/
 
-
+static const uint16_t unicode_list_0[] = {
+    0x0, 0xc
+};
 
 /*Collect the unicode lists and glyph_id offsets*/
 static const lv_font_fmt_txt_cmap_t cmaps[] =
 {
     {
-        .range_start = 61463, .range_length = 1, .glyph_id_start = 1,
-        .unicode_list = NULL, .glyph_id_ofs_list = NULL, .list_length = 0, .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY
+        .range_start = 61463, .range_length = 13, .glyph_id_start = 1,
+        .unicode_list = unicode_list_0, .glyph_id_ofs_list = NULL, .list_length = 2, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
     }
 };
 
