@@ -181,8 +181,10 @@ void ui_reminder_init(lv_obj_t *parent)
  * confirmed on real hardware 2026-09-23. */
 static bool find_candidate(time_t now, gcal_event_t *out)
 {
-    static gcal_event_t buf[SCAN_MAX_EVENTS];
-    int n = event_store_copy_upcoming(now, buf, SCAN_MAX_EVENTS);
+    /* The shared PSRAM scratch - see ui_event_scratch(). This runs in the
+     * LVGL task (ui_screensaver.c's check timer), like every other user. */
+    gcal_event_t *buf = ui_event_scratch();
+    int n = buf ? event_store_copy_upcoming(now, buf, SCAN_MAX_EVENTS) : 0;
 
     for (int i = 0; i < n; i++) {
         gcal_event_t *ev = &buf[i];
