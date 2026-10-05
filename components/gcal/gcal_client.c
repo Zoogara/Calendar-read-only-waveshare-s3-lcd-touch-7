@@ -280,6 +280,7 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
     int pages = 0;
     const int start_count = *inout_count;
     bool complete = false;   /* last page reached, or the event cap hit */
+    bool capped = false;     /* items dropped, or later pages skipped, for the cap */
 
     for (;;) {
         char url[1000]; /* base_url (up to 420) + "&pageToken=" + token_enc (up to 512) */
@@ -335,6 +336,7 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
             cJSON *item;
             cJSON_ArrayForEach(item, items) {
                 if (*inout_count >= max_out) {
+                    capped = true;
                     break;
                 }
                 cJSON *status_j = cJSON_GetObjectItemCaseSensitive(item, "status");
@@ -410,6 +412,9 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
 
         if (!has_next || *inout_count >= max_out) {
             complete = true;
+            if (has_next) {
+                capped = true;   /* stopped with pages still to come */
+            }
             break;
         }
     }
@@ -421,6 +426,10 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
         }
         *inout_count = start_count;
         return false;
+    }
+    if (capped) {
+        ESP_LOGW(TAG, "[%s] event cap (%d) reached - this calendar's later events weren't stored",
+                 cal->label, max_out);
     }
     ESP_LOGI(TAG, "[%s] %d event(s)", cal->label, added);
     return true;
@@ -556,6 +565,8 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
      * round-trip. */
     int attempted = 0;
     int succeeded = 0;
+    int cap_hit_by = 0;     /* calendars cut short by the event cap */
+    int cap_skipped = 0;    /* calendars not fetched at all: no room left */
     bool auth_header_set = true;
     for (int i = 0; i < cfg->calendar_count; i++) {
         const app_calendar_cfg_t *cal = &cfg->calendars[i];
@@ -575,7 +586,18 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
             continue;
         }
 
+        /* No room left: skip the request rather than fetch events there's
+         * nowhere to put. Deliberately not counted as attempted or failed -
+         * a persistent cap would otherwise turn into a retry every
+         * RETRY_BACKOFF_S, forever. Logged instead (and summarised below). */
+        if (count >= MAX_FETCH_EVENTS) {
+            ESP_LOGW(TAG, "[%s] skipped - event cap (%d) already reached", cal->label, MAX_FETCH_EVENTS);
+            cap_skipped++;
+            continue;
+        }
+
         attempted++;
+        int count_before = count;
         bool ok;
         if (cal->source == APP_CAL_SOURCE_ICS) {
             /* The Google OAuth bearer token has no business going to an
@@ -592,6 +614,9 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
                 auth_header_set = true;
             }
             ok = fetch_one_calendar(client, cal, (uint8_t)i, time_min, time_max, buf, &count, MAX_FETCH_EVENTS);
+        }
+        if (ok && count_before < MAX_FETCH_EVENTS && count >= MAX_FETCH_EVENTS) {
+            cap_hit_by++;
         }
         if (ok) {
             succeeded++;
@@ -633,6 +658,14 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
     event_store_replace_all(buf, count);
     event_store_mark_refreshed();
     free(buf);
+
+    /* Log only - not part of *out_all_ok (see the cap_skipped comment
+     * above). */
+    if (cap_hit_by > 0 || cap_skipped > 0) {
+        ESP_LOGW(TAG, "event cap (%d) reached: %d calendar(s) cut short, %d skipped - "
+                      "narrow the fetch window on the config page",
+                 MAX_FETCH_EVENTS, cap_hit_by, cap_skipped);
+    }
 
     *out_all_ok = (succeeded == attempted);
     if (!*out_all_ok) {
