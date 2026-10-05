@@ -15,12 +15,14 @@ revisions or IDF versions, and the history of the bugs found and fixed
 along the way are all collected at the end, under **Known issues and
 history**.
 
-> **This is the `with-weather` branch.** It adds the current temperature
-> and a weather icon to the ambient clock, read from a Home Assistant
-> server on the local network (see "Home Assistant weather" below). It
-> depends on one particular home setup - a Home Assistant install with
-> Bureau of Meteorology sensors for a specific town - so it won't work as-is
-> anywhere else. `main` is the general-purpose version.
+> **This is the `with-weather` branch.** It adds to the ambient clock the
+> date, the current temperature and a weather icon - tap the weather for
+> current conditions and a 7-day forecast, tap the date for "on this day"
+> history from Wikipedia. The weather comes from a Home Assistant server
+> on the local network (see "Home Assistant weather" and "On this day"
+> below) and depends on one particular home setup - Home Assistant with
+> Bureau of Meteorology sensors for a specific town - so it won't work
+> as-is anywhere else. `main` is the general-purpose version.
 
 ## What it does
 
@@ -129,9 +131,13 @@ components/
   light_sensor/           reads a BH1750 ambient light sensor over I2C
                            (see "Backlight auto-dimming" below); drives
                            the physical backlight brightness
+  onthisday/               (with-weather branch) fetches today's "on this
+                           day" history from Wikipedia for the clock (see
+                           "On this day" below)
   ha_weather/              (with-weather branch) reads temperature,
-                           condition and sun state from Home Assistant's
-                           REST API for the ambient clock (see "Home
+                           condition and sun state, plus the weather
+                           details panel's readings and 7-day forecast,
+                           from Home Assistant's REST API (see "Home
                            Assistant weather" below)
   esp_lcd/                 vendored + patched copy of ESP-IDF's own
                            esp_lcd component (overrides $IDF_PATH's) -
@@ -410,6 +416,34 @@ Setup, on the runtime config page (not the first-boot portal):
    blank on a later save keeps the saved one.
 3. The sensor entity IDs, if yours differ from the defaults, and which
    temperature to show.
+4. The **weather details** sensors and the BOM forecast prefix (below).
+
+**Weather details panel.** Tapping the weather on the clock opens a panel
+(`components/calendar_ui/ui_weather.c`) with:
+
+- **Now**: the shown temperature, plus the configured feels-like, wind
+  speed, gust and direction, rainfall and pressure sensors, each with the
+  unit Home Assistant reports for it.
+- **Today and Tomorrow**: a 48px icon, min / max, rain chance and amount
+  range, and the long forecast.
+- **The next five days**: a 32px icon, the short forecast, min / max, rain
+  chance and amount.
+
+The forecast comes from the Bureau of Meteorology integration's numbered
+entities, built from one configured prefix: `<prefix>short_text_N`,
+`icon_descriptor_N`, `temp_min_N`, `temp_max_N`, `rain_chance_N`,
+`rain_amount_range_N` for days 0-6, and `extended_text_0`/`_1`. Defaults
+are this installation's sensors (a local weather station for wind, rain and
+pressure; the BOM's Rutherglen entities for the rest). A blank sensor field
+leaves its line out.
+
+All of it - about 50 values - comes back from **one request**: a POST to
+Home Assistant's `/api/template` with a Jinja template that renders every
+value and unit as JSON (`components/ha_weather/ha_weather_details.c`),
+rather than one request per entity. The reply is ~1.2KB, fetched with the
+temperature and kept in PSRAM; the panel is built only while it's open. The
+template endpoint needs a token from a user allowed to use it (an
+administrator's works).
 
 Things to know:
 
@@ -438,6 +472,32 @@ condition-to-icon table is `s_weather_glyphs[]` in
 `components/calendar_ui/ui_clock.c`; adding an icon means adding its
 codepoint there and to the font's `-r` list (the regenerate command is in
 the font file's header).
+
+## On this day (this branch only)
+
+Tapping the date on the ambient clock opens a scrolling list of notable
+events from history for today's date (`components/calendar_ui/ui_history.c`)
+- the year, a heading (the main Wikipedia article involved) and a one-line
+description of each. A tap or a minute untouched closes it, back to the
+clock.
+
+The list is Wikipedia's editor-curated "selected" events for the date,
+from its REST API (`feed/onthisday/selected/MM/DD`,
+`components/onthisday/`), fetched once a day after a calendar sync and
+retried every 30 minutes if it fails. It asks for the **local** date
+explicitly - an earlier candidate feed, dayinhistory.dev, only offers
+"today" in UTC, which in Australia means yesterday's events until late
+morning. The response is ~190KB because it carries summaries of every
+linked article; it's received and parsed in PSRAM and only ~10KB of entries
+is kept. Wikimedia asks API clients to identify themselves, so requests
+carry a User-Agent with this project's GitHub address.
+
+Two general changes came with it: the 14px and 20px fonts gained Latin-1
+accented letters and typographic punctuation (dashes, curly quotes), which
+Wikipedia text is full of - accented calendar event titles benefit too; and
+mbedTLS's receive buffer went from 8KB to the TLS maximum of 16KB
+(`CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN`), since Wikipedia sends full-size
+records - costing PSRAM only, as mbedTLS allocates from there.
 
 ## Screen lock
 

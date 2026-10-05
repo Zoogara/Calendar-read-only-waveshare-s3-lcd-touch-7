@@ -51,12 +51,22 @@ Left to right:
   The clock, date and weather shift a few pixels every 10 minutes to
   protect the panel. The weather disappears if Home Assistant hasn't
   answered for 45 minutes.
+- **Tap the date** on the clock for *On this day* - notable events in
+  history for today's date, from Wikipedia: the year and headline of
+  each, with a sentence underneath. Drag to scroll.
+- **Tap the weather** on the clock for the weather details: the
+  temperature now and what it feels like, wind (direction, speed, gusts),
+  rain and air pressure; Today and Tomorrow with an icon, min / max, the
+  chance and amount of rain and the full forecast; and a line each for the
+  five days after.
+- Both close with a tap, or after a minute untouched, and go back to the
+  clock - not the calendar. They also work while the screen is locked.
 - **Screensaver** - if nobody's in front of it (with the optional presence
   sensor fitted; without one it always does this), it goes
   to a dark screensaver with the backlight off instead, and drops from the
   clock to the screensaver after 5 minutes with nobody there. Someone
   returning brings the clock back, never the calendar.
-- **Touch** anywhere to get back to the calendar. If it was away for 15
+- **Touch** anywhere else to get back to the calendar. If it was away for 15
   minutes or more, it comes back on today in Month view.
 - **Brightness** follows the room light automatically (with the optional
   light sensor fitted), fading smoothly rather than jumping.
@@ -125,6 +135,12 @@ the current one), **temperature sensor**, an optional **second temperature
 sensor** (e.g. a local weather station or a feels-like reading) with
 **Temperature to show** choosing between them, and the **description
 sensor** whose condition picks the icon.
+
+**Weather details** (under the Home Assistant section) - the sensors for
+**feels-like**, **wind speed**, **wind gust**, **wind direction**,
+**rainfall** and **air pressure**, and the **BOM forecast entity prefix**
+(e.g. `sensor.rutherglen_`) the 7-day forecast is read from. Leave one blank
+to leave that line out of the panel.
 
 **Screen lock** - **PIN** (exactly 4 digits; blank keeps the current one),
 **Remove the PIN** (turns the lock off), **Lock after** minutes without a
