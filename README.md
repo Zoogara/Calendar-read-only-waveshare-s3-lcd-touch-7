@@ -637,8 +637,11 @@ it to a different board revision or IDF version.
   `nextPageToken`, so a single busy calendar isn't truncated at 250). The
   fetch window is set on the config page - 14 days back and 60 ahead by
   default, up to 90 back and 365 ahead. A wider window means more pages,
-  so a longer sync, but no extra internal RAM: the fetch buffer, the
-  event store and the JSON parsing all live in PSRAM.
+  so a longer sync, but no extra internal RAM: the event store's buffers,
+  the response text and the JSON parsing all live in PSRAM. Hitting the
+  cap is logged as a warning naming the calendars cut short or skipped -
+  it isn't shown on screen, and doesn't count as a failed sync (that would
+  retry every 20 seconds forever); narrow the window if you see it.
 - **Legend toggle isn't persisted** — hiding a calendar via the legend
   chip is a live UI filter that resets on reboot (all calendars fetched
   every cycle either way, so this is instant either way).
@@ -876,6 +879,41 @@ that task skip a few cycles and retry, no deadlock risk. Confirmed on real
 hardware: no recurrence since, and boot completes measurably faster too
 (the background task no longer wastes cycles contending on a half-built
 tree).
+
+#### Calendar sync hardening: partial calendars, PSRAM and response size (fixed)
+
+A review of the sync code (October 2026) found and fixed:
+
+- **A calendar that failed partway through its pages was stored as if
+  complete** - just its earliest events, with no warning icon and no short
+  retry. A calendar now only counts as fetched when its last page arrives;
+  otherwise what it added is rolled back and it's counted as failed.
+- **A failed calendar disappeared** from the display until its next
+  successful fetch. Its previously stored events are now carried forward
+  (stale beats missing), while the sync is still flagged as partial.
+  Tested on hardware by forcing page 2 of a calendar to fail: the earlier
+  page's events were discarded, the calendar's previous 106 events were
+  kept, the total stayed at 219, and the 20-second retry ran.
+- **JSON parsing used up internal RAM**: cJSON's allocations now go to
+  PSRAM (`cJSON_InitHooks()` at the top of `app_main()`).
+- **Responses carried far more than the parser reads.** Requests now ask
+  Google for only the needed fields (`fields=` in `fetch_one_calendar()`),
+  cutting each page by about 80% (102.8KB to 20.1KB for one calendar,
+  same events) and the boot sync from 31.6s to 8.2s.
+- **Publishing a sync copied and sorted ~336KB under the lock the UI takes
+  on every query.** The event store now keeps two PSRAM buffers and swaps
+  them, sorting beforehand.
+- **Five static per-view event arrays took 26,880 bytes of internal
+  RAM.** They're now one shared buffer in PSRAM (`ui_event_scratch()`).
+- Smaller: hitting the event cap is logged; a calendar is skipped rather
+  than requested when there's no room left; pagination stops after 20
+  pages; an over-long request URL fails cleanly instead of being sent cut
+  short.
+
+Measured on hardware, with the calendar on screen: internal RAM free at
+the start of a sync went from about 32KB to about 59KB, and the lowest
+point during a sync from about 4-8KB to about 20-36KB. `log_heap_state()`
+now reports each sync's own low point, from the heap's low-water mark.
 
 #### Crash right after the SD card mounted at boot (fixed, most likely by the above)
 
