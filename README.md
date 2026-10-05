@@ -17,6 +17,9 @@ history**.
 
 ## What it does
 
+For a quick tour of using it - every feature, option and setting - see
+[USER_GUIDE.md](USER_GUIDE.md).
+
 ![Month view](docs/month_calendar.png)
 ![Up next list](docs/up_next.png)
 ![Ambient clock](docs/idle_clock.png)
@@ -604,10 +607,12 @@ it to a different board revision or IDF version.
   "TF/SD card" below. No event cache, no logging - `sd_card_init()`'s
   mount is otherwise idle once boot finishes (and is in fact deinited
   right after boot, freeing its SPI bus/DMA resources — see below).
-- **Partition table has OTA slots, but nothing writes to them** — `ota_0`/
-  `ota_1` exist in `partitions.csv`, but no code calls `esp_https_ota` or
-  otherwise switches the active slot, so a flashed image never gets
-  replaced except by re-flashing over serial.
+- **Firmware updates are manual and unauthenticated** — gear → Update
+  downloads a `.bin` from the configured *Firmware update URL* with
+  `esp_https_ota` into the spare `ota_0`/`ota_1` slot and restarts into it
+  (`components/ota_update/`). There's no automatic checking, version
+  comparison or image signing: it installs whatever that URL serves, so
+  point it only at a host you control.
 
 ### Bring-up troubleshooting
 
