@@ -21,8 +21,8 @@
 static const char *TAG = "gcal_client";
 
 /* Must match EVENT_STORE_MAX_EVENTS (event_store.h) - see its comment for
- * why 1000 rather than the old 320. */
-#define MAX_FETCH_EVENTS 1000
+ * why 2000. */
+#define MAX_FETCH_EVENTS 2000
 
 /* esp_http_client_perform() can return ESP_ERR_HTTP_EAGAIN even for a
  * blocking (non-async) client if a header/data read times out mid-transfer
