@@ -256,15 +256,10 @@ void ui_month_populate(lv_obj_t *root, time_t cursor)
             s_cells[i].overflow_badge = NULL;
         }
 
-        /* static, not a stack local: at ~168 bytes/event this is ~4KB,
-         * over half of esp_lvgl_port's default 7KB LVGL task stack, and
-         * this function runs deep in that task's call chain (button click
-         * -> event callback -> render_current_view -> here). Not
-         * reentrant, so static is safe: this only ever runs either inside
-         * the LVGL task's own serialized event loop, or from net_task
-         * while holding bsp_lvgl_lock. */
-        static gcal_event_t events[24];
-        int n = event_store_copy_range(day, ui_add_days(day, 1), events, 24);
+        /* The shared PSRAM scratch (see ui_event_scratch()) - too big for
+         * the LVGL task's stack, and internal RAM is the tight resource. */
+        gcal_event_t *events = ui_event_scratch();
+        int n = events ? event_store_copy_range(day, ui_add_days(day, 1), events, 24) : 0;
         int shown = 0, hidden = 0;
         for (int e = 0; e < n; e++) {
             if (!ui_calendar_enabled(events[e].calendar_index)) {

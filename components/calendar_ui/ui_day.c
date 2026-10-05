@@ -363,10 +363,9 @@ void ui_day_populate(lv_obj_t *root, time_t cursor)
     lv_obj_clean(s_allday_box);
     lv_obj_clean(s_event_col);
 
-    /* static, not a stack local - see the matching comment in ui_month.c's
-     * populate function for why. */
-    static gcal_event_t events[MAX_DAY_EVENTS];
-    int n = event_store_copy_range(day, ui_add_days(day, 1), events, MAX_DAY_EVENTS);
+    /* The shared PSRAM scratch - see ui_event_scratch(). */
+    gcal_event_t *events = ui_event_scratch();
+    int n = events ? event_store_copy_range(day, ui_add_days(day, 1), events, MAX_DAY_EVENTS) : 0;
 
     /* Pre-pass: work out how many side-by-side columns each timed event
      * needs before creating any of them - add_block() needs its column
