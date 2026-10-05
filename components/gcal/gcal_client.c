@@ -676,8 +676,9 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
      * with an empty result here would blank out the display's
      * last-known-good data over a purely transient network hiccup that
      * the next scheduled cycle would likely recover from on its own. If
-     * even one calendar came back, still store what did succeed rather
-     * than discarding it because a sibling calendar failed. */
+     * even one calendar came back, still publish: the calendars that
+     * succeeded are fresh, and each one that failed has had its previous
+     * events carried forward above, so nothing disappears. */
     if (succeeded == 0 && attempted > 0) {
         ESP_LOGW(TAG, "refresh failed: 0 of %d calendar(s) reachable - keeping last-known data", attempted);
         log_heap_state("refresh failed");
