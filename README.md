@@ -417,9 +417,9 @@ Things to know:
   sync has finished, doesn't count towards sync failures or the Wi-Fi
   reconnect logic, and a Home Assistant outage just makes the weather
   disappear once the last reading is 45 minutes old.
-- **Memory:** about 2KB less internal RAM free at rest than `main` (roughly
-  30.6KB vs 32.5KB at the start of a calendar sync, measured on
-  hardware) - the new settings fields and the clock's extra labels. Each
+- **Memory:** about 2KB less internal RAM free at rest than `main` (measured
+  on hardware when the feature was added) - the new settings fields and
+  the clock's extra labels. Each
   weather fetch borrows another 0.6-2.4KB for well under a second, after
   the calendar sync has finished, never during it. An hour-long run (13
   calendar syncs, 12 weather fetches, no failures) showed free internal RAM
