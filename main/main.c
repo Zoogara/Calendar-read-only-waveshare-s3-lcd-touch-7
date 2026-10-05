@@ -50,6 +50,7 @@
 #include "gcal_client.h"
 #include "event_store.h"
 #include "ha_weather.h"
+#include "onthisday.h"
 
 static const char *TAG = "main";
 static app_settings_t s_cfg;
@@ -293,6 +294,10 @@ static void net_task(void *arg)
         if (s_cfg.ha_base_url[0] != '\0') {
             ha_weather_refresh(&s_cfg);
         }
+        /* "On this day" history for the clock's date (components/onthisday):
+         * a no-op except once a day, and like the weather, after the
+         * calendar sync and outside its failure counting. */
+        onthisday_refresh();
 
         /* Waits for either the refresh/backoff interval above or an early
          * wake - which, since 2026-09-10, means only a manual force-sync
