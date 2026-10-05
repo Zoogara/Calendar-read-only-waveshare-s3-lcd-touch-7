@@ -393,10 +393,9 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
         lv_obj_clean(s_day_allday_box[d]);
         lv_obj_clean(s_day_col[d]);
 
-        /* static, not a stack local - see the matching comment in
-         * ui_month.c's populate function for why. */
-        static gcal_event_t events[MAX_DAY_EVENTS];
-        int n = event_store_copy_range(day, ui_add_days(day, 1), events, MAX_DAY_EVENTS);
+        /* The shared PSRAM scratch - see ui_event_scratch(). */
+        gcal_event_t *events = ui_event_scratch();
+        int n = events ? event_store_copy_range(day, ui_add_days(day, 1), events, MAX_DAY_EVENTS) : 0;
 
         /* Pre-pass: work out each timed event's column assignment before
          * creating any of them - see ui_day.c's populate function for why. */

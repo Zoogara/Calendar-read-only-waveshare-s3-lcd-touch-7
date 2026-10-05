@@ -94,6 +94,15 @@ void ui_upnext_release(void);
 
 /* --- screensaver (implemented in ui_screensaver.c) --- */
 void ui_screensaver_init(void);
+
+/* One event scratch buffer shared by every view and the reminder check,
+ * UI_EVENT_SCRATCH_MAX entries, allocated in PSRAM on first use. Safe to
+ * share because every caller runs serialised under the LVGL lock (the LVGL
+ * task itself, or another task holding bsp_lvgl_lock()) and is done with it
+ * before returning - don't hold the pointer across a call that might use
+ * it too. NULL only if no memory at all could be found (logged). */
+#define UI_EVENT_SCRATCH_MAX 64
+gcal_event_t *ui_event_scratch(void);
 /* Runtime-only (not persisted, always true again after a reboot) on/off
  * switch for the ambient clock - see ui_screensaver.c's header comment
  * and s_clock_feature_enabled. Driven by the eye icon in calendar_ui.c's

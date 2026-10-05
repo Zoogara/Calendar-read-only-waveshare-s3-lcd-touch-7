@@ -6,10 +6,14 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 
-/* EVENT_STORE_MAX_EVENTS * sizeof(gcal_event_t) is tens of KB - park it
- * in PSRAM (there's 8MB of it) rather than eating into the much
- * smaller, more contended internal DRAM that Wi-Fi/TLS/LVGL need. */
+/* Two event buffers, both in PSRAM for the device's lifetime: s_events is
+ * what the UI reads, s_scratch is what the next sync fills. Publishing a
+ * sync swaps the two pointers under the lock (see event_store_publish()),
+ * so the UI is never blocked behind a 2000-event copy or sort, and there's
+ * no ~336KB allocate/free every cycle. Internal RAM is the scarce resource
+ * here; PSRAM has room for both. */
 static gcal_event_t *s_events;
+static gcal_event_t *s_scratch;
 static int s_count;
 static time_t s_last_refresh;
 static SemaphoreHandle_t s_lock;
@@ -19,34 +23,54 @@ void event_store_init(void)
     if (s_lock == NULL) {
         s_lock = xSemaphoreCreateMutex();
     }
+    const size_t bytes = EVENT_STORE_MAX_EVENTS * sizeof(gcal_event_t);
     if (s_events == NULL) {
-        s_events = heap_caps_malloc(EVENT_STORE_MAX_EVENTS * sizeof(gcal_event_t), MALLOC_CAP_SPIRAM);
-        if (s_events == NULL) {
-            /* Fall back to internal RAM rather than leaving the store
-             * unusable - shouldn't happen given the board's 8MB PSRAM. */
-            ESP_LOGW("event_store", "PSRAM allocation failed, falling back to internal RAM");
-            s_events = calloc(EVENT_STORE_MAX_EVENTS, sizeof(gcal_event_t));
-        }
+        s_events = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    }
+    if (s_scratch == NULL) {
+        s_scratch = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    }
+    if (s_events == NULL || s_scratch == NULL) {
+        /* Not falling back to internal RAM: at ~336KB per buffer it
+         * wouldn't fit anyway. With either missing, every sync fails with
+         * ESP_ERR_NO_MEM (logged) and the calendar stays empty. */
+        ESP_LOGE("event_store", "PSRAM allocation of %u bytes failed - calendar sync disabled",
+                 (unsigned)bytes);
     }
 }
 
-static int cmp_start(const void *a, const void *b)
+/* Start time, then calendar, then end - a total order, so the same set of
+ * events always comes out in the same order (qsort isn't stable). */
+static int cmp_event(const void *a, const void *b)
 {
     const gcal_event_t *ea = a, *eb = b;
-    if (ea->start < eb->start) return -1;
-    if (ea->start > eb->start) return 1;
+    if (ea->start != eb->start) return ea->start < eb->start ? -1 : 1;
+    if (ea->calendar_index != eb->calendar_index) return ea->calendar_index < eb->calendar_index ? -1 : 1;
+    if (ea->end != eb->end) return ea->end < eb->end ? -1 : 1;
     return 0;
 }
 
-void event_store_replace_all(const gcal_event_t *events, int count)
+gcal_event_t *event_store_begin_update(void)
 {
+    return (s_events != NULL) ? s_scratch : NULL;
+}
+
+void event_store_publish(int count)
+{
+    if (s_scratch == NULL || s_events == NULL) {
+        return;
+    }
     if (count > EVENT_STORE_MAX_EVENTS) {
         count = EVENT_STORE_MAX_EVENTS;
     }
+    /* Sort before taking the lock - only the syncing task touches s_scratch. */
+    qsort(s_scratch, count, sizeof(gcal_event_t), cmp_event);
+
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    memcpy(s_events, events, count * sizeof(gcal_event_t));
+    gcal_event_t *old = s_events;
+    s_events = s_scratch;
     s_count = count;
-    qsort(s_events, s_count, sizeof(gcal_event_t), cmp_start);
+    s_scratch = old;   /* the next sync's scratch */
     xSemaphoreGive(s_lock);
 }
 
@@ -56,7 +80,10 @@ int event_store_copy_range(time_t range_start, time_t range_end, gcal_event_t *o
     xSemaphoreTake(s_lock, portMAX_DELAY);
     for (int i = 0; i < s_count && n < max_out; i++) {
         const gcal_event_t *e = &s_events[i];
-        if (e->end > range_start && e->start < range_end) {
+        if (e->start >= range_end) {
+            break;   /* sorted by start - nothing later can overlap */
+        }
+        if (e->end > range_start) {
             out[n++] = *e;
         }
     }
