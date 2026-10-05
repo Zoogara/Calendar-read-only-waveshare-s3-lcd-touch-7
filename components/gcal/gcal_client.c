@@ -67,6 +67,11 @@ static bool url_encode(const char *in, char *out, size_t out_sz)
  * event, all of which has to be received, held in PSRAM and parsed into a
  * cJSON tree. Keep in step with fetch_one_calendar()'s parser and
  * event_declined_by_owner(). */
+/* At 250 events per page, 20 pages is 5000 - well past the event cap -
+ * so this only ever trips if the server keeps handing back page tokens
+ * (a loop), not on a genuinely busy calendar. */
+#define MAX_PAGES_PER_CALENDAR 20
+
 #define EVENT_FIELDS "nextPageToken,items(status,summary,start,end,colorId,attendees(email,responseStatus))"
 
 /* ESP-IDF's newlib doesn't provide timegm(), so convert UTC-wallclock
@@ -305,6 +310,11 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
     bool capped = false;     /* items dropped, or later pages skipped, for the cap */
 
     for (;;) {
+        if (pages >= MAX_PAGES_PER_CALENDAR) {
+            ESP_LOGW(TAG, "[%s] still more pages after %d - giving up on this calendar",
+                     cal->label, MAX_PAGES_PER_CALENDAR);
+            break;   /* incomplete - rolled back below */
+        }
         char url[1200]; /* base_url (up to 640) + "&pageToken=" + token_enc (up to 512) */
         if (page_token[0] != '\0') {
             char token_enc[512];
