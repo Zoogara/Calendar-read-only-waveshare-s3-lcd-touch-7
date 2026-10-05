@@ -89,6 +89,9 @@ static void close_async(void *arg)
 {
     (void)arg;
     delete_overlay();
+    /* Back to the clock and staying there: the close-key tap isn't a
+     * fresh touch on the clock (see ui_screensaver_keypad_dismissed()). */
+    ui_screensaver_keypad_dismissed();
 }
 
 static void unlock_async(void *arg)
@@ -155,6 +158,10 @@ static void key_cb(lv_event_t *e)
     }
 
     if (strcmp(txt, LV_SYMBOL_CLOSE) == 0) {
+        lv_indev_t *indev = lv_indev_get_act();
+        if (indev != NULL) {
+            lv_indev_wait_release(indev);
+        }
         lv_async_call(close_async, NULL);
         return;
     }

@@ -117,6 +117,9 @@ void ui_screensaver_toggle_clock_enabled(void);
 bool ui_screensaver_lock_available(void);
 void ui_screensaver_lock_now(void);
 void ui_screensaver_unlock(void);
+/* The keypad was dismissed with its close key: the tap that did it mustn't
+ * also count as a new touch on the clock, which would reopen the keypad. */
+void ui_screensaver_keypad_dismissed(void);
 
 /* The PIN keypad (ui_lock.c), opened and closed by ui_screensaver.c. */
 void ui_lock_keypad_open(void);
