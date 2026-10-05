@@ -119,6 +119,13 @@ static void check_pin(void)
     if (strcmp(s_entry, ui_get_cfg()->lock_pin) == 0) {
         s_wrong_tries = 0;
         ESP_LOGI(TAG, "unlocked");
+        /* Belt and braces with CLICK_TRIG below: whatever's still in
+         * contact with the screen is ignored until it lifts, so it can't
+         * land on the calendar that's about to appear underneath. */
+        lv_indev_t *indev = lv_indev_get_act();
+        if (indev != NULL) {
+            lv_indev_wait_release(indev);
+        }
         lv_async_call(unlock_async, NULL);
         return;
     }
@@ -215,6 +222,11 @@ void ui_lock_keypad_open(void)
 
     lv_obj_t *keys = lv_btnmatrix_create(s_overlay);
     lv_btnmatrix_set_map(keys, s_keymap);
+    /* Act on release, not press (lv_btnmatrix's default): acting on press
+     * let the last digit unlock and remove the keypad while the finger was
+     * still down, and its release then tapped whatever calendar cell was
+     * underneath (real hardware, 2026-10-05). */
+    lv_btnmatrix_set_btn_ctrl_all(keys, LV_BTNMATRIX_CTRL_CLICK_TRIG);
     lv_obj_set_size(keys, 320, 330);
     lv_obj_align(keys, LV_ALIGN_TOP_MID, 0, 122);
     lv_obj_set_style_bg_opa(keys, LV_OPA_TRANSP, 0);
