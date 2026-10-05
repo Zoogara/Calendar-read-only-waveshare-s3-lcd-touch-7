@@ -278,6 +278,19 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         send_value_chunk(req, (const char *)s_cfg + detail_fields[i].off);
         httpd_resp_sendstr_chunk(req, "'>");
     }
+    /* The forecast entities the prefix stands for, built from it in the
+     * browser and updated as it's typed - so a wrong prefix is obvious. */
+    httpd_resp_sendstr_chunk(req,
+        "<div class='hint' id='bom_hint' style='white-space:pre-line'></div>"
+        "<script>(function(){"
+        "var f=document.getElementsByName('ha_bom_prefix')[0],h=document.getElementById('bom_hint');"
+        "function u(){var p=f.value.trim();h.textContent=p?"
+        "'Forecast entities read:\\n'+p+'short_text_0 \\u2026 _6\\n'+p+'icon_descriptor_0 \\u2026 _6\\n'"
+        "+p+'temp_min_0 \\u2026 _6, '+p+'temp_max_0 \\u2026 _6\\n'"
+        "+p+'rain_chance_0 \\u2026 _6, '+p+'rain_amount_range_0 \\u2026 _6\\n'"
+        "+p+'extended_text_0, '+p+'extended_text_1'"
+        ":'No prefix - the forecast is left out.';}"
+        "f.addEventListener('input',u);u();})();</script>");
     /* Own chunks, like the calendar rows - other[] below is close to full. */
     httpd_resp_sendstr_chunk(req,
         "<h2>Screen lock</h2>"

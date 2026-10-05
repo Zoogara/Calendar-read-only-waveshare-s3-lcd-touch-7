@@ -139,8 +139,9 @@ sensor** whose condition picks the icon.
 **Weather details** (under the Home Assistant section) - the sensors for
 **feels-like**, **wind speed**, **wind gust**, **wind direction**,
 **rainfall** and **air pressure**, and the **BOM forecast entity prefix**
-(e.g. `sensor.rutherglen_`) the 7-day forecast is read from. Leave one blank
-to leave that line out of the panel.
+(e.g. `sensor.rutherglen_`) the 7-day forecast is read from - the page lists
+the forecast sensors that prefix stands for, just below it, as you type.
+Leave one blank to leave that line out of the panel.
 
 **Screen lock** - **PIN** (exactly 4 digits; blank keeps the current one),
 **Remove the PIN** (turns the lock off), **Lock after** minutes without a
