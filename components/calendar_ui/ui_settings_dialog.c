@@ -12,6 +12,7 @@
 #include "ui_theme.h"
 #include "provisioning.h"
 
+#include <stdio.h>
 #include <string.h>
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -75,11 +76,41 @@ static int index_for_value(const option_t *opts, int n, uint32_t value)
             return i;
         }
     }
-    return 0;
+    return -1;
 }
 
+typedef enum { VALUE_SECONDS, VALUE_HOUR } value_kind_t;
+
+/* Label for a value that isn't one of the preset options - see add_row(). */
+static void format_custom(value_kind_t kind, uint32_t v, char *out, size_t out_sz)
+{
+    if (kind == VALUE_HOUR) {
+        unsigned h = v % 24;
+        snprintf(out, out_sz, "%u %s", h == 0 ? 12 : (h > 12 ? h - 12 : h), h < 12 ? "AM" : "PM");
+    } else if (v == 0) {
+        snprintf(out, out_sz, "Never");
+    } else if (v % 60 == 0) {
+        snprintf(out, out_sz, "%u min", (unsigned)(v / 60));
+    } else {
+        snprintf(out, out_sz, "%u s", (unsigned)v);
+    }
+}
+
+/* The value a row's dropdown stands for. The extra entry past the presets
+ * (see add_row()) means "leave it as it is". */
+static uint32_t selected_value(lv_obj_t *dd, const option_t *opts, int n_opts, uint32_t current)
+{
+    int idx = lv_dropdown_get_selected(dd);
+    return idx < n_opts ? opts[idx].value : current;
+}
+
+/* A value set on the config web page needn't be one of the presets. If it
+ * isn't, it's added as one extra entry and selected, so the dialog shows
+ * the real setting - and saving the dialog for some other change keeps it,
+ * rather than silently writing back whichever preset happened to be shown
+ * (previously always the first). */
 static lv_obj_t *add_row(lv_obj_t *parent, int y, const char *label_text,
-                          const option_t *opts, int n_opts, uint32_t current_value)
+                          const option_t *opts, int n_opts, uint32_t current_value, value_kind_t kind)
 {
     lv_obj_t *lbl = lv_label_create(parent);
     lv_label_set_text(lbl, label_text);
@@ -90,8 +121,16 @@ static lv_obj_t *add_row(lv_obj_t *parent, int y, const char *label_text,
     lv_obj_t *dd = lv_dropdown_create(parent);
     char opt_str[180];
     build_option_string(opts, n_opts, opt_str, sizeof(opt_str));
+    int idx = index_for_value(opts, n_opts, current_value);
+    if (idx < 0) {
+        char custom[24];
+        format_custom(kind, current_value, custom, sizeof(custom));
+        size_t len = strlen(opt_str);
+        snprintf(opt_str + len, sizeof(opt_str) - len, "\n%s", custom);
+        idx = n_opts;
+    }
     lv_dropdown_set_options(dd, opt_str);
-    lv_dropdown_set_selected(dd, index_for_value(opts, n_opts, current_value));
+    lv_dropdown_set_selected(dd, idx);
     lv_obj_set_pos(dd, 280, y);
     lv_obj_set_width(dd, 150);
     lv_obj_set_style_text_font(dd, &gcal_font_14, 0);
@@ -304,10 +343,14 @@ static void save_cb(lv_event_t *e)
     (void)e;
     app_settings_t *cfg = ui_get_cfg();
 
-    cfg->screen_timeout_s = TIMEOUT_OPTIONS[lv_dropdown_get_selected(s_dd_timeout)].value;
-    cfg->refresh_interval_s = REFRESH_OPTIONS[lv_dropdown_get_selected(s_dd_refresh)].value;
-    cfg->view_start_hour = (uint8_t)START_HOUR_OPTIONS[lv_dropdown_get_selected(s_dd_start)].value;
-    cfg->view_end_hour = (uint8_t)END_HOUR_OPTIONS[lv_dropdown_get_selected(s_dd_end)].value;
+    cfg->screen_timeout_s = selected_value(s_dd_timeout, TIMEOUT_OPTIONS, N_OPTS(TIMEOUT_OPTIONS),
+                                           cfg->screen_timeout_s);
+    cfg->refresh_interval_s = selected_value(s_dd_refresh, REFRESH_OPTIONS, N_OPTS(REFRESH_OPTIONS),
+                                             cfg->refresh_interval_s);
+    cfg->view_start_hour = (uint8_t)selected_value(s_dd_start, START_HOUR_OPTIONS, N_OPTS(START_HOUR_OPTIONS),
+                                                   cfg->view_start_hour);
+    cfg->view_end_hour = (uint8_t)selected_value(s_dd_end, END_HOUR_OPTIONS, N_OPTS(END_HOUR_OPTIONS),
+                                                 cfg->view_end_hour);
     if (s_pending_password_set) {
         strncpy(cfg->config_web_password, s_pending_password, sizeof(cfg->config_web_password) - 1);
     }
@@ -342,13 +385,13 @@ void ui_settings_dialog_show(void)
     lv_obj_set_pos(title, 24, 7);
 
     s_dd_timeout = add_row(panel, 45, "Screen timeout",
-                            TIMEOUT_OPTIONS, N_OPTS(TIMEOUT_OPTIONS), cfg->screen_timeout_s);
+                            TIMEOUT_OPTIONS, N_OPTS(TIMEOUT_OPTIONS), cfg->screen_timeout_s, VALUE_SECONDS);
     s_dd_refresh = add_row(panel, 91, "Refresh interval",
-                            REFRESH_OPTIONS, N_OPTS(REFRESH_OPTIONS), cfg->refresh_interval_s);
+                            REFRESH_OPTIONS, N_OPTS(REFRESH_OPTIONS), cfg->refresh_interval_s, VALUE_SECONDS);
     s_dd_start = add_row(panel, 137, "Week/day view start",
-                          START_HOUR_OPTIONS, N_OPTS(START_HOUR_OPTIONS), cfg->view_start_hour);
+                          START_HOUR_OPTIONS, N_OPTS(START_HOUR_OPTIONS), cfg->view_start_hour, VALUE_HOUR);
     s_dd_end = add_row(panel, 183, "Week/day view end",
-                        END_HOUR_OPTIONS, N_OPTS(END_HOUR_OPTIONS), cfg->view_end_hour);
+                        END_HOUR_OPTIONS, N_OPTS(END_HOUR_OPTIONS), cfg->view_end_hour, VALUE_HOUR);
 
     lv_obj_t *pw_lbl = lv_label_create(panel);
     lv_label_set_text(pw_lbl, "Config web password");
