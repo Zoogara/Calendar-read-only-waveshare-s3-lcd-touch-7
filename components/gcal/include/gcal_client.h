@@ -20,7 +20,10 @@ extern "C" {
  * *out_all_ok is set to whether *every* configured calendar's fetch
  * succeeded this cycle - false if even one failed, even though that's
  * still an ESP_OK return (see gcal_refresh_all()'s own comment on why a
- * partial fetch still gets stored rather than discarded). Callers use
+ * partial fetch still gets stored rather than discarded). A calendar that
+ * failed - including one whose later pages failed after earlier ones
+ * arrived - keeps its previously stored events rather than vanishing or
+ * being cut short. Callers use
  * this to still surface a warning to the user when e.g. 2 of 3 calendars
  * came back - a real, ongoing problem with that one calendar that a
  * silent "refresh complete" would otherwise hide indefinitely. */

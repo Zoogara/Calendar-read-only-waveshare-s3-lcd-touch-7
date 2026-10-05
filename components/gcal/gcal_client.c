@@ -234,7 +234,12 @@ static bool event_declined_by_owner(cJSON *item, const char *owner_email)
 /* Fetches one calendar's events into out[], starting at *inout_count, up
  * to max_out total. Returns whether the fetch itself succeeded (a valid
  * response was parsed - zero events in a legitimately empty calendar
- * still counts as success); one bad/unreachable calendar is logged and
+ * still counts as success). Success means EVERY page arrived (or the event
+ * cap was reached): if a later page fails, the events already taken from
+ * earlier pages are rolled back out of out[] and this returns false, so the
+ * caller can carry the calendar's previous events forward and flag the
+ * sync as partial, rather than storing just its earliest events as if they
+ * were all of them. One bad/unreachable calendar is logged and
  * doesn't block the others, but the caller uses this to tell "nothing to
  * show" apart from "couldn't reach anything," so a total outage doesn't
  * blank out the display's last-known-good data.
@@ -272,7 +277,10 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
 
     char page_token[256] = {0};
     int added = 0;
-    bool any_page_ok = false;
+    int pages = 0;
+    const int start_count = *inout_count;
+    bool complete = false;   /* last page reached, or the event cap hit */
+    bool capped = false;     /* items dropped, or later pages skipped, for the cap */
 
     for (;;) {
         char url[1000]; /* base_url (up to 420) + "&pageToken=" + token_enc (up to 512) */
@@ -321,13 +329,14 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
             ESP_LOGW(TAG, "[%s] bad JSON in response", cal->label);
             break;
         }
-        any_page_ok = true;
+        pages++;
 
         cJSON *items = cJSON_GetObjectItemCaseSensitive(root, "items");
         if (cJSON_IsArray(items)) {
             cJSON *item;
             cJSON_ArrayForEach(item, items) {
                 if (*inout_count >= max_out) {
+                    capped = true;
                     break;
                 }
                 cJSON *status_j = cJSON_GetObjectItemCaseSensitive(item, "status");
@@ -402,12 +411,28 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
         cJSON_Delete(root);
 
         if (!has_next || *inout_count >= max_out) {
+            complete = true;
+            if (has_next) {
+                capped = true;   /* stopped with pages still to come */
+            }
             break;
         }
     }
 
+    if (!complete) {
+        if (pages > 0) {
+            ESP_LOGW(TAG, "[%s] page %d failed - discarding %d event(s) from the earlier page(s)",
+                     cal->label, pages + 1, added);
+        }
+        *inout_count = start_count;
+        return false;
+    }
+    if (capped) {
+        ESP_LOGW(TAG, "[%s] event cap (%d) reached - this calendar's later events weren't stored",
+                 cal->label, max_out);
+    }
     ESP_LOGI(TAG, "[%s] %d event(s)", cal->label, added);
-    return any_page_ok;
+    return true;
 }
 
 /* Logged around every refresh attempt - kept (not just temporary debug)
@@ -540,6 +565,8 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
      * round-trip. */
     int attempted = 0;
     int succeeded = 0;
+    int cap_hit_by = 0;     /* calendars cut short by the event cap */
+    int cap_skipped = 0;    /* calendars not fetched at all: no room left */
     bool auth_header_set = true;
     for (int i = 0; i < cfg->calendar_count; i++) {
         const app_calendar_cfg_t *cal = &cfg->calendars[i];
@@ -559,7 +586,18 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
             continue;
         }
 
+        /* No room left: skip the request rather than fetch events there's
+         * nowhere to put. Deliberately not counted as attempted or failed -
+         * a persistent cap would otherwise turn into a retry every
+         * RETRY_BACKOFF_S, forever. Logged instead (and summarised below). */
+        if (count >= MAX_FETCH_EVENTS) {
+            ESP_LOGW(TAG, "[%s] skipped - event cap (%d) already reached", cal->label, MAX_FETCH_EVENTS);
+            cap_skipped++;
+            continue;
+        }
+
         attempted++;
+        int count_before = count;
         bool ok;
         if (cal->source == APP_CAL_SOURCE_ICS) {
             /* The Google OAuth bearer token has no business going to an
@@ -577,6 +615,9 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
             }
             ok = fetch_one_calendar(client, cal, (uint8_t)i, time_min, time_max, buf, &count, MAX_FETCH_EVENTS);
         }
+        if (ok && count_before < MAX_FETCH_EVENTS && count >= MAX_FETCH_EVENTS) {
+            cap_hit_by++;
+        }
         if (ok) {
             succeeded++;
             /* Only after a real success does daily_only go quiet for the
@@ -585,6 +626,15 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
             if (cal->daily_only) {
                 s_cal_last_fetch_day[i] = today_start;
             }
+        } else {
+            /* Keep showing this calendar's previous events rather than
+             * dropping it until its next successful fetch - stale beats
+             * missing. A failed fetch has already rolled back anything it
+             * added (see fetch_one_calendar()), so nothing is duplicated.
+             * Still counted as failed, so the sync is reported partial (the
+             * warning icon, and a short retry). */
+            int kept = event_store_copy_calendar((uint8_t)i, buf, MAX_FETCH_EVENTS, &count);
+            ESP_LOGW(TAG, "[%s] fetch failed - keeping %d previous event(s)", cal->label, kept);
         }
     }
 
@@ -608,6 +658,14 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
     event_store_replace_all(buf, count);
     event_store_mark_refreshed();
     free(buf);
+
+    /* Log only - not part of *out_all_ok (see the cap_skipped comment
+     * above). */
+    if (cap_hit_by > 0 || cap_skipped > 0) {
+        ESP_LOGW(TAG, "event cap (%d) reached: %d calendar(s) cut short, %d skipped - "
+                      "narrow the fetch window on the config page",
+                 MAX_FETCH_EVENTS, cap_hit_by, cap_skipped);
+    }
 
     *out_all_ok = (succeeded == attempted);
     if (!*out_all_ok) {
