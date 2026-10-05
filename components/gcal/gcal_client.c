@@ -14,6 +14,7 @@
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -44,10 +45,12 @@ static esp_err_t http_perform_with_retry(esp_http_client_handle_t client)
 
 /* ---------------- small helpers ---------------- */
 
-static void url_encode(const char *in, char *out, size_t out_sz)
+/* Returns false if out_sz was too small and the result was cut short. */
+static bool url_encode(const char *in, char *out, size_t out_sz)
 {
     size_t o = 0;
-    for (const unsigned char *p = (const unsigned char *)in; *p && o + 4 < out_sz; p++) {
+    const unsigned char *p = (const unsigned char *)in;
+    for (; *p && o + 4 < out_sz; p++) {
         if (isalnum(*p) || *p == '-' || *p == '_' || *p == '.' || *p == '~') {
             out[o++] = (char)*p;
         } else {
@@ -55,7 +58,16 @@ static void url_encode(const char *in, char *out, size_t out_sz)
         }
     }
     out[o] = '\0';
+    return *p == '\0';
 }
+
+/* Only the fields the item parser below actually reads - without this,
+ * each page carries full event JSON (descriptions, reminders, attendee
+ * details, conference data...), measured on hardware at up to ~1.3KB per
+ * event, all of which has to be received, held in PSRAM and parsed into a
+ * cJSON tree. Keep in step with fetch_one_calendar()'s parser and
+ * event_declined_by_owner(). */
+#define EVENT_FIELDS "nextPageToken,items(status,summary,start,end,colorId,attendees(email,responseStatus))"
 
 /* ESP-IDF's newlib doesn't provide timegm(), so convert UTC-wallclock
  * struct tm fields to a Unix timestamp ourselves. days_from_civil is
@@ -256,7 +268,12 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
     ESP_LOGI(TAG, "[%s] fetching calendar id \"%s\"", cal->label, cal->id);
 
     char cal_id_enc[192];
-    url_encode(cal->id, cal_id_enc, sizeof(cal_id_enc));
+    char fields_enc[160];
+    if (!url_encode(cal->id, cal_id_enc, sizeof(cal_id_enc)) ||
+        !url_encode(EVENT_FIELDS, fields_enc, sizeof(fields_enc))) {
+        ESP_LOGE(TAG, "[%s] calendar ID too long to request", cal->label);
+        return false;
+    }
 
     struct tm tmv;
     char tmin_s[24], tmax_s[24];
@@ -269,11 +286,16 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
     url_encode(tmin_s, tmin_enc, sizeof(tmin_enc));
     url_encode(tmax_s, tmax_enc, sizeof(tmax_enc));
 
-    char base_url[420];
-    snprintf(base_url, sizeof(base_url),
-             "https://www.googleapis.com/calendar/v3/calendars/%s/events"
-             "?timeMin=%s&timeMax=%s&singleEvents=true&orderBy=startTime&maxResults=250",
-             cal_id_enc, tmin_enc, tmax_enc);
+    char base_url[640];
+    int n = snprintf(base_url, sizeof(base_url),
+                     "https://www.googleapis.com/calendar/v3/calendars/%s/events"
+                     "?timeMin=%s&timeMax=%s&singleEvents=true&orderBy=startTime&maxResults=250"
+                     "&fields=%s",
+                     cal_id_enc, tmin_enc, tmax_enc, fields_enc);
+    if (n < 0 || n >= (int)sizeof(base_url)) {
+        ESP_LOGE(TAG, "[%s] request URL too long", cal->label);
+        return false;
+    }
 
     char page_token[256] = {0};
     int added = 0;
@@ -283,10 +305,13 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
     bool capped = false;     /* items dropped, or later pages skipped, for the cap */
 
     for (;;) {
-        char url[1000]; /* base_url (up to 420) + "&pageToken=" + token_enc (up to 512) */
+        char url[1200]; /* base_url (up to 640) + "&pageToken=" + token_enc (up to 512) */
         if (page_token[0] != '\0') {
             char token_enc[512];
-            url_encode(page_token, token_enc, sizeof(token_enc));
+            if (!url_encode(page_token, token_enc, sizeof(token_enc))) {
+                ESP_LOGW(TAG, "[%s] page token too long", cal->label);
+                break;   /* incomplete - rolled back below */
+            }
             snprintf(url, sizeof(url), "%s&pageToken=%s", base_url, token_enc);
         } else {
             snprintf(url, sizeof(url), "%s", base_url);
@@ -323,6 +348,7 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
             break;
         }
 
+        size_t page_bytes = resp.len;
         cJSON *root = cJSON_Parse(resp.data);
         free(resp.data);
         if (root == NULL) {
@@ -330,6 +356,7 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
             break;
         }
         pages++;
+        int added_before_page = added;
 
         cJSON *items = cJSON_GetObjectItemCaseSensitive(root, "items");
         if (cJSON_IsArray(items)) {
@@ -403,6 +430,9 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
             }
         }
 
+        ESP_LOGI(TAG, "[%s] page %d: %u bytes, %d event(s)", cal->label, pages,
+                 (unsigned)page_bytes, added - added_before_page);
+
         cJSON *next_token_j = cJSON_GetObjectItemCaseSensitive(root, "nextPageToken");
         bool has_next = cJSON_IsString(next_token_j) && next_token_j->valuestring[0] != '\0';
         if (has_next) {
@@ -468,7 +498,9 @@ esp_err_t gcal_refresh_all(const app_settings_t *cfg, int window_past_days, int 
     /* Measure this sync's internal-RAM low point on its own, not the
      * lowest since boot (see log_heap_state()). */
     heap_caps_monitor_local_minimum_free_size_start();
+    int64_t t0 = esp_timer_get_time();
     esp_err_t err = refresh_all(cfg, window_past_days, window_future_days, out_all_ok);
+    ESP_LOGI(TAG, "sync took %lld ms", (long long)((esp_timer_get_time() - t0) / 1000));
     heap_caps_monitor_local_minimum_free_size_stop();
     return err;
 }
