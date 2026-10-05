@@ -21,9 +21,9 @@
 
 static const char *TAG = "gcal_client";
 
-/* Must match EVENT_STORE_MAX_EVENTS (event_store.h) - see its comment for
- * why 2000. */
-#define MAX_FETCH_EVENTS 2000
+/* A sync fills event_store's own scratch buffer, so its capacity is the
+ * store's - see EVENT_STORE_MAX_EVENTS. */
+#define MAX_FETCH_EVENTS EVENT_STORE_MAX_EVENTS
 
 /* esp_http_client_perform() can return ESP_ERR_HTTP_EAGAIN even for a
  * blocking (non-async) client if a header/data read times out mid-transfer
@@ -536,23 +536,12 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
     time_t today_start = mktime(&now_lt);
     static time_t s_cal_last_fetch_day[APP_SETTINGS_MAX_CALENDARS];
 
-    /* MALLOC_CAP_SPIRAM, not a plain calloc() - this buffer (tens of KB at
-     * MAX_FETCH_EVENTS) is alive for the ENTIRE fetch cycle, spanning
-     * every calendar's TLS handshake. Plain malloc()/calloc() prefers
-     * internal RAM whenever it's available (CONFIG_SPIRAM_MALLOC_
-     * ALWAYSINTERNAL only forces the *small*-allocation case internal;
-     * this buffer is well above that threshold and was landing on
-     * internal RAM anyway under normal conditions), putting it in direct
-     * contention with mbedtls's own internal-RAM-only handshake buffers
-     * for the exact same pool, at the exact same time - a strong
-     * candidate for the deep transient internal-RAM dips (down to single-
-     * digit KB) seen mid-fetch during testing. event_store.c's permanent
-     * storage already gets this right; this scratch buffer didn't. Each
-     * entry is fully overwritten (zero-initialized locally, per struct)
-     * before being copied in below, so skipping calloc()'s zeroing is
-     * safe. */
-    gcal_event_t *buf = heap_caps_malloc(MAX_FETCH_EVENTS * sizeof(gcal_event_t), MALLOC_CAP_SPIRAM);
+    /* event_store's scratch buffer (PSRAM, permanently allocated - see
+     * event_store_begin_update()): filled here, published in one step at
+     * the end. A failed sync just leaves it unpublished. */
+    gcal_event_t *buf = event_store_begin_update();
     if (buf == NULL) {
+        log_heap_state("refresh failed");
         return ESP_ERR_NO_MEM;
     }
     int count = 0;
@@ -585,7 +574,6 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
     };
     esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
     if (client == NULL) {
-        free(buf);
         ESP_LOGE(TAG, "failed to init HTTP client");
         return ESP_FAIL;
     }
@@ -681,15 +669,13 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
      * even one calendar came back, still store what did succeed rather
      * than discarding it because a sibling calendar failed. */
     if (succeeded == 0 && attempted > 0) {
-        free(buf);
         ESP_LOGW(TAG, "refresh failed: 0 of %d calendar(s) reachable - keeping last-known data", attempted);
         log_heap_state("refresh failed");
         return ESP_FAIL;
     }
 
-    event_store_replace_all(buf, count);
+    event_store_publish(count);
     event_store_mark_refreshed();
-    free(buf);
 
     /* Log only - not part of *out_all_ok (see the cap_skipped comment
      * above). */
