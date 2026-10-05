@@ -225,8 +225,9 @@ void ui_lock_keypad_open(void)
     /* Act on release, not press (lv_btnmatrix's default): acting on press
      * let the last digit unlock and remove the keypad while the finger was
      * still down, and its release then tapped whatever calendar cell was
-     * underneath (real hardware, 2026-10-05). */
-    lv_btnmatrix_set_btn_ctrl_all(keys, LV_BTNMATRIX_CTRL_CLICK_TRIG);
+     * underneath (real hardware, 2026-10-05). NO_REPEAT: holding a key
+     * enters it once, not repeatedly. */
+    lv_btnmatrix_set_btn_ctrl_all(keys, LV_BTNMATRIX_CTRL_CLICK_TRIG | LV_BTNMATRIX_CTRL_NO_REPEAT);
     lv_obj_set_size(keys, 320, 330);
     lv_obj_align(keys, LV_ALIGN_TOP_MID, 0, 122);
     lv_obj_set_style_bg_opa(keys, LV_OPA_TRANSP, 0);
