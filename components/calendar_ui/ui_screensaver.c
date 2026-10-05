@@ -340,6 +340,11 @@ void ui_screensaver_lock_now(void)
     lv_async_call(lock_now_async, NULL);
 }
 
+void ui_screensaver_keypad_dismissed(void)
+{
+    s_prev_idle_ms = lv_disp_get_inactive_time(NULL);
+}
+
 void ui_screensaver_unlock(void)
 {
     s_locked = false;
