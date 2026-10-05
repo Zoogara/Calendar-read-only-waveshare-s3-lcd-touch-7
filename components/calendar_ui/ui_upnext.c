@@ -162,10 +162,9 @@ void ui_upnext_populate(lv_obj_t *root)
     time_t now;
     time(&now);
 
-    /* static, not a stack local - see the matching comment in ui_month.c's
-     * populate function for why. */
-    static gcal_event_t events[64];
-    int n = event_store_copy_upcoming(now, events, 64);
+    /* The shared PSRAM scratch - see ui_event_scratch(). */
+    gcal_event_t *events = ui_event_scratch();
+    int n = events ? event_store_copy_upcoming(now, events, UI_EVENT_SCRATCH_MAX) : 0;
 
     /* Sweep forward day by day (rather than event by event) so a
      * multi-day all-day event gets re-listed under every day it spans.

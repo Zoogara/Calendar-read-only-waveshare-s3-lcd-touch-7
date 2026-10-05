@@ -7,14 +7,38 @@
 #include "ota_update.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char *TAG = "calendar_ui";
+
+/* Callers' own limits: month 24, week 24, day 32, reminder 16, up-next
+ * UI_EVENT_SCRATCH_MAX itself. Raise UI_EVENT_SCRATCH_MAX before any of
+ * them grows past it. */
+gcal_event_t *ui_event_scratch(void)
+{
+    /* Replaces five per-view static arrays (160 events, ~27KB) that lived
+     * in internal RAM. Too big for the LVGL task's stack, and PSRAM is
+     * plentiful while internal RAM isn't. */
+    static gcal_event_t *s_scratch;
+    if (s_scratch == NULL) {
+        s_scratch = heap_caps_malloc(UI_EVENT_SCRATCH_MAX * sizeof(gcal_event_t), MALLOC_CAP_SPIRAM);
+        if (s_scratch == NULL) {
+            ESP_LOGW(TAG, "event scratch: no PSRAM, using internal RAM");
+            s_scratch = malloc(UI_EVENT_SCRATCH_MAX * sizeof(gcal_event_t));
+        }
+        if (s_scratch == NULL) {
+            ESP_LOGE(TAG, "event scratch: allocation failed - views will show no events");
+        }
+    }
+    return s_scratch;
+}
 
 static app_settings_t *s_cfg;
 static ui_view_t s_view = UI_VIEW_MONTH;
