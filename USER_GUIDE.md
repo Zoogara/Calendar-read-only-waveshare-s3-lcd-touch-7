@@ -42,9 +42,12 @@ Events the calendar's owner declined, and cancelled events, aren't shown.
 - **Ambient clock** - after the *Screen timeout* without a touch, the
   calendar gives way to a large clock, each digit in one of your calendars'
   colours, dimmer at night (outside the *Week/day view* hours). The date
-  shows top left. A small **bell** bottom left means a reminder is waiting.
-  The clock and date shift a few pixels every 10 minutes to protect the
-  panel.
+  shows top left; the **weather** - an icon for the current conditions (a
+  night version after sunset) and the outside temperature - top right. A
+  small **bell** bottom left means a reminder is waiting.
+  The clock, date and weather shift a few pixels every 10 minutes to
+  protect the panel. The weather disappears if Home Assistant hasn't
+  answered for 45 minutes.
 - **Screensaver** - if nobody's in front of it (with the optional presence
   sensor fitted; without one it always does this), it goes
   to a dark screensaver with the backlight off instead, and drops from the
@@ -111,6 +114,14 @@ device read your calendars (see the README's *Google Cloud setup*).
 - **Label** and **colour** - how it appears in the legend and on events.
 - **on** - shown when the device starts (the legend chips toggle it after).
 - **daily** - fetch only once a day, for calendars that rarely change.
+
+**Home Assistant weather** - **URL** (`http://` and the port, e.g.
+`http://192.168.0.10:8123`; blank turns the weather off), **long-lived
+access token** (from your Home Assistant profile → Security; blank keeps
+the current one), **temperature sensor**, an optional **second temperature
+sensor** (e.g. a local weather station or a feels-like reading) with
+**Temperature to show** choosing between them, and the **description
+sensor** whose condition picks the icon.
 
 **Screen lock** - **PIN** (exactly 4 digits; blank keeps the current one),
 **Remove the PIN** (turns the lock off), **Lock after** minutes without a
