@@ -35,6 +35,7 @@
 #include "freertos/semphr.h"
 #include "freertos/idf_additions.h"
 #include "esp_heap_caps.h"
+#include "cJSON.h"
 
 #include "lvgl.h"
 
@@ -310,8 +311,26 @@ static void net_task(void *arg)
     }
 }
 
+/* cJSON allocates every node and string with plain malloc(), and on this
+ * board small allocations (under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL)
+ * prefer internal RAM - so parsing a calendar page (thousands of small
+ * nodes) used up all free internal RAM before spilling into PSRAM. Measured
+ * on hardware 2026-10-05: 32KB free at the start of a sync, 4KB at its
+ * lowest point, for the duration of each parse. Everything cJSON holds
+ * here is short-lived scratch data (calendar/ICS/token responses, saved
+ * settings, Home Assistant replies), so it all goes to PSRAM. */
+static void *cjson_malloc_psram(size_t size)
+{
+    void *p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : malloc(size);
+}
+
 void app_main(void)
 {
+    /* Before anything parses JSON - provisioning_load() below does. */
+    cJSON_Hooks hooks = { .malloc_fn = cjson_malloc_psram, .free_fn = free };
+    cJSON_InitHooks(&hooks);
+
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());

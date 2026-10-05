@@ -14,11 +14,14 @@ extern "C" {
 /* Both this and gcal_client.c's MAX_FETCH_EVENTS need to move together -
  * they're conceptually the same cap (how many events one fetch cycle can
  * carry end to end), just expressed in two files. Headroom is cheap now
- * that both buffers live in PSRAM (8MB) rather than internal RAM - 1000
- * events comfortably covers a much wider fetch window (e.g. 300 days
- * future) across several calendars without silently truncating, at a
- * PSRAM cost of well under 200KB. */
-#define EVENT_STORE_MAX_EVENTS 1000
+ * that both buffers live in PSRAM (8MB) rather than internal RAM. 2000
+ * (raised from 1000, 2026-10-05) leaves room for the widest fetch window
+ * the config page allows (90 days back, 365 ahead) across several busy
+ * calendars - ~213 events over the default 14+60 days scaled to a year
+ * came close to 1000. Each event is ~160 bytes, so this buffer and
+ * gcal_client.c's fetch buffer cost ~640KB of PSRAM together, out of
+ * ~4MB free. */
+#define EVENT_STORE_MAX_EVENTS 2000
 
 void event_store_init(void);
 
