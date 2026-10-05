@@ -421,16 +421,35 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
  * and the device is then stuck failing every refresh until rebooted. */
 static void log_heap_state(const char *context)
 {
-    ESP_LOGI(TAG, "%s - heap: %u free / %u largest block, internal: %u free / %u largest block",
+    /* "lowest" is the internal-RAM low-water mark since this sync started
+     * (see gcal_refresh_all()), tracked by the heap itself - it catches
+     * dips far shorter than any periodic sample would, such as the moment
+     * a large JSON response is being parsed. */
+    ESP_LOGI(TAG, "%s - heap: %u free / %u largest block, internal: %u free / %u largest block / %u lowest",
              context,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
 }
+
+static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, int window_future_days,
+                             bool *out_all_ok);
 
 esp_err_t gcal_refresh_all(const app_settings_t *cfg, int window_past_days, int window_future_days,
                             bool *out_all_ok)
+{
+    /* Measure this sync's internal-RAM low point on its own, not the
+     * lowest since boot (see log_heap_state()). */
+    heap_caps_monitor_local_minimum_free_size_start();
+    esp_err_t err = refresh_all(cfg, window_past_days, window_future_days, out_all_ok);
+    heap_caps_monitor_local_minimum_free_size_stop();
+    return err;
+}
+
+static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, int window_future_days,
+                             bool *out_all_ok)
 {
     *out_all_ok = false;
     log_heap_state("refresh start");
@@ -439,6 +458,7 @@ esp_err_t gcal_refresh_all(const app_settings_t *cfg, int window_past_days, int 
     esp_err_t err = jwt_auth_get_token(cfg, token, sizeof(token));
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "could not get access token, skipping refresh");
+        log_heap_state("refresh failed");
         return err;
     }
 
