@@ -557,12 +557,13 @@ it to a different board revision or IDF version.
 
 ### Known limitations
 
-- **Pagination**: each calendar fetch requests up to 250 events in the
-  fetch window (`FETCH_PAST_DAYS`/`FETCH_FUTURE_DAYS` in `main/main.c`,
-  14 days back / 60 days forward by default). Google's `nextPageToken`
-  pagination isn't implemented, so an extremely busy calendar could be
-  truncated — 250 events over ~10 weeks is generous for a household
-  calendar, but widen the window with care.
+- **Event cap**: up to 2000 events in total across all calendars per
+  sync (Google calendars are fetched 250 per page, following
+  `nextPageToken`, so a single busy calendar isn't truncated at 250). The
+  fetch window is set on the config page - 14 days back and 60 ahead by
+  default, up to 90 back and 365 ahead. A wider window means more pages,
+  so a longer sync, but no extra internal RAM: the fetch buffer, the
+  event store and the JSON parsing all live in PSRAM.
 - **Legend toggle isn't persisted** — hiding a calendar via the legend
   chip is a live UI filter that resets on reboot (all calendars fetched
   every cycle either way, so this is instant either way).
