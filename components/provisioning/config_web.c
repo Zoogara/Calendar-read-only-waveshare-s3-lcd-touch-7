@@ -1,6 +1,7 @@
 #include "config_web.h"
 #include "provisioning.h"
 
+#include <stddef.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -257,7 +258,26 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<label>Description sensor entity (optional)</label>"
         "<input type='text' name='ha_desc_entity' value='");
     send_value_chunk(req, s_cfg->ha_desc_entity);
-    httpd_resp_sendstr_chunk(req, "'>");
+    httpd_resp_sendstr_chunk(req, "'>"
+        "<h3>Weather details (tap the temperature on the clock)</h3>"
+        "<div class='hint'>Leave a sensor blank to leave that line out.</div>");
+    static const struct { const char *name, *label; size_t off; } detail_fields[] = {
+        { "ha_feels_entity", "Feels-like temperature sensor", offsetof(app_settings_t, ha_feels_entity) },
+        { "ha_wind_entity", "Wind speed sensor", offsetof(app_settings_t, ha_wind_entity) },
+        { "ha_gust_entity", "Wind gust sensor", offsetof(app_settings_t, ha_gust_entity) },
+        { "ha_wdir_entity", "Wind direction sensor (e.g. NNW)", offsetof(app_settings_t, ha_wdir_entity) },
+        { "ha_rain_entity", "Rainfall sensor", offsetof(app_settings_t, ha_rain_entity) },
+        { "ha_pressure_entity", "Air pressure sensor", offsetof(app_settings_t, ha_pressure_entity) },
+        { "ha_bom_prefix", "BOM forecast entity prefix (e.g. sensor.rutherglen_)", offsetof(app_settings_t, ha_bom_prefix) },
+    };
+    for (size_t i = 0; i < sizeof(detail_fields) / sizeof(detail_fields[0]); i++) {
+        char head[160];
+        snprintf(head, sizeof(head), "<label>%s</label><input type='text' name='%s' value='",
+                 detail_fields[i].label, detail_fields[i].name);
+        httpd_resp_sendstr_chunk(req, head);
+        send_value_chunk(req, (const char *)s_cfg + detail_fields[i].off);
+        httpd_resp_sendstr_chunk(req, "'>");
+    }
     /* Own chunks, like the calendar rows - other[] below is close to full. */
     httpd_resp_sendstr_chunk(req,
         "<h2>Screen lock</h2>"
@@ -476,6 +496,13 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     form_get(body, "ha_temp_entity", s_cfg->ha_temp_entity, sizeof(s_cfg->ha_temp_entity));
     form_get(body, "ha_desc_entity", s_cfg->ha_desc_entity, sizeof(s_cfg->ha_desc_entity));
     form_get(body, "ha_temp2_entity", s_cfg->ha_temp2_entity, sizeof(s_cfg->ha_temp2_entity));
+    form_get(body, "ha_feels_entity", s_cfg->ha_feels_entity, sizeof(s_cfg->ha_feels_entity));
+    form_get(body, "ha_wind_entity", s_cfg->ha_wind_entity, sizeof(s_cfg->ha_wind_entity));
+    form_get(body, "ha_gust_entity", s_cfg->ha_gust_entity, sizeof(s_cfg->ha_gust_entity));
+    form_get(body, "ha_wdir_entity", s_cfg->ha_wdir_entity, sizeof(s_cfg->ha_wdir_entity));
+    form_get(body, "ha_rain_entity", s_cfg->ha_rain_entity, sizeof(s_cfg->ha_rain_entity));
+    form_get(body, "ha_pressure_entity", s_cfg->ha_pressure_entity, sizeof(s_cfg->ha_pressure_entity));
+    form_get(body, "ha_bom_prefix", s_cfg->ha_bom_prefix, sizeof(s_cfg->ha_bom_prefix));
     char sel[4];
     if (form_get(body, "ha_temp_select", sel, sizeof(sel))) {
         s_cfg->ha_temp_select = (strcmp(sel, "1") == 0) ? 1 : 0;

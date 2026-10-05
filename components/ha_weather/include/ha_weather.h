@@ -55,6 +55,41 @@ esp_err_t ha_weather_refresh(const app_settings_t *cfg);
  * from any task, including the LVGL task. */
 bool ha_weather_get(ha_weather_t *out);
 
+/* ----- Weather details panel (tap the temperature on the clock) -----
+ * Fetched in the same refresh as the temperature, in one POST to Home
+ * Assistant's /api/template that returns every value (with its unit) as
+ * JSON - see ha_weather_details.c. Strings are UTF-8 and empty when the
+ * entity isn't configured or is unknown/unavailable. */
+typedef struct {
+    char value[24];
+    char unit[12];
+} ha_reading_t;
+
+#define HA_FORECAST_DAYS 7
+
+typedef struct {
+    char short_text[72];
+    char icon[24];          /* BOM icon_descriptor, e.g. "mostly_sunny" */
+    char lo[8], hi[8];      /* temp_min / temp_max, in degrees C */
+    char rain_chance[8];    /* percent */
+    char rain_range[16];    /* mm, e.g. "3–10" */
+    char extended[420];     /* long forecast - days 0 and 1 only */
+} ha_forecast_day_t;
+
+typedef struct {
+    ha_reading_t feels, wind, gust, wdir, rain, pressure;
+    ha_forecast_day_t days[HA_FORECAST_DAYS];
+} ha_weather_details_t;
+
+/* The latest details, or NULL if there are none or they're over ~45 minutes
+ * old. Holds a lock until ha_weather_details_release() - keep it brief, and
+ * always release, NULL or not. */
+const ha_weather_details_t *ha_weather_details_acquire(void);
+void ha_weather_details_release(void);
+
+/* Internal: called from ha_weather_refresh(). */
+esp_err_t ha_weather_details_refresh(const app_settings_t *cfg);
+
 #ifdef __cplusplus
 }
 #endif

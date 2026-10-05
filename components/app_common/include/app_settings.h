@@ -175,6 +175,19 @@ typedef struct {
      * shown whatever ha_temp_select says. */
     char ha_temp2_entity[64];
     uint8_t ha_temp_select;
+    /* Weather details panel (tap the temperature on the clock - see
+     * calendar_ui/ui_weather.c). Each blank entity hides its line.
+     * ha_bom_prefix: the Bureau of Meteorology integration's entity prefix,
+     * from which the 7-day forecast entities are built
+     * (<prefix>short_text_N, icon_descriptor_N, temp_min_N, temp_max_N,
+     * rain_chance_N, rain_amount_range_N, extended_text_0/1). */
+    char ha_feels_entity[64];
+    char ha_wind_entity[64];
+    char ha_gust_entity[64];
+    char ha_wdir_entity[64];
+    char ha_rain_entity[64];
+    char ha_pressure_entity[64];
+    char ha_bom_prefix[48];
     /* Screen lock (see calendar_ui/ui_lock.c). lock_pin is exactly 4 digits,
      * or empty for no lock at all - no lock icon, no auto-lock, never
      * locked. Set on the config web page only. Stored in plain text in NVS
@@ -198,6 +211,13 @@ typedef struct {
                                                              the bottom of the measured-good range */
 #define APP_SETTINGS_DEFAULT_HA_TEMP_ENTITY "sensor.rutherglen_temp"
 #define APP_SETTINGS_DEFAULT_HA_DESC_ENTITY "sensor.rutherglen_icon_descriptor_0"
+#define APP_SETTINGS_DEFAULT_HA_FEELS_ENTITY    "sensor.rutherglen_temp_feels_like"
+#define APP_SETTINGS_DEFAULT_HA_WIND_ENTITY     "sensor.wind_speed"
+#define APP_SETTINGS_DEFAULT_HA_GUST_ENTITY     "sensor.wind_gust"
+#define APP_SETTINGS_DEFAULT_HA_WDIR_ENTITY     "sensor.named_wind_direction"
+#define APP_SETTINGS_DEFAULT_HA_RAIN_ENTITY     "sensor.rain_accumulation"
+#define APP_SETTINGS_DEFAULT_HA_PRESSURE_ENTITY "sensor.atmospheric_pressure_msl"
+#define APP_SETTINGS_DEFAULT_HA_BOM_PREFIX      "sensor.rutherglen_"
 #define APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX 150     /* ~typical lit-room lux for 100% */
 
 #ifdef __cplusplus

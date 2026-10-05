@@ -178,6 +178,7 @@ esp_err_t ha_weather_refresh(const app_settings_t *cfg)
 
     HEAP_LOG("refresh start");
     esp_err_t err = refresh_now(cfg);
+    ha_weather_details_refresh(cfg);   /* independent of the temperature's success */
     HEAP_LOG("refresh end");
     return err;
 }

@@ -131,7 +131,7 @@ static const weather_glyph_t s_weather_glyphs[] = {
     { "windy",            "\xEF\x80\xA1" /* f021 windy */,              "\xEF\x80\xA1" },
 };
 
-static const char *weather_glyph(const char *cond, bool night)
+const char *ui_weather_glyph(const char *cond, bool night)
 {
     for (size_t i = 0; i < sizeof(s_weather_glyphs) / sizeof(s_weather_glyphs[0]); i++) {
         if (strcmp(cond, s_weather_glyphs[i].cond) == 0) {
@@ -158,6 +158,14 @@ static void date_pressed_cb(lv_event_t *e)
 {
     (void)e;
     ui_history_open();
+}
+
+/* Tap the weather for the details panel (ui_weather.c) - on PRESSED, for
+ * the same reason as the date (see date_pressed_cb()'s registration). */
+static void weather_pressed_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_weather_open();
 }
 
 lv_obj_t *ui_clock_create(lv_obj_t *parent)
@@ -246,6 +254,9 @@ lv_obj_t *ui_clock_create(lv_obj_t *parent)
     lv_obj_set_flex_align(s_weather_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(s_weather_row, 10, 0);
     lv_obj_align(s_weather_row, LV_ALIGN_TOP_RIGHT, WEATHER_X, WEATHER_Y);
+    lv_obj_add_flag(s_weather_row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(s_weather_row, 24);
+    lv_obj_add_event_cb(s_weather_row, weather_pressed_cb, LV_EVENT_PRESSED, NULL);
 
     /* Date, top left, e.g. "Sun, 4 Oct" - same font and colour as the
      * weather line opposite it. */
@@ -378,7 +389,7 @@ void ui_clock_update(void)
         /* Day/night from HA's sun.sun; the clock's own day hours if that
          * wasn't available. */
         bool night = wx.night >= 0 ? (wx.night == 1) : !is_daytime;
-        wx_icon = weather_glyph(wx.cond, night);
+        wx_icon = ui_weather_glyph(wx.cond, night);
         /* One decimal place, as Home Assistant reports it. A reading that
          * rounds to zero from below would print as "-0.0"; show "0.0". */
         float t = wx.temp_c;
