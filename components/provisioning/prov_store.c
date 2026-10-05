@@ -32,6 +32,8 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddStringToObject(root, "config_web_password", cfg->config_web_password);
     cJSON_AddNumberToObject(root, "brightness_min_pct_x10", cfg->brightness_min_pct_x10);
     cJSON_AddNumberToObject(root, "brightness_max_lux", cfg->brightness_max_lux);
+    cJSON_AddStringToObject(root, "lock_pin", cfg->lock_pin);
+    cJSON_AddNumberToObject(root, "lock_after_min", cfg->lock_after_min);
 
     cJSON *cals = cJSON_AddArrayToObject(root, "calendars");
     for (int i = 0; i < cfg->calendar_count; i++) {
@@ -113,6 +115,16 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
     out->brightness_max_lux = (cJSON_IsNumber(j) && j->valuedouble >= 1 && j->valuedouble <= 65535)
                                    ? (uint16_t)j->valuedouble
                                    : APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX;
+
+    /* Only a well-formed 4-digit PIN counts; anything else means no lock. */
+    j = cJSON_GetObjectItemCaseSensitive(root, "lock_pin");
+    if (cJSON_IsString(j) && j->valuestring && strlen(j->valuestring) == 4 &&
+        strspn(j->valuestring, "0123456789") == 4) {
+        memcpy(out->lock_pin, j->valuestring, 5);
+    }
+    j = cJSON_GetObjectItemCaseSensitive(root, "lock_after_min");
+    out->lock_after_min = (cJSON_IsNumber(j) && j->valuedouble >= 0 && j->valuedouble <= 1440)
+                               ? (uint16_t)j->valuedouble : 0;
 
     cJSON *cals = cJSON_GetObjectItemCaseSensitive(root, "calendars");
     if (cJSON_IsArray(cals)) {

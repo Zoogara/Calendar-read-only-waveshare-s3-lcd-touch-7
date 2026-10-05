@@ -277,6 +277,12 @@ static void settings_menu_cb(lv_event_t *e)
  * or similar disabled-clock glyph, so on/off is conveyed by dimming the
  * same icon instead, same idea as a greyed-out toolbar button
  * elsewhere. */
+static void lock_btn_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_screensaver_lock_now();
+}
+
 static void clock_toggle_btn_cb(lv_event_t *e)
 {
     ui_screensaver_toggle_clock_enabled();
@@ -419,8 +425,10 @@ static void build_top_bar(lv_obj_t *parent)
      * the previous (wider) text behind - a fixed width means the
      * invalidated area is always the same rectangle regardless of text
      * length. 400px leaves clear room before the right-aligned "last
-     * synced" label without ever overlapping it. */
-    lv_obj_set_width(s_title_label, 400);
+     * synced" label without ever overlapping it. Narrowed from 400 to 340
+     * to make room for the screen-lock padlock; the longest title
+     * ("Wednesday, Sep 30") is ~190px. */
+    lv_obj_set_width(s_title_label, 340);
     lv_label_set_long_mode(s_title_label, LV_LABEL_LONG_CLIP);
     lv_obj_align(s_title_label, LV_ALIGN_LEFT_MID, 90, 0);
 
@@ -475,6 +483,20 @@ static void build_top_bar(lv_obj_t *parent)
     lv_obj_add_flag(clock_toggle, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(clock_toggle, 16);
     lv_obj_add_event_cb(clock_toggle, clock_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Screen-lock padlock (U+F023, same icon font as the clock toggle),
+     * another 40px to the left. Only there when a PIN is configured -
+     * settings changes restart the device, so this is decided once. */
+    if (ui_screensaver_lock_available()) {
+        lv_obj_t *lock = lv_label_create(bar);
+        lv_label_set_text(lock, "\xEF\x80\xA3" /* U+F023 FontAwesome "lock" */);
+        lv_obj_set_style_text_font(lock, &gcal_font_icon_clock, 0);
+        lv_obj_set_style_text_color(lock, ui_color(UI_COLOR_TEXT_MUTED), 0);
+        lv_obj_align(lock, LV_ALIGN_RIGHT_MID, -250, 0);
+        lv_obj_add_flag(lock, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_ext_click_area(lock, 16);
+        lv_obj_add_event_cb(lock, lock_btn_cb, LV_EVENT_CLICKED, NULL);
+    }
 }
 
 /* Refreshes s_clock_label from the wall clock - see its creation comment

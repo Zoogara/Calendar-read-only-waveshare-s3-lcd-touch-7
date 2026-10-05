@@ -109,6 +109,19 @@ gcal_event_t *ui_event_scratch(void);
 bool ui_screensaver_clock_enabled(void);
 void ui_screensaver_toggle_clock_enabled(void);
 
+/* Screen lock (see ui_screensaver.c and ui_lock.c). Available only when a
+ * 4-digit PIN is configured. lock_now() leaves the calendar for the clock
+ * or screensaver straight away; unlock() is called by the keypad on the
+ * right PIN and brings the calendar back. */
+bool ui_screensaver_lock_available(void);
+void ui_screensaver_lock_now(void);
+void ui_screensaver_unlock(void);
+
+/* The PIN keypad (ui_lock.c), opened and closed by ui_screensaver.c. */
+void ui_lock_keypad_open(void);
+void ui_lock_keypad_close(void);
+bool ui_lock_keypad_is_open(void);
+
 /* --- ambient clock (implemented in ui_clock.c) - shown by ui_screensaver.c
  * in place of the calendar once it's gone idle, while presence is still
  * detected --- */
