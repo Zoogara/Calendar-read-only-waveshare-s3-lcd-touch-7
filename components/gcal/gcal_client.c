@@ -234,7 +234,12 @@ static bool event_declined_by_owner(cJSON *item, const char *owner_email)
 /* Fetches one calendar's events into out[], starting at *inout_count, up
  * to max_out total. Returns whether the fetch itself succeeded (a valid
  * response was parsed - zero events in a legitimately empty calendar
- * still counts as success); one bad/unreachable calendar is logged and
+ * still counts as success). Success means EVERY page arrived (or the event
+ * cap was reached): if a later page fails, the events already taken from
+ * earlier pages are rolled back out of out[] and this returns false, so the
+ * caller can carry the calendar's previous events forward and flag the
+ * sync as partial, rather than storing just its earliest events as if they
+ * were all of them. One bad/unreachable calendar is logged and
  * doesn't block the others, but the caller uses this to tell "nothing to
  * show" apart from "couldn't reach anything," so a total outage doesn't
  * blank out the display's last-known-good data.
@@ -272,7 +277,9 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
 
     char page_token[256] = {0};
     int added = 0;
-    bool any_page_ok = false;
+    int pages = 0;
+    const int start_count = *inout_count;
+    bool complete = false;   /* last page reached, or the event cap hit */
 
     for (;;) {
         char url[1000]; /* base_url (up to 420) + "&pageToken=" + token_enc (up to 512) */
@@ -321,7 +328,7 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
             ESP_LOGW(TAG, "[%s] bad JSON in response", cal->label);
             break;
         }
-        any_page_ok = true;
+        pages++;
 
         cJSON *items = cJSON_GetObjectItemCaseSensitive(root, "items");
         if (cJSON_IsArray(items)) {
@@ -402,12 +409,21 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
         cJSON_Delete(root);
 
         if (!has_next || *inout_count >= max_out) {
+            complete = true;
             break;
         }
     }
 
+    if (!complete) {
+        if (pages > 0) {
+            ESP_LOGW(TAG, "[%s] page %d failed - discarding %d event(s) from the earlier page(s)",
+                     cal->label, pages + 1, added);
+        }
+        *inout_count = start_count;
+        return false;
+    }
     ESP_LOGI(TAG, "[%s] %d event(s)", cal->label, added);
-    return any_page_ok;
+    return true;
 }
 
 /* Logged around every refresh attempt - kept (not just temporary debug)
@@ -585,6 +601,15 @@ static esp_err_t refresh_all(const app_settings_t *cfg, int window_past_days, in
             if (cal->daily_only) {
                 s_cal_last_fetch_day[i] = today_start;
             }
+        } else {
+            /* Keep showing this calendar's previous events rather than
+             * dropping it until its next successful fetch - stale beats
+             * missing. A failed fetch has already rolled back anything it
+             * added (see fetch_one_calendar()), so nothing is duplicated.
+             * Still counted as failed, so the sync is reported partial (the
+             * warning icon, and a short retry). */
+            int kept = event_store_copy_calendar((uint8_t)i, buf, MAX_FETCH_EVENTS, &count);
+            ESP_LOGW(TAG, "[%s] fetch failed - keeping %d previous event(s)", cal->label, kept);
         }
     }
 
