@@ -223,7 +223,7 @@ bool ics_client_fetch(esp_http_client_handle_t client, const app_calendar_cfg_t 
     bool ev_rrule = false, ev_cancelled = false, ev_start_set = false, ev_end_set = false, ev_all_day = false;
     char ev_summary[GCAL_MAX_SUMMARY];
     time_t ev_start = 0, ev_end = 0;
-    int added = 0, skipped_recurring = 0, skipped_incomplete = 0;
+    int added = 0, skipped_recurring = 0, skipped_incomplete = 0, skipped_cap = 0;
 
     char *line = resp.data;
     while (line != NULL) {
@@ -241,7 +241,9 @@ bool ics_client_fetch(esp_http_client_handle_t client, const app_calendar_cfg_t 
                 if (ev_rrule) {
                     skipped_recurring++;
                 } else if (!ev_cancelled && ev_start_set && ev_end_set) {
-                    if (*inout_count < max_out && ev_end > time_min && ev_start < time_max) {
+                    if (ev_end > time_min && ev_start < time_max && *inout_count >= max_out) {
+                        skipped_cap++;
+                    } else if (ev_end > time_min && ev_start < time_max) {
                         gcal_event_t ev = {0};
                         strncpy(ev.summary, ev_summary[0] ? ev_summary : "(No title)", sizeof(ev.summary) - 1);
                         ev.start = ev_start;
@@ -288,6 +290,10 @@ bool ics_client_fetch(esp_http_client_handle_t client, const app_calendar_cfg_t 
 
     if (skipped_recurring > 0) {
         ESP_LOGI(TAG, "[%s] skipped %d recurring event(s) - not expanded yet", cal->label, skipped_recurring);
+    }
+    if (skipped_cap > 0) {
+        ESP_LOGW(TAG, "[%s] event cap (%d) reached - %d event(s) in the window weren't stored",
+                 cal->label, max_out, skipped_cap);
     }
     if (skipped_incomplete > 0) {
         ESP_LOGI(TAG, "[%s] skipped %d event(s) missing DTSTART/DTEND", cal->label, skipped_incomplete);
