@@ -8,26 +8,29 @@ has. For building, wiring and the background behind each feature, see
 
 - **Views** - the rail down the left switches between **Month**, **Week**,
   **Day** and **Up next** (a list of what's coming, soonest first).
-- **‹ ›** in the top bar step back and forward a month, week or day.
 - **Tap a day** in Month view to open it in Day view.
 - **Legend chips** (one per calendar, in its colour) - tap to hide or show
   that calendar. This lasts until the next restart.
-- **"updated HH:MM"** (top right, under the time) - when the calendar last
-  synced. Tap it to sync now. A **⚠** in front means the last sync didn't
-  reach every calendar; the device retries after 20 seconds and keeps
-  showing what it had.
+- **Sync now** by tapping "updated HH:MM" at the top right (see
+  *Top bar*). If a calendar can't be reached, the display keeps showing its
+  last events until the next successful sync.
 - Past events are drawn paler than upcoming ones.
 
 The calendar syncs every few minutes on its own (see *Refresh interval*).
 Events the calendar's owner declined, and cancelled events, aren't shown.
 
-## Top bar icons
+## Top bar
 
-| Icon | What it does |
+Left to right:
+
+| Item | What it does |
 |---|---|
-| Padlock | Locks the screen now (only there when a PIN is set - see *Screen lock*) |
-| Clock | Turns the ambient clock on or off until the next restart. Dimmed means off: the display goes straight to the screensaver instead. |
-| Gear | Opens the menu: **Display** (settings dialog), **Setup**, **Update** |
+| **‹ ›** | Step back / forward a month, week or day, depending on the view |
+| Title | What's showing: the month, the week's dates or the day |
+| Padlock | Locks the screen now. Only there when a PIN is set - see *Screen lock* |
+| Clock icon | Turns the ambient clock on or off until the next restart. Dimmed = off: the display goes straight to the screensaver when idle instead |
+| Gear | Opens the menu: **Display** (settings dialog), **Setup**, **Update** - see below |
+| Time / "updated HH:MM" | The current time, and when the calendar last synced underneath. **Tap "updated" (or the time just above it) to sync now.** A **⚠** before "updated" means the last sync missed a calendar; it retries within 20 seconds |
 
 **Gear menu:**
 
