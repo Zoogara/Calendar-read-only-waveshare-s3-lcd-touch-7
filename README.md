@@ -75,6 +75,9 @@ history**.
   dimming the icon rather than swapping its shape, since there's no
   built-in "disabled clock" glyph to switch to. This is a runtime-only
   switch, not a saved setting: it's always back on after a reboot.
+- **Screen lock** (optional): with a 4-digit PIN set on the config page,
+  the display locks from the padlock in the top bar, after a set number
+  of minutes without a touch, and at every boot. See "Screen lock" below.
 
 ## Hardware
 
@@ -111,8 +114,8 @@ components/
                            client + in-RAM event store
   calendar_ui/             the four LVGL screens (month/week/day/up-next)
                            plus the nav rail / top bar / legend shell, the
-                           idle-timeout ambient clock, and the settings
-                           dialog
+                           idle-timeout ambient clock, the screen-lock
+                           PIN keypad, and the settings dialog
   sd_card/                 mounts the TF card slot as FAT at /sdcard, if one
                            is inserted (see "TF/SD card" below); used for a
                            config backup that survives reflashing other
@@ -432,6 +435,33 @@ condition-to-icon table is `s_weather_glyphs[]` in
 `components/calendar_ui/ui_clock.c`; adding an icon means adding its
 codepoint there and to the font's `-r` list (the regenerate command is in
 the font file's header).
+
+## Screen lock
+
+Optional, and off until a PIN is set. On the runtime config page, under
+**Screen lock**:
+
+- **PIN**: exactly 4 digits. The box is never filled in again once saved;
+  leaving it blank keeps the saved PIN, and the "Remove the PIN" checkbox
+  turns the lock off entirely (no padlock icon, no auto-lock).
+- **Lock after this many minutes without a touch**: 0 means only the
+  padlock locks it.
+
+While locked, the calendar is never shown - only the ambient clock or the
+screensaver, following the usual presence rules - and reminder pop-ups are
+held back (the clock's bell still shows). The display also comes up locked
+after every restart, so a power cycle doesn't get past it.
+
+Touching the locked display brings up a PIN keypad over the clock. The
+right PIN goes straight to the calendar; the ✕ key, or 30 seconds without
+a touch, closes the keypad and stays on the clock. Five wrong PINs in a row
+disable the keypad for 30 seconds. The keypad is created only when it's
+shown and deleted afterwards, so it costs no RAM the rest of the time.
+
+The PIN is stored in plain text in NVS and in the TF card's config backup:
+with only 10,000 possible PINs, hashing it wouldn't stop anyone who can read
+the card. It's a casual-access lock for a wall display, not protection for
+anything sensitive - the config web page (its own password) is unaffected.
 
 ## Customizing
 
