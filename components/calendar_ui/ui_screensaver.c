@@ -21,6 +21,14 @@
  *     Presence returning wakes the display back to the ambient clock,
  *     never straight to the calendar - only a touch does that, from any
  *     state.
+ *
+ * Screen lock: with a 4-digit PIN configured, the display can also be
+ * locked (s_locked) - from the top-bar padlock, after lock_after_min
+ * without a touch, and at every boot. A locked display never shows
+ * DISPLAY_CALENDAR: it goes to the clock or the screensaver, and a touch
+ * opens the PIN keypad (ui_lock.c) over the clock instead of returning to
+ * the calendar. Reminder pop-ups only ever appear in DISPLAY_CALENDAR, so
+ * they're held back while locked for free; the clock's bell still shows.
  */
 #include "calendar_ui_internal.h"
 #include "calendar_ui.h"
@@ -50,6 +58,8 @@ typedef enum {
 #define LONG_SLEEP_RESET_MS (15U * 60U * 1000U) /* away from the calendar >= this long ->
                                                     wake to today/Month instead of resuming
                                                     whatever view/date was showing */
+#define KEYPAD_IDLE_CLOSE_MS (30U * 1000U)   /* PIN keypad left untouched this long
+                                                 -> close it, back to the clock */
 #define PRESENCE_AWAY_SLEEP_MS (5U * 60U * 1000U) /* ambient clock showing + presence
                                                       continuously absent this long ->
                                                       drop to full sleep (backlight off) */
@@ -76,6 +86,9 @@ static uint32_t s_presence_away_since_ms = 0; /* 0 while present; set the instan
                                                   presence is first found absent
                                                   while DISPLAY_AMBIENT */
 static EventGroupHandle_t s_wake_event;
+
+static bool s_locked;
+static uint32_t s_lock_after_ms;   /* 0 = no auto-lock */
 
 /* Ambient light -> backlight brightness (see ambient_brightness_tick()
  * below). s_last_applied_permille starts at 1000 (100.0%) - a safe,
@@ -192,6 +205,10 @@ static void full_double_refresh(void)
 static void go_ambient(void)
 {
     display_state_t prev = s_state;
+    /* In front of anything else on lv_layer_top() - an open settings
+     * dialog in particular, which would otherwise stay drawn above the
+     * clock, and usable, on a locked display. */
+    lv_obj_move_foreground(s_clock);
     s_state = DISPLAY_AMBIENT;
     if (prev == DISPLAY_CALENDAR) {
         s_away_from_calendar_ms = lv_tick_get();
@@ -236,6 +253,7 @@ static void go_sleep(void)
     }
     regen_snow();
     s_last_regen_ms = lv_tick_get();
+    lv_obj_move_foreground(s_canvas);   /* see go_ambient() */
     lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
     bsp_display_backlight(false);
     full_double_refresh();
@@ -280,6 +298,53 @@ static void go_calendar(void)
      * specifically its TLS handshakes - with that reconstruction was the
      * worst possible timing for the marginal-RAM-headroom certificate-
      * verification flakiness documented in gcal_client.c/ics_client.c. */
+}
+
+/* Leaves the calendar: the clock if someone's there to see it, otherwise
+ * the screensaver - or the clock anyway if the screensaver canvas couldn't
+ * be allocated, since a locked display must never stay on the calendar. */
+static void go_idle(bool presence)
+{
+    if ((presence && s_clock_feature_enabled) || s_canvas == NULL) {
+        go_ambient();
+    } else {
+        go_sleep();
+    }
+}
+
+bool ui_screensaver_lock_available(void)
+{
+    return ui_get_cfg()->lock_pin[0] != '\0';
+}
+
+static void lock_now_async(void *arg)
+{
+    (void)arg;
+    if (!ui_screensaver_lock_available()) {
+        return;
+    }
+    s_locked = true;
+    ESP_LOGI(TAG, "locked (padlock)");
+    if (s_state == DISPLAY_CALENDAR) {
+        go_idle(presence_sensor_is_detected());
+    }
+    /* The padlock tap itself mustn't count as a touch on the next tick -
+     * that would open the keypad straight away. */
+    s_prev_idle_ms = lv_disp_get_inactive_time(NULL);
+}
+
+void ui_screensaver_lock_now(void)
+{
+    /* Deferred: called from the padlock's click handler, and go_idle()
+     * forces synchronous redraws. */
+    lv_async_call(lock_now_async, NULL);
+}
+
+void ui_screensaver_unlock(void)
+{
+    s_locked = false;
+    s_prev_idle_ms = lv_disp_get_inactive_time(NULL);
+    go_calendar();
 }
 
 /* Below this many lux, the backlight sits at exactly min_permille - both
@@ -603,20 +668,36 @@ static void check_timer_cb(lv_timer_t *timer)
         ambient_brightness_tick();
     }
 
+    if (!s_locked && s_lock_after_ms > 0 && idle_ms >= s_lock_after_ms &&
+        ui_screensaver_lock_available()) {
+        s_locked = true;
+        ESP_LOGI(TAG, "locked (%u min without a touch)", (unsigned)(s_lock_after_ms / 60000));
+    }
+
+    /* An open keypad nobody's using goes away, back to the clock. */
+    if (ui_lock_keypad_is_open() && idle_ms >= KEYPAD_IDLE_CLOSE_MS) {
+        ui_lock_keypad_close();
+    }
+
     switch (s_state) {
     case DISPLAY_CALENDAR:
-        if (s_idle_timeout_ms > 0 && idle_ms >= s_idle_timeout_ms) {
-            if (presence && s_clock_feature_enabled) {
-                go_ambient();
-            } else {
-                go_sleep();
-            }
+        if (s_locked) {
+            go_idle(presence);
+        } else if (s_idle_timeout_ms > 0 && idle_ms >= s_idle_timeout_ms) {
+            go_idle(presence);
         }
         break;
 
     case DISPLAY_AMBIENT:
         if (touched) {
-            go_calendar();
+            if (!s_locked) {
+                go_calendar();
+            } else if (!ui_lock_keypad_is_open()) {
+                ui_lock_keypad_open();
+            }
+            /* else: a key press on the open keypad - ui_lock.c handles it */
+        } else if (ui_lock_keypad_is_open()) {
+            ui_clock_update();   /* no presence-based sleep while it's open */
         } else if (presence) {
             s_presence_away_since_ms = 0;
             ui_clock_update();
@@ -634,7 +715,12 @@ static void check_timer_cb(lv_timer_t *timer)
 
     case DISPLAY_SLEEP:
         if (touched) {
-            go_calendar();
+            if (s_locked) {
+                go_ambient();
+                ui_lock_keypad_open();
+            } else {
+                go_calendar();
+            }
         } else if (presence && s_clock_feature_enabled) {
             go_ambient();
         } else if (lv_tick_get() - s_last_regen_ms >= SNOW_REGEN_MS) {
@@ -650,6 +736,11 @@ static void check_timer_cb(lv_timer_t *timer)
 void ui_screensaver_init(void)
 {
     s_idle_timeout_ms = ui_get_cfg()->screen_timeout_s * 1000U;
+    s_lock_after_ms = ui_get_cfg()->lock_after_min * 60U * 1000U;
+    /* Locked from boot whenever a PIN is set - otherwise a power cycle
+     * would get past it. The first tick takes the display off the
+     * calendar. */
+    s_locked = ui_screensaver_lock_available();
 
     s_light_sensor_ok = (light_sensor_init(bsp_get_i2c_bus()) == ESP_OK);
     if (!s_light_sensor_ok) {

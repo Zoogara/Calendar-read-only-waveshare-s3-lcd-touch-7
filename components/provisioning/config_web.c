@@ -258,6 +258,29 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<input type='text' name='ha_desc_entity' value='");
     send_value_chunk(req, s_cfg->ha_desc_entity);
     httpd_resp_sendstr_chunk(req, "'>");
+    /* Own chunks, like the calendar rows - other[] below is close to full. */
+    httpd_resp_sendstr_chunk(req,
+        "<h2>Screen lock</h2>"
+        "<div class='hint'>A 4-digit PIN needed to get from the clock back to the "
+        "calendar. Lock with the padlock icon in the top bar, or automatically "
+        "after a period without a touch. While locked, only the clock or "
+        "screensaver shows and reminder pop-ups are held back. With no PIN set "
+        "there's no lock at all.</div>"
+        "<label>PIN (4 digits)</label>"
+        "<input type='password' name='lock_pin' inputmode='numeric' pattern='[0-9]{4}' "
+        "maxlength='4' autocomplete='new-password' placeholder='");
+    httpd_resp_sendstr_chunk(req, s_cfg->lock_pin[0] ? "(set - leave blank to keep)" : "(not set)");
+    httpd_resp_sendstr_chunk(req,
+        "'>"
+        "<label style='font-weight:400'><input type='checkbox' name='lock_clear' "
+        "style='width:auto'> Remove the PIN (turns the lock off)</label>"
+        "<label>Lock after this many minutes without a touch</label>");
+    char lock_after[160];
+    snprintf(lock_after, sizeof(lock_after),
+             "<input type='number' name='lock_after_min' min='0' max='1440' value='%u'>"
+             "<div class='hint'>0 = only when the padlock icon is tapped.</div>",
+             (unsigned)s_cfg->lock_after_min);
+    httpd_resp_sendstr_chunk(req, lock_after);
 
     char other[3600];
     snprintf(other, sizeof(other),
@@ -464,6 +487,21 @@ static esp_err_t save_post_handler(httpd_req_t *req)
         strcpy(s_cfg->ha_token, token);
     }
     memset(token, 0, sizeof(token));
+    /* Screen lock: a blank PIN box keeps the saved PIN (it's never sent
+     * back to the page); the checkbox removes it. */
+    char pin[8];
+    if (form_get(body, "lock_clear", pin, sizeof(pin))) {
+        s_cfg->lock_pin[0] = '\0';
+    } else if (form_get(body, "lock_pin", pin, sizeof(pin)) && strlen(pin) == 4 &&
+               strspn(pin, "0123456789") == 4) {
+        memcpy(s_cfg->lock_pin, pin, 5);
+    }
+    if (form_get(body, "lock_after_min", num, sizeof(num))) {
+        long v = strtol(num, NULL, 10);
+        if (v >= 0 && v <= 1440) {
+            s_cfg->lock_after_min = (uint16_t)v;
+        }
+    }
 
     app_calendar_cfg_t new_cals[APP_SETTINGS_MAX_CALENDARS];
     memset(new_cals, 0, sizeof(new_cals));
