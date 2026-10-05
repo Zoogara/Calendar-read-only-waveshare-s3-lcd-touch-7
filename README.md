@@ -576,20 +576,6 @@ it to a different board revision or IDF version.
   otherwise switches the active slot, so a flashed image never gets
   replaced except by re-flashing over serial.
 
-### Open issue: occasional crash right after the SD card mounts at boot
-
-An intermittent crash right after the SD card mounts at boot, landing in
-LVGL's own background redraw task. It self-recovers via the panic
-handler's automatic reboot within about a second, on roughly a quarter to
-two-fifths of boots in repeated testing, and has never once failed to
-recover (never a hard loop). Root cause hasn't been pinned down after a
-real investigation (stack size, heap corruption, an NVS-vs-LVGL-task race,
-and SD SPI clock speed were all ruled out) - see the comment above the
-settling-delay `vTaskDelay()` in `main/main.c`'s `app_main()` for the full
-writeup and the leading remaining theory (a GDMA channel-sharing
-interaction between the SD SPI bus and the RGB panel's own
-continuous-refresh DMA).
-
 ### Bring-up troubleshooting
 
 Things most likely to need a tweak on real hardware, roughly in the order
@@ -815,6 +801,30 @@ that task skip a few cycles and retry, no deadlock risk. Confirmed on real
 hardware: no recurrence since, and boot completes measurably faster too
 (the background task no longer wastes cycles contending on a half-built
 tree).
+
+#### Crash right after the SD card mounted at boot (fixed, most likely by the above)
+
+From early September an intermittent crash hit on roughly a quarter to
+two-fifths of boots, right after "TF card mounted", inside LVGL's own
+background redraw. It always recovered through the panic handler's
+automatic reboot within about a second. Stack size, heap corruption, an
+NVS-vs-LVGL-task race and the SD SPI clock speed were all ruled out, and
+the leading theory was a GDMA channel clash between the SD SPI bus and the
+RGB panel.
+
+It hasn't been seen since the unlocked-UI-construction fix above (9
+September): 24 consecutive fully logged boots in late September and early
+October, none crashing - at the old rate, the chance of that is about 1 in
+1000. The likely explanation: straight after the card mounts, boot writes
+the config backup, unmounts the card and calls `calendar_ui_init()` - the
+function that used to build the whole UI without holding the LVGL lock
+while LVGL's background task was already redrawing. A crash in the redraw
+pass "right after the SD card mounted" is exactly where that race would
+strike. Not proven directly, but nothing else in the SD path changed.
+
+The one-second settling delay before mounting the card in `app_main()`
+stays: with no delay at all, mounting straight after the display comes up
+crashes every time, which is a separate, confirmed effect.
 
 #### Ambient clock digit tearing (fixed)
 

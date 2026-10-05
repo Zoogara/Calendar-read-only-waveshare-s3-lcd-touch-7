@@ -366,24 +366,17 @@ void app_main(void)
     /* Settling delay before touching the SD SPI bus/CH422G CS: with no
      * delay here at all, mounting the card immediately after
      * bsp_display_init() panics deterministically (confirmed 2026-09-04),
-     * so some delay here is required. Beyond that, though, this remains
-     * an unresolved, intermittent (~25-40% of boots in repeated 15-reboot
-     * stress tests on 2026-09-05) crash landing inside the LVGL task's
-     * own background redraw timer, immediately after "TF card mounted" -
-     * always self-recovering via the panic handler's own reboot within
-     * about a second, never a hard loop in any test run. Investigated and
-     * ruled out: main_task/LVGL-task stack size, heap corruption
-     * (CONFIG_HEAP_POISONING_COMPREHENSIVE caught nothing), the NVS/LVGL-
-     * task race above, and SD SPI clock speed (400kHz vs. the 20MHz
-     * default made no meaningful difference). Leading remaining theory,
-     * untested: a GDMA channel-sharing interaction between the SD SPI
-     * bus's spi_bus_initialize() (auto-selected DMA channel) and the RGB
-     * panel's own continuous-refresh GDMA channel (esp_lcd_panel_rgb.c) -
-     * investigating that properly needs real driver-level work with no
-     * guaranteed payoff, so as of 2026-09-05 the decision (made
-     * knowingly, not by default) is to accept the self-healing crash
-     * rather than keep chasing it. Revisit if it ever starts hard-looping
-     * instead of recovering, or if you have a concrete new lead. */
+     * so some delay here is required.
+     *
+     * A separate, intermittent crash (~25-40% of boots in 15-reboot stress
+     * tests, 2026-09-05) used to land inside the LVGL task's background
+     * redraw right after "TF card mounted", always self-recovering. It
+     * hasn't recurred since calendar_ui_init() - which runs moments after
+     * the mount, below - started holding the LVGL lock while building the
+     * UI (2026-09-09): 24 fully logged boots without it, late Sept to
+     * early Oct. Almost certainly that same unlocked-construction race,
+     * not anything SD-specific (the earlier GDMA-sharing theory was never
+     * needed). See README "Crash right after the SD card mounted at boot". */
     vTaskDelay(pdMS_TO_TICKS(1000));
 
     esp_err_t sd_err = sd_card_init(bsp_get_expander());
@@ -454,10 +447,8 @@ void app_main(void)
      * (the setup portal, the settings dialog, config_web.c) already calls
      * esp_restart() right after provisioning_save() succeeds, so
      * reconciling here - once per boot, while the card is mounted anyway
-     * - keeps the two in sync within seconds of any real change, with no
-     * extra runtime SD-mount risk (see the settling-delay comment above
-     * for why that risk is worth minimizing) beyond the one already
-     * accepted at this exact point in boot. */
+     * - keeps the two in sync within seconds of any real change, without
+     * ever mounting the card again mid-session. */
     if (sd_err == ESP_OK && provisioning_save_sd(&s_cfg) != ESP_OK) {
         ESP_LOGW(TAG, "failed to write TF card config backup");
     }
