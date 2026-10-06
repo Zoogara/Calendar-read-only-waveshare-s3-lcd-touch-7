@@ -15,6 +15,13 @@ revisions or IDF versions, and the history of the bugs found and fixed
 along the way are all collected at the end, under **Known issues and
 history**.
 
+> **This is the `no-extra-hardware` branch** - everything on `main`, for a stock
+> Waveshare board with nothing soldered on. There is no presence sensor, light
+> sensor or backlight PWM wire here: the idle display is always the ambient
+> clock (someone is assumed to be there), the backlight is simply on or off
+> through the CH422G gate, and the sections below on the presence sensor and
+> backlight auto-dimming describe `main`'s hardware only.
+
 ## What it does
 
 For a quick tour of using it - every feature, option and setting - see
