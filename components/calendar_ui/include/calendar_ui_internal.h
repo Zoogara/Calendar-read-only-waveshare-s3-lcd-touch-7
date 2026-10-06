@@ -127,6 +127,12 @@ void ui_screensaver_keypad_dismissed(void);
  * The table lives in ui_clock.c. */
 const char *ui_weather_glyph(const char *cond, bool night);
 
+/* "On this day" list (ui_history.c), opened by tapping the date on the
+ * ambient clock; closed by a tap or by ui_screensaver.c after a minute. */
+void ui_history_open(void);
+void ui_history_close(void);
+bool ui_history_is_open(void);
+
 /* Weather details panel (ui_weather.c), opened by tapping the weather on
  * the ambient clock; closed by a tap or by ui_screensaver.c after a
  * minute. */

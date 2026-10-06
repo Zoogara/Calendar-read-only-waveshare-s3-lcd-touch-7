@@ -58,8 +58,9 @@ typedef enum {
 #define LONG_SLEEP_RESET_MS (15U * 60U * 1000U) /* away from the calendar >= this long ->
                                                     wake to today/Month instead of resuming
                                                     whatever view/date was showing */
-#define PANEL_IDLE_CLOSE_MS (60U * 1000U)    /* weather panel left untouched
-                                                 this long -> close it */
+#define PANEL_IDLE_CLOSE_MS (60U * 1000U)    /* weather panel or history list
+                                                 left untouched this long ->
+                                                 close it */
 #define KEYPAD_IDLE_CLOSE_MS (30U * 1000U)   /* PIN keypad left untouched this long
                                                  -> close it, back to the clock */
 #define PRESENCE_AWAY_SLEEP_MS (5U * 60U * 1000U) /* ambient clock showing + presence
@@ -681,15 +682,18 @@ static void check_timer_cb(lv_timer_t *timer)
         ESP_LOGI(TAG, "locked (%u min without a touch)", (unsigned)(s_lock_after_ms / 60000));
     }
 
-    /* An open keypad or weather panel nobody's using goes away, back to
-     * the clock. */
+    /* An open keypad, weather panel or history list nobody's using goes
+     * away, back to the clock. */
     if (ui_lock_keypad_is_open() && idle_ms >= KEYPAD_IDLE_CLOSE_MS) {
         ui_lock_keypad_close();
     }
     if (ui_weather_is_open() && idle_ms >= PANEL_IDLE_CLOSE_MS) {
         ui_weather_close();
     }
-    bool overlay_open = ui_lock_keypad_is_open() || ui_weather_is_open();
+    if (ui_history_is_open() && idle_ms >= PANEL_IDLE_CLOSE_MS) {
+        ui_history_close();
+    }
+    bool overlay_open = ui_lock_keypad_is_open() || ui_weather_is_open() || ui_history_is_open();
 
     switch (s_state) {
     case DISPLAY_CALENDAR:
@@ -703,7 +707,7 @@ static void check_timer_cb(lv_timer_t *timer)
     case DISPLAY_AMBIENT:
         if (touched) {
             if (overlay_open) {
-                /* a touch on the open keypad or weather panel - its own */
+                /* a touch on the open keypad, panel or list - its own */
             } else if (!s_locked) {
                 go_calendar();
             } else {

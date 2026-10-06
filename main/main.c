@@ -50,6 +50,7 @@
 #include "gcal_client.h"
 #include "event_store.h"
 #include "weather.h"
+#include "onthisday.h"
 
 static const char *TAG = "main";
 static app_settings_t s_cfg;
@@ -290,6 +291,9 @@ static void net_task(void *arg)
          * calendar sync it never counts towards failed_cycles or changes
          * wait_ms. A no-op until a location is set. */
         weather_refresh(&s_cfg);
+        /* "On this day" history for the clock's date (components/onthisday,
+         * Wikipedia): a no-op except once a day. */
+        onthisday_refresh();
 
         /* Waits for either the refresh/backoff interval above or an early
          * wake - which, since 2026-09-10, means only a manual force-sync
