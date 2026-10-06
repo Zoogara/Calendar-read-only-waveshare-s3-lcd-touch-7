@@ -115,7 +115,9 @@ static esp_err_t fetch_entity_state(const app_settings_t *cfg, const char *entit
     memset(auth, 0, sizeof(auth)); /* don't leave the token lying on the stack */
 
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "%s: request failed: %s", entity, esp_err_to_name(err));
+        /* The URL names the server tried, so a wrong address is obvious from
+         * the log; the token travels in a header, not the URL. */
+        ESP_LOGW(TAG, "%s: request failed: %s (%s)", entity, esp_err_to_name(err), url);
         free(buf);
         return err;
     }
