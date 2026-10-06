@@ -14,45 +14,10 @@ static bool s_last_read_ok = true; /* assume ok right after a successful init */
 
 esp_err_t light_sensor_init(i2c_master_bus_handle_t bus)
 {
-    if (bus == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    i2c_device_config_t dev_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = BH1750_I2C_ADDR,
-        .scl_speed_hz = 400000,
-    };
-    esp_err_t err = i2c_master_bus_add_device(bus, &dev_cfg, &s_dev);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "add device failed: %s (is the BH1750/GY-30 wired to the "
-                      "shared I2C bus, ADDR pin low, at address 0x23?)",
-                 esp_err_to_name(err));
-        s_dev = NULL;
-        return err;
-    }
-
-    uint8_t power_on = BH1750_CMD_POWER_ON;
-    err = i2c_master_transmit(s_dev, &power_on, 1, pdMS_TO_TICKS(100));
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "power-on command failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    uint8_t mode = BH1750_CMD_CONT_H_RES_MODE;
-    err = i2c_master_transmit(s_dev, &mode, 1, pdMS_TO_TICKS(100));
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "mode command failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    /* Max conversion time for H-Res mode per the datasheet is 180ms - wait
-     * it out here so a read coming almost immediately after this returns
-     * doesn't just get the sensor's power-on-reset garbage value. */
-    vTaskDelay(pdMS_TO_TICKS(180));
-
-    ESP_LOGI(TAG, "BH1750 ready (continuous H-res mode)");
-    return ESP_OK;
+    /* No BH1750 fitted in this build - report it as absent without
+     * touching the I2C bus. */
+    (void)bus;
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t light_sensor_read_lux(float *out_lux)
