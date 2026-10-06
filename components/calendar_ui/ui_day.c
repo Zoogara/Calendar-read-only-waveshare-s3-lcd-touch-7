@@ -22,11 +22,13 @@ static lv_obj_t *s_allday_box;
 static lv_obj_t *s_event_col;
 static lv_obj_t *s_body;                /* the vertically-scrollable hour grid */
 
-/* On entering day view (or navigating / re-syncing while in it) the hour
- * grid is scrolled so that GRID_LOOKBACK_H hours before the current time
- * sits at the top of the viewport, rather than always landing on the
- * configured start hour. Keeps "on now" and "just finished" both visible
- * without a manual scroll. Mirrors ui_week.c's align_grid_to_now(). */
+/* On entering day view (or navigating / re-syncing while in it) on TODAY,
+ * the hour grid is scrolled so that GRID_LOOKBACK_H hours before the
+ * current time sits at the top of the viewport, rather than always landing
+ * on the configured start hour. Keeps "on now" and "just finished" both
+ * visible without a manual scroll. Any other day opens at the top of its
+ * grid - the start of the day - since "now" means nothing there. Mirrors
+ * ui_week.c's align_grid_to_now(). */
 #define GRID_LOOKBACK_H 3
 
 static int col_w(void)
@@ -163,9 +165,13 @@ lv_obj_t *ui_day_create(lv_obj_t *parent)
 /* See GRID_LOOKBACK_H's comment. Clamped to the grid's real scroll range,
  * so early morning it just pins to the top and late at night to the
  * bottom. body's height is the fixed value ui_day_create() set it to. */
-static void align_grid_to_now(void)
+static void align_grid(bool is_today)
 {
     if (s_body == NULL) {
+        return;
+    }
+    if (!is_today) {
+        lv_obj_scroll_to_y(s_body, 0, LV_ANIM_OFF);   /* start of the day */
         return;
     }
     time_t now;
@@ -419,7 +425,7 @@ void ui_day_populate(lv_obj_t *root, time_t cursor)
         add_boundary_indicator(s_event_col, false);
     }
 
-    align_grid_to_now();
+    align_grid(day == today);
 }
 
 void ui_day_title(time_t cursor, char *out, size_t out_sz)
