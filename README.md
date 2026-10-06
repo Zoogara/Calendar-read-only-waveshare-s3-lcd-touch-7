@@ -74,6 +74,12 @@ For a quick tour of using it - every feature, option and setting - see
 - **Screen lock** (optional): with a 4-digit PIN set on the config page,
   the display locks from the padlock in the top bar, after a set number
   of minutes without a touch, and at every boot. See "Screen lock" below.
+- **Weather** (optional): with a latitude and longitude set on the config
+  page, the ambient clock shows the date, a weather icon and the
+  temperature; tap the weather for current conditions and a 7-day
+  forecast. From Open-Meteo - free, no account. See "Weather" below.
+- **On this day**: tap the date on the ambient clock for notable events
+  in history on today's date, from Wikipedia. See "On this day" below.
 
 ## Hardware
 
@@ -122,6 +128,11 @@ components/
   light_sensor/           reads a BH1750 ambient light sensor over I2C
                            (see "Backlight auto-dimming" below); drives
                            the physical backlight brightness
+  weather/                 fetches current conditions and a 7-day forecast
+                           from Open-Meteo for the ambient clock and its
+                           weather panel (see "Weather" below)
+  onthisday/               fetches today's "on this day" history from
+                           Wikipedia for the clock (see "On this day" below)
   esp_lcd/                 vendored + patched copy of ESP-IDF's own
                            esp_lcd component (overrides $IDF_PATH's) -
                            fixes a real bug in the RGB panel driver, see
@@ -363,6 +374,77 @@ No sensor connected leaves `light_sensor_init()` failing at boot (logged,
 not fatal) and the backlight simply staying at whatever brightness it was
 last explicitly set to - no auto-dimming, but nothing crashes or hangs
 either.
+
+## Weather
+
+Optional, and off until a location is set. On the runtime config page,
+under **Weather**: **Latitude** and **Longitude** in decimal degrees (south
+and west are negative - e.g. `-36.05` and `146.46`; long-pressing a spot in
+Google Maps shows them), and an optional **Location name** for the weather
+panel's heading. A blank latitude turns weather off: no requests, nothing
+on screen.
+
+The ambient clock then shows the date top left and, top right, an icon for
+the current conditions (a night version after dark) and the temperature,
+all in the colon's colour so they dim with it at night. Tapping the
+weather opens a panel (`components/calendar_ui/ui_weather.c`) headed
+"Weather for <place> - <date>":
+
+- **Now**: temperature, feels-like, wind direction, speed and gusts, rain
+  so far today, and pressure.
+- **Today and Tomorrow**: a 48px icon, min / max, rain chance and amount,
+  and a short summary.
+- **The next five days**: a 32px icon, a short description, min / max,
+  rain chance and amount.
+
+A tap, or a minute untouched, closes it and returns to the clock.
+
+The data comes from [Open-Meteo](https://open-meteo.com) - free for
+non-commercial use, no account or key - in one plain-`http` request of
+~1.8KB every 15 minutes (`components/weather/`), kept in PSRAM. A few things
+follow from it being a weather *model* rather than a station or a weather
+service:
+
+- **Readings are model values for the location**, not measurements -
+  close to a nearby station's, but not the same.
+- **"Rain today"** is the sum of the model's hourly amounts since local
+  midnight.
+- **There's no written forecast.** Today and Tomorrow get a summary put
+  together from the numbers ("Slight rain. 47% chance of rain, about
+  0.1 mm. Winds WSW up to 22 km/h, gusts to 42.").
+- **Conditions are WMO weather codes**, mapped onto the icon set and a
+  short phrase ("Mainly clear", "Slight rain") in `weather.c`.
+- **Rain is a single amount** per day, not a range.
+
+(The `with-HA-weather` branch has the same display fed from a Home
+Assistant installation's local station and Bureau of Meteorology sensors
+instead.)
+
+## On this day
+
+Tapping the date on the ambient clock opens a scrolling list of notable
+events from history for today's date (`components/calendar_ui/ui_history.c`)
+- the year, a heading (the main Wikipedia article involved) and a one-line
+description of each. A tap or a minute untouched closes it, back to the
+clock. It works while the screen is locked: it's public information, and
+closing it returns to the locked clock.
+
+The list is Wikipedia's editor-curated "selected" events for the date,
+from its REST API (`feed/onthisday/selected/MM/DD`,
+`components/onthisday/`), fetched once a day after a calendar sync and
+retried every 30 minutes if it fails. It asks for the **local** date - a
+feed that only offers "today" in UTC would show yesterday's events until
+late morning in Australia. The response is ~190KB, because it carries
+summaries of every linked article; it's received and parsed in PSRAM and
+only ~10KB of entries is kept. Wikimedia asks API clients to identify
+themselves, so requests carry a User-Agent with this project's GitHub
+address.
+
+Wikipedia text is full of accented letters and typographic punctuation,
+which is why the 14px and 20px fonts include Latin-1 and the common
+dashes and quotes; and Wikipedia sends full-size 16KB TLS records, which is
+why `CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN` is 16384 (PSRAM only - mbedTLS
+allocates from there).
 
 ## Screen lock
 
