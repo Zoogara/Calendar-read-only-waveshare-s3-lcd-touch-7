@@ -67,6 +67,38 @@ static void copy_utf8(char *dst, const char *src, size_t dst_sz)
     dst[n] = '\0';
 }
 
+/* Wikipedia's text occasionally carries raw page markup - e.g. a tooltip's
+ * ".mw-parser-output .tooltip-dotted{border-bottom:1px dotted;...}" glued to
+ * the front of a unit - and a few characters no font here has: swaps the
+ * no-break space variants for a plain space and the non-breaking hyphen for
+ * a plain one, and drops any ".mw-parser-output ...{...}" block. */
+static void clean_text(char *s)
+{
+    char *css;
+    while ((css = strstr(s, ".mw-parser-output")) != NULL) {
+        char *end = strchr(css, '}');
+        if (end == NULL) {
+            *css = '\0';
+            break;
+        }
+        memmove(css, end + 1, strlen(end + 1) + 1);
+    }
+    char *w = s;
+    for (const char *r = s; *r; ) {
+        const unsigned char *u = (const unsigned char *)r;
+        if (u[0] == 0xE2 && u[1] == 0x80 && (u[2] == 0xAF)) {
+            *w++ = ' ';       /* U+202F narrow no-break space */
+            r += 3;
+        } else if (u[0] == 0xE2 && u[1] == 0x80 && u[2] == 0x91) {
+            *w++ = '-';       /* U+2011 non-breaking hyphen */
+            r += 3;
+        } else {
+            *w++ = *r++;
+        }
+    }
+    *w = '\0';
+}
+
 /* Wikipedia's text refers to its own images - "(pictured)", "(pictured
  * left)", "(example pictured)" - which mean nothing here. Removes any
  * parenthetical containing "pictured", plus the space before it. */
@@ -152,6 +184,7 @@ static esp_err_t fetch(int month, int day, onthisday_t *out)
         onthisday_entry_t *e = &out->entries[out->count];
         e->year = (int16_t)year->valueint;
         copy_utf8(e->text, text->valuestring, sizeof(e->text));
+        clean_text(e->text);
         strip_pictured(e->text);
 
         /* Heading: the first linked article - the entry's main subject. */
