@@ -171,6 +171,9 @@ typedef struct {
      * shown. Set on the config web page. */
     char weather_lat[16];
     char weather_lon[16];
+    /* Shown in the weather panel's heading ("Weather for <place> - <date>");
+     * Open-Meteo returns no place name. Optional. */
+    char weather_place[40];
 
     bool valid; /* true once loaded/saved successfully at least once */
 } app_settings_t;

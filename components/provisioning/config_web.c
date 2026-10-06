@@ -231,7 +231,11 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "'><label>Longitude</label>"
         "<input type='text' name='weather_lon' inputmode='decimal' placeholder='e.g. 146.46' value='");
     send_value_chunk(req, s_cfg->weather_lon);
-    httpd_resp_sendstr_chunk(req, "'>");
+    httpd_resp_sendstr_chunk(req,
+        "'><label>Location name (optional)</label>"
+        "<input type='text' name='weather_place' placeholder='e.g. Rutherglen' value='");
+    send_value_chunk(req, s_cfg->weather_place);
+    httpd_resp_sendstr_chunk(req, "'><div class='hint'>Shown in the weather panel's heading.</div>");
 
     httpd_resp_sendstr_chunk(req,
         "<h2>Screen lock</h2>"
@@ -445,6 +449,8 @@ static esp_err_t save_post_handler(httpd_req_t *req)
             s_cfg->brightness_max_lux = (uint16_t)v;
         }
     }
+
+    form_get(body, "weather_place", s_cfg->weather_place, sizeof(s_cfg->weather_place));
 
     /* Weather location: a valid number in range, or blank (weather off). */
     char coord[16];
