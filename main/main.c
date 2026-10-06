@@ -161,17 +161,35 @@ static void keepalive_probe(void)
     freeaddrinfo(res);
 }
 
+/* How long the first calendar sync waits for the clock to be set. The
+ * sync signs its Google access-token request with the current time, and
+ * Google rejects it ("invalid_grant ... iat and exp") while the clock still
+ * reads 1970 - seen on hardware whenever SNTP took over 15s at boot: a
+ * failed first sync and a warning icon until the 20s retry. Past this
+ * limit it carries on regardless and that retry takes over, so a dead time
+ * server can't hold the calendar up for ever. */
+#define SNTP_MAX_WAIT_S 120
+
 static bool sync_time(void)
 {
     esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
     esp_netif_sntp_init(&sntp_cfg);
-    if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(15000)) != ESP_OK) {
-        ESP_LOGW(TAG, "SNTP sync timed out on first try - date/times shown may "
-                      "be wrong until it catches up in the background");
-        return false;
+    for (int waited = 0; waited < SNTP_MAX_WAIT_S; waited += 15) {
+        if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(15000)) == ESP_OK) {
+            if (waited > 0) {
+                ESP_LOGI(TAG, "time synced after %d-%d s", waited, waited + 15);
+            } else {
+                ESP_LOGI(TAG, "time synced");
+            }
+            return true;
+        }
+        if (waited == 0) {
+            ESP_LOGW(TAG, "SNTP slow - waiting for the time before the first calendar sync");
+        }
     }
-    ESP_LOGI(TAG, "time synced");
-    return true;
+    ESP_LOGW(TAG, "SNTP still not synced after %d s - syncing anyway; date/times shown may "
+                  "be wrong until it catches up in the background", SNTP_MAX_WAIT_S);
+    return false;
 }
 
 static SemaphoreHandle_t s_wifi_up;
