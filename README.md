@@ -432,7 +432,9 @@ Setup, on the runtime config page (not the first-boot portal):
 The forecast comes from the Bureau of Meteorology integration's numbered
 entities, built from one configured prefix: `<prefix>short_text_N`,
 `icon_descriptor_N`, `temp_min_N`, `temp_max_N`, `rain_chance_N`,
-`rain_amount_range_N` for days 0-6, and `extended_text_0`/`_1`. Defaults
+`rain_amount_range_N` for days 0-6, and `extended_text_0`/`_1` - read from
+their `state` attribute, which holds the full forecast, because Home
+Assistant cuts every entity's state itself at 255 characters. Defaults
 are this installation's sensors (a local weather station for wind, rain and
 pressure; the BOM's Rutherglen entities for the rest). A blank sensor field
 leaves its line out.
