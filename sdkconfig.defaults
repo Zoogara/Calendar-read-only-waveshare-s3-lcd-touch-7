@@ -194,3 +194,7 @@ CONFIG_HTTPD_MAX_URI_LEN=1024
 # suggestion, bigger caches, does - cache is carved out of internal SRAM.)
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# SNTP: three servers, and no random 0-5s delay before the first request
+CONFIG_LWIP_SNTP_MAX_SERVERS=3
+CONFIG_LWIP_SNTP_STARTUP_DELAY=n

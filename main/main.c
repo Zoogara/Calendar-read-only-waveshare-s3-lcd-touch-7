@@ -172,7 +172,11 @@ static void keepalive_probe(void)
 
 static bool sync_time(void)
 {
-    esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    /* Several servers: lwIP's SNTP retries a lost/unanswered request only
+     * every 15s, moving on to the next server each time, so one slow or
+     * unreachable pool member no longer costs 15s+ per attempt. */
+    esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(
+        3, ESP_SNTP_SERVER_LIST("time.google.com", "time.cloudflare.com", "pool.ntp.org"));
     esp_netif_sntp_init(&sntp_cfg);
     for (int waited = 0; waited < SNTP_MAX_WAIT_S; waited += 15) {
         if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(15000)) == ESP_OK) {
