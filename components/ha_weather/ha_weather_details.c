@@ -103,7 +103,12 @@ static bool build_template(const app_settings_t *cfg, char *t)
             "\"hi\":{{ states(p~'temp_max_'~i)|tojson }},"
             "\"rc\":{{ states(p~'rain_chance_'~i)|tojson }},"
             "\"rr\":{{ states(p~'rain_amount_range_'~i)|tojson }},"
-            "\"x\":{{ (states(p~'extended_text_'~i) if i < 2 else '')|tojson }}}"
+            /* The long forecast from the extended_text sensors' "state"
+             * attribute: Home Assistant cuts any entity's state at 255
+             * characters, and the BOM integration keeps the full text in
+             * that attribute. Falls back to the (possibly cut) state. */
+            "\"x\":{{ ((state_attr(p~'extended_text_'~i, 'state') or states(p~'extended_text_'~i)) "
+            "if i < 2 else '')|tojson }}}"
             "{{ ',' if not loop.last else '' }}{%% endfor %%}]",
             cfg->ha_bom_prefix, HA_FORECAST_DAYS);
     }
@@ -243,9 +248,10 @@ static esp_err_t fetch(const app_settings_t *cfg, ha_weather_details_t *out)
         copy_str(f->extended, sizeof(f->extended), cJSON_GetObjectItemCaseSensitive(d, "x"));
     }
     cJSON_Delete(root);
-    ESP_LOGI(TAG, "details: %u bytes; wind %s %s %s, forecast 0: %s/%s %s", (unsigned)bytes,
-             out->wdir.value, out->wind.value, out->wind.unit, out->days[0].lo, out->days[0].hi,
-             out->days[0].icon);
+    ESP_LOGI(TAG, "details: %u bytes; wind %s %s %s, forecast 0: %s/%s %s, long text %u/%u chars",
+             (unsigned)bytes, out->wdir.value, out->wind.value, out->wind.unit, out->days[0].lo,
+             out->days[0].hi, out->days[0].icon, (unsigned)strlen(out->days[0].extended),
+             (unsigned)strlen(out->days[1].extended));
     return ESP_OK;
 }
 

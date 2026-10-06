@@ -73,7 +73,9 @@ typedef struct {
     char lo[8], hi[8];      /* temp_min / temp_max, in degrees C */
     char rain_chance[8];    /* percent */
     char rain_range[16];    /* mm, e.g. "3–10" */
-    char extended[420];     /* long forecast - days 0 and 1 only */
+    char extended[800];     /* long forecast - days 0 and 1 only; from the
+                               sensors' "state" attribute, which isn't cut
+                               at 255 characters like the state itself */
 } ha_forecast_day_t;
 
 typedef struct {
