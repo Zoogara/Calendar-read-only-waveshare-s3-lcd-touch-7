@@ -1206,6 +1206,18 @@ Fixed in `components/provisioning/wifi_sta.c` and `main/main.c`:
   disconnect handler then re-scans and rejoins, possibly on a different
   node. This path has been built but hasn't yet been exercised by a real
   outage.
+- **Measure the link, and move off a node that isn't working**
+  (2026-10-06). The strongest node turned out to be the bad one more often
+  than not - at full signal, while local traffic crawled at 300-2000ms a
+  ping, or failed to connect at all. Before each sync,
+  `wifi_sta_check_link()` sends five pings to the gateway; if 2 or more are
+  lost or the average is over 150ms, it avoids that node for an hour, scans
+  for the SSID and pins the connection to the strongest remaining node.
+  With no other node it stays put. The pin is released after 3 failed
+  reconnects in a row (or by the forced reconnect above), so a pinned node
+  that disappears can't strand the device. Tested on hardware by forcing a
+  switch: the scan found 6 nodes, and it moved to the next strongest and
+  reconnected in about 3 seconds.
 
 #### Display tearing during calendar syncs (fixed)
 
