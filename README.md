@@ -15,7 +15,7 @@ revisions or IDF versions, and the history of the bugs found and fixed
 along the way are all collected at the end, under **Known issues and
 history**.
 
-> **This is the `with-weather` branch.** It adds to the ambient clock the
+> **This is the `with-HA-weather` branch.** It adds to the ambient clock the
 > date, the current temperature and a weather icon - tap the weather for
 > current conditions and a 7-day forecast, tap the date for "on this day"
 > history from Wikipedia. The weather comes from a Home Assistant server
@@ -131,10 +131,10 @@ components/
   light_sensor/           reads a BH1750 ambient light sensor over I2C
                            (see "Backlight auto-dimming" below); drives
                            the physical backlight brightness
-  onthisday/               (with-weather branch) fetches today's "on this
+  onthisday/               (with-HA-weather branch) fetches today's "on this
                            day" history from Wikipedia for the clock (see
                            "On this day" below)
-  ha_weather/              (with-weather branch) reads temperature,
+  ha_weather/              (with-HA-weather branch) reads temperature,
                            condition and sun state, plus the weather
                            details panel's readings and 7-day forecast,
                            from Home Assistant's REST API (see "Home
