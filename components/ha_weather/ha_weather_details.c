@@ -207,8 +207,8 @@ static esp_err_t fetch(const app_settings_t *cfg, ha_weather_details_t *out)
     cJSON_free(body);
 
     if (err != ESP_OK || status != 200) {
-        ESP_LOGW(TAG, "details: %s, HTTP %d%s %.120s", esp_err_to_name(err), status,
-                 status == 401 ? " (token rejected)" : "", resp.data);
+        ESP_LOGW(TAG, "details: %s, HTTP %d%s (%s) %.120s", esp_err_to_name(err), status,
+                 status == 401 ? " (token rejected)" : "", url, resp.data);
         free(resp.data);
         return err != ESP_OK ? err : ESP_FAIL;
     }
