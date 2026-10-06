@@ -4,8 +4,13 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
+#include "esp_mac.h"
+#include "esp_heap_caps.h"
+#include "ping/ping_sock.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "wifi_sta";
 
@@ -17,11 +22,35 @@ static EventGroupHandle_t s_events;
 static int s_retry_count;
 static bool s_wifi_started;
 
+/* Pinned to one mesh node by wifi_sta_check_link() (see below): reconnects
+ * go to that BSSID only. Released after UNPIN_AFTER_FAILS failed reconnects
+ * in a row, so a pinned node that disappears can't strand the device. */
+static bool s_pinned;
+#define UNPIN_AFTER_FAILS 3
+
+static void unpin(void)
+{
+    if (!s_pinned) {
+        return;
+    }
+    wifi_config_t c;
+    if (esp_wifi_get_config(WIFI_IF_STA, &c) == ESP_OK) {
+        c.sta.bssid_set = false;
+        esp_wifi_set_config(WIFI_IF_STA, &c);
+    }
+    s_pinned = false;
+    ESP_LOGI(TAG, "no longer pinned to a mesh node");
+}
+
 static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        xEventGroupClearBits(s_events, WIFI_CONNECTED_BIT);
+        if (s_pinned && s_retry_count + 1 >= UNPIN_AFTER_FAILS) {
+            unpin();   /* the pinned node isn't coming back - any node will do */
+        }
         /* Keep retrying forever - this is a 24/7 wall display, not a
          * one-shot connect. We still raise WIFI_FAIL_BIT once after
          * MAX_RETRY *consecutive* attempts purely so wifi_sta_connect()'s
@@ -138,5 +167,209 @@ void wifi_sta_force_reconnect(void)
      * wifi_sta_connect()) and joins the strongest node, which may well be
      * a different one from the node that stopped passing traffic. */
     ESP_LOGW(TAG, "forcing Wi-Fi reconnect");
+    unpin();   /* a fresh choice of node */
     esp_wifi_disconnect();
+}
+
+/* ---------- link quality: find a mesh node that actually works ----------
+ *
+ * The station joins the strongest node for the SSID, but on this mesh the
+ * strongest node has repeatedly been the worst one: associated, full
+ * signal, yet carrying local traffic at 300-2000ms a ping, or not at all -
+ * Home Assistant requests timing out while internet requests (with longer
+ * timeouts) limped through. Nothing at the Wi-Fi layer notices. So the
+ * link is measured directly: pings to the gateway. A node that fails is
+ * avoided for AVOID_US, and the device pins itself to the strongest other
+ * node with the SSID. */
+
+#define PING_COUNT        5
+#define BAD_AVG_MS        150
+#define BAD_LOST          2          /* this many of PING_COUNT lost = bad */
+#define AVOID_US          (60LL * 60 * 1000000)
+#define AVOID_SLOTS       4
+#define REJOIN_WAIT_MS    20000
+
+typedef struct {
+    uint8_t bssid[6];
+    int64_t until_us;
+} avoid_t;
+static avoid_t s_avoid[AVOID_SLOTS];
+
+typedef struct {
+    SemaphoreHandle_t done;
+    uint32_t replies;
+    uint32_t total_ms;
+} ping_result_t;
+
+static void on_ping_success(esp_ping_handle_t hdl, void *args)
+{
+    ping_result_t *r = args;
+    uint32_t gap = 0;
+    esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &gap, sizeof(gap));
+    r->replies++;
+    r->total_ms += gap;
+}
+
+static void on_ping_end(esp_ping_handle_t hdl, void *args)
+{
+    (void)hdl;
+    xSemaphoreGive(((ping_result_t *)args)->done);
+}
+
+/* Pings the gateway, filling in the average round trip and how many
+ * pings were lost. False if it couldn't run at all. */
+static bool ping_gateway(uint32_t *avg_ms, uint32_t *lost)
+{
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip;
+    if (netif == NULL || esp_netif_get_ip_info(netif, &ip) != ESP_OK || ip.gw.addr == 0) {
+        return false;
+    }
+    ping_result_t r = { .done = xSemaphoreCreateBinary() };
+    if (r.done == NULL) {
+        return false;
+    }
+    esp_ping_config_t pc = ESP_PING_DEFAULT_CONFIG();
+    pc.count = PING_COUNT;
+    pc.interval_ms = 200;
+    pc.timeout_ms = 1000;
+    pc.data_size = 32;
+    pc.target_addr.type = IPADDR_TYPE_V4;
+    pc.target_addr.u_addr.ip4.addr = ip.gw.addr;
+    esp_ping_callbacks_t cbs = {
+        .cb_args = &r,
+        .on_ping_success = on_ping_success,
+        .on_ping_end = on_ping_end,
+    };
+    esp_ping_handle_t ping;
+    if (esp_ping_new_session(&pc, &cbs, &ping) != ESP_OK) {
+        vSemaphoreDelete(r.done);
+        return false;
+    }
+    esp_ping_start(ping);
+    xSemaphoreTake(r.done, pdMS_TO_TICKS(PING_COUNT * 1500 + 2000));
+    esp_ping_stop(ping);
+    esp_ping_delete_session(ping);
+    vSemaphoreDelete(r.done);
+    *lost = PING_COUNT - r.replies;
+    *avg_ms = r.replies ? r.total_ms / r.replies : 0;
+    return true;
+}
+
+static bool avoided(const uint8_t *bssid, int64_t now)
+{
+    for (int i = 0; i < AVOID_SLOTS; i++) {
+        if (s_avoid[i].until_us > now && memcmp(s_avoid[i].bssid, bssid, 6) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void avoid(const uint8_t *bssid, int64_t now)
+{
+    int slot = 0;
+    for (int i = 0; i < AVOID_SLOTS; i++) {
+        if (s_avoid[i].until_us <= now || memcmp(s_avoid[i].bssid, bssid, 6) == 0) {
+            slot = i;
+            break;
+        }
+        if (s_avoid[i].until_us < s_avoid[slot].until_us) {
+            slot = i;   /* else reuse the one expiring soonest */
+        }
+    }
+    memcpy(s_avoid[slot].bssid, bssid, 6);
+    s_avoid[slot].until_us = now + AVOID_US;
+}
+
+/* Scans for the SSID and pins to the strongest node that isn't avoided.
+ * True if it switched. */
+static bool switch_node(void)
+{
+    wifi_config_t c;
+    if (esp_wifi_get_config(WIFI_IF_STA, &c) != ESP_OK) {
+        return false;
+    }
+    wifi_scan_config_t sc = { .ssid = c.sta.ssid, .show_hidden = false };
+    if (esp_wifi_scan_start(&sc, true) != ESP_OK) {
+        ESP_LOGW(TAG, "scan failed");
+        return false;
+    }
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    if (n == 0) {
+        return false;
+    }
+    if (n > 16) {
+        n = 16;
+    }
+    wifi_ap_record_t *aps = heap_caps_malloc(n * sizeof(*aps), MALLOC_CAP_SPIRAM);
+    if (aps == NULL) {
+        esp_wifi_clear_ap_list();
+        return false;
+    }
+    esp_wifi_scan_get_ap_records(&n, aps);
+    int64_t now = esp_timer_get_time();
+    int best = -1;
+    for (int i = 0; i < n; i++) {
+        bool bad = avoided(aps[i].bssid, now);
+        ESP_LOGI(TAG, "  node " MACSTR " ch %d rssi %d%s", MAC2STR(aps[i].bssid),
+                 aps[i].primary, aps[i].rssi, bad ? " (avoided)" : "");
+        if (!bad && (best < 0 || aps[i].rssi > aps[best].rssi)) {
+            best = i;
+        }
+    }
+    bool switched = false;
+    if (best >= 0) {
+        ESP_LOGW(TAG, "switching to node " MACSTR " (rssi %d)", MAC2STR(aps[best].bssid), aps[best].rssi);
+        memcpy(c.sta.bssid, aps[best].bssid, 6);
+        c.sta.bssid_set = true;
+        esp_wifi_set_config(WIFI_IF_STA, &c);
+        s_pinned = true;
+        s_retry_count = 0;
+        esp_wifi_disconnect();   /* event_handler reconnects - to that node now */
+        switched = true;
+    } else {
+        ESP_LOGW(TAG, "no other node for the SSID - staying put");
+    }
+    free(aps);
+    return switched;
+}
+
+bool wifi_sta_check_link(void)
+{
+    if (!s_wifi_started || !(xEventGroupGetBits(s_events) & WIFI_CONNECTED_BIT)) {
+        return true;   /* not connected - the normal reconnect logic handles that */
+    }
+    uint32_t avg, lost;
+    if (!ping_gateway(&avg, &lost)) {
+        return true;
+    }
+    wifi_ap_record_t ap;
+    bool have_ap = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+    bool bad = lost >= BAD_LOST || avg > BAD_AVG_MS;
+    ESP_LOGI(TAG, "link check: node " MACSTR " rssi %d - %lu/%d replies, avg %lu ms%s",
+             MAC2STR(have_ap ? ap.bssid : (uint8_t[6]){0}), have_ap ? ap.rssi : 0,
+             (unsigned long)(PING_COUNT - lost), PING_COUNT, (unsigned long)avg, bad ? " - POOR" : "");
+    if (!bad || !have_ap) {
+        return true;
+    }
+
+    avoid(ap.bssid, esp_timer_get_time());
+    if (!switch_node()) {
+        return false;
+    }
+    /* Wait for the new association before the caller carries on (it's
+     * about to sync), then measure the new node once for the log. */
+    EventBits_t bits = xEventGroupWaitBits(s_events, WIFI_CONNECTED_BIT, pdFALSE, pdFALSE,
+                                           pdMS_TO_TICKS(REJOIN_WAIT_MS));
+    if (!(bits & WIFI_CONNECTED_BIT)) {
+        ESP_LOGW(TAG, "not reconnected after %d s", REJOIN_WAIT_MS / 1000);
+        return false;
+    }
+    if (ping_gateway(&avg, &lost)) {
+        ESP_LOGI(TAG, "new node: %lu/%d replies, avg %lu ms", (unsigned long)(PING_COUNT - lost),
+                 PING_COUNT, (unsigned long)avg);
+    }
+    return true;
 }

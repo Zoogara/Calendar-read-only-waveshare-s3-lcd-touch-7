@@ -3,6 +3,7 @@
  * loaded into an app_settings_t (via provisioning_load). Separate from
  * provisioning.h because this runs every boot, not just first boot. */
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
 #include "app_settings.h"
@@ -23,6 +24,14 @@ esp_err_t wifi_sta_connect(const app_settings_t *cfg, uint32_t timeout_ms);
  * existing disconnect handler. No-op if wifi_sta_connect() hasn't brought
  * the driver up yet. */
 void wifi_sta_force_reconnect(void);
+
+/* Measures the link with a few pings to the gateway (~1s). If it's poor -
+ * replies lost or slow, as one node of this mesh does while still
+ * associated - avoids that node for an hour and switches to the strongest
+ * other node for the SSID, waiting for the new connection before
+ * returning. Returns false if the link is poor and couldn't be improved.
+ * Call from the background network task, e.g. before each sync. */
+bool wifi_sta_check_link(void);
 
 #ifdef __cplusplus
 }
