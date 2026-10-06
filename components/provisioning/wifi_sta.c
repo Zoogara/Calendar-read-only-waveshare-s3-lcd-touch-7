@@ -327,6 +327,12 @@ static bool switch_node(void)
         esp_wifi_set_config(WIFI_IF_STA, &c);
         s_pinned = true;
         s_retry_count = 0;
+        /* Clear it here, not just in event_handler: esp_wifi_disconnect()
+         * returns before the disconnect event arrives, so the caller's wait
+         * for the new connection would otherwise see the old one's bit and
+         * return at once - seen on hardware, the sync then ran mid-switch
+         * and failed. */
+        xEventGroupClearBits(s_events, WIFI_CONNECTED_BIT);
         esp_wifi_disconnect();   /* event_handler reconnects - to that node now */
         switched = true;
     } else {
