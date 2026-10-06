@@ -218,6 +218,22 @@ static esp_err_t root_get_handler(httpd_req_t *req)
 
     /* Own chunks, like the calendar rows - other[] below is close to full. */
     httpd_resp_sendstr_chunk(req,
+        "<h2>Weather</h2>"
+        "<div class='hint'>Shows the weather on the ambient clock - tap it there for "
+        "current conditions and a 7-day forecast. From Open-Meteo (open-meteo.com), "
+        "free and with no account. Decimal degrees: south and west are negative, e.g. "
+        "-36.05 and 146.46. Find yours by long-pressing a spot in Google Maps. Leave "
+        "the latitude blank to turn weather off.</div>"
+        "<label>Latitude</label>"
+        "<input type='text' name='weather_lat' inputmode='decimal' placeholder='e.g. -36.05' value='");
+    send_value_chunk(req, s_cfg->weather_lat);
+    httpd_resp_sendstr_chunk(req,
+        "'><label>Longitude</label>"
+        "<input type='text' name='weather_lon' inputmode='decimal' placeholder='e.g. 146.46' value='");
+    send_value_chunk(req, s_cfg->weather_lon);
+    httpd_resp_sendstr_chunk(req, "'>");
+
+    httpd_resp_sendstr_chunk(req,
         "<h2>Screen lock</h2>"
         "<div class='hint'>A 4-digit PIN needed to get from the clock back to the "
         "calendar. Lock with the padlock icon in the top bar, or automatically "
@@ -427,6 +443,27 @@ static esp_err_t save_post_handler(httpd_req_t *req)
         long v = strtol(num, NULL, 10);
         if (v >= 10 && v <= 2000) {
             s_cfg->brightness_max_lux = (uint16_t)v;
+        }
+    }
+
+    /* Weather location: a valid number in range, or blank (weather off). */
+    char coord[16];
+    if (form_get(body, "weather_lat", coord, sizeof(coord))) {
+        char *end;
+        double v = strtod(coord, &end);
+        if (coord[0] == '\0') {
+            s_cfg->weather_lat[0] = '\0';
+        } else if (end != coord && *end == '\0' && v >= -90 && v <= 90) {
+            snprintf(s_cfg->weather_lat, sizeof(s_cfg->weather_lat), "%s", coord);
+        }
+    }
+    if (form_get(body, "weather_lon", coord, sizeof(coord))) {
+        char *end;
+        double v = strtod(coord, &end);
+        if (coord[0] == '\0') {
+            s_cfg->weather_lon[0] = '\0';
+        } else if (end != coord && *end == '\0' && v >= -180 && v <= 180) {
+            snprintf(s_cfg->weather_lon, sizeof(s_cfg->weather_lon), "%s", coord);
         }
     }
 

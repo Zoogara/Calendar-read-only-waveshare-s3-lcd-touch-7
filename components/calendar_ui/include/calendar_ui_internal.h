@@ -31,6 +31,8 @@ typedef enum {
  * needed at any call site. */
 extern const lv_font_t gcal_font_14;
 extern const lv_font_t gcal_font_20;
+extern const lv_font_t gcal_font_weather;
+extern const lv_font_t gcal_font_weather_48;
 
 /* Digits + colon only, at a size meant to be read from across a room -
  * see gcal_font_clock.c's header comment. Used only by ui_clock.c. */
@@ -119,6 +121,18 @@ void ui_screensaver_unlock(void);
 /* The keypad was dismissed with its close key: the tap that did it mustn't
  * also count as a new touch on the clock, which would reopen the keypad. */
 void ui_screensaver_keypad_dismissed(void);
+
+/* Home Assistant condition (e.g. "mostly_sunny") -> Weather Icons glyph in
+ * gcal_font_weather / gcal_font_weather_48, day or night; "" if unknown.
+ * The table lives in ui_clock.c. */
+const char *ui_weather_glyph(const char *cond, bool night);
+
+/* Weather details panel (ui_weather.c), opened by tapping the weather on
+ * the ambient clock; closed by a tap or by ui_screensaver.c after a
+ * minute. */
+void ui_weather_open(void);
+void ui_weather_close(void);
+bool ui_weather_is_open(void);
 
 /* The PIN keypad (ui_lock.c), opened and closed by ui_screensaver.c. */
 void ui_lock_keypad_open(void);

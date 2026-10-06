@@ -165,6 +165,13 @@ typedef struct {
     char lock_pin[5];
     uint16_t lock_after_min;
 
+    /* Weather on the ambient clock, from Open-Meteo (see components/weather).
+     * Decimal degrees as text, e.g. "-36.05" / "146.46" - south and west are
+     * negative. A blank latitude turns weather off: no requests, nothing
+     * shown. Set on the config web page. */
+    char weather_lat[16];
+    char weather_lon[16];
+
     bool valid; /* true once loaded/saved successfully at least once */
 } app_settings_t;
 

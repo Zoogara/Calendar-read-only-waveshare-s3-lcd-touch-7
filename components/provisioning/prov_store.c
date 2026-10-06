@@ -34,6 +34,8 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddNumberToObject(root, "brightness_max_lux", cfg->brightness_max_lux);
     cJSON_AddStringToObject(root, "lock_pin", cfg->lock_pin);
     cJSON_AddNumberToObject(root, "lock_after_min", cfg->lock_after_min);
+    cJSON_AddStringToObject(root, "weather_lat", cfg->weather_lat);
+    cJSON_AddStringToObject(root, "weather_lon", cfg->weather_lon);
 
     cJSON *cals = cJSON_AddArrayToObject(root, "calendars");
     for (int i = 0; i < cfg->calendar_count; i++) {
@@ -67,6 +69,8 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
     COPY_STR(posix_tz, "posix_tz");
     COPY_STR(ota_url, "ota_url");
     COPY_STR(config_web_password, "config_web_password");
+    COPY_STR(weather_lat, "weather_lat");
+    COPY_STR(weather_lon, "weather_lon");
 #undef COPY_STR
 
     j = cJSON_GetObjectItemCaseSensitive(root, "refresh_interval_s");
