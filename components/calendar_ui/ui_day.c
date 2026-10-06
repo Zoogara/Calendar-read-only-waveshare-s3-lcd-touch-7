@@ -28,7 +28,7 @@ static lv_obj_t *s_body;                /* the vertically-scrollable hour grid *
  * on the configured start hour. Keeps "on now" and "just finished" both
  * visible without a manual scroll. Any other day opens at the top of its
  * grid - the start of the day - since "now" means nothing there. Mirrors
- * ui_week.c's align_grid_to_now(). */
+ * ui_week.c's align_grid(). */
 #define GRID_LOOKBACK_H 3
 
 static int col_w(void)

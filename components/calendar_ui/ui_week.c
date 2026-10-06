@@ -8,7 +8,14 @@
 #define WEEK_DAYS     7
 #define ROW_H         40
 #define TIME_COL_W    40
-#define HEADER_H      56
+/* Day header: the date line (gcal_font_14, 18px line) at the very top, then
+ * up to ALLDAY_MAX all-day chips (ALLDAY_CHIP_H, 1px apart) - 64 = 18 + 3x14
+ * + 2 + a pixel to spare above the header's bottom border. Was 56 with two
+ * chips, and a third all-day event was silently dropped. */
+#define HEADER_H      64
+#define ALLDAY_TOP    18
+#define ALLDAY_CHIP_H 14
+#define ALLDAY_MAX    3
 #define MAX_DAY_EVENTS 24
 
 /* Hour range shown in the timed-event grid - see the matching comment in
@@ -25,11 +32,13 @@ static lv_obj_t *s_day_col[WEEK_DAYS];
 static lv_obj_t *s_body;                /* the vertically-scrollable hour grid */
 static time_t s_week_start;
 
-/* On entering week view (or navigating / re-syncing while in it) the hour
- * grid is scrolled so that GRID_LOOKBACK_H hours before the current time
- * sits at the top of the viewport, rather than always landing on the
- * configured start hour. Keeps "on now" and "just finished" both visible
- * without a manual scroll. Mirrors ui_day.c's align_grid_to_now(). */
+/* On entering week view (or navigating / re-syncing while in it) on the
+ * week containing TODAY, the hour grid is scrolled so that GRID_LOOKBACK_H
+ * hours before the current time sits at the top of the viewport, rather
+ * than always landing on the configured start hour. Keeps "on now" and
+ * "just finished" both visible without a manual scroll. Any other week
+ * opens at the top of its grid - the start of the day. Mirrors ui_day.c's
+ * align_grid(). */
 #define GRID_LOOKBACK_H 3
 
 static int day_col_w(void)
@@ -130,13 +139,13 @@ lv_obj_t *ui_week_create(lv_obj_t *parent)
 
         lv_obj_t *date_lbl = lv_label_create(cell);
         lv_obj_set_style_text_font(date_lbl, &gcal_font_14, 0);
-        lv_obj_set_pos(date_lbl, 4, 2);
+        lv_obj_set_pos(date_lbl, 4, 0);
         s_day_date_label[d] = date_lbl;
 
         lv_obj_t *allday = lv_obj_create(cell);
         lv_obj_remove_style_all(allday);
-        lv_obj_set_pos(allday, 2, 22);
-        lv_obj_set_size(allday, colw - 4, HEADER_H - 24);
+        lv_obj_set_pos(allday, 2, ALLDAY_TOP);
+        lv_obj_set_size(allday, colw - 4, HEADER_H - ALLDAY_TOP - 1);
         lv_obj_clear_flag(allday, LV_OBJ_FLAG_SCROLLABLE);
         /* lv_obj_create() defaults to CLICKABLE=true - this box (and the
          * per-event chips populated into it below) sits on top of most of
@@ -344,9 +353,13 @@ void ui_week_release(void)
 /* See GRID_LOOKBACK_H's comment. Clamped to the grid's real scroll range,
  * so early morning it just pins to the top and late at night to the
  * bottom. body's height is the fixed value ui_week_create() set it to. */
-static void align_grid_to_now(void)
+static void align_grid(bool this_week)
 {
     if (s_body == NULL) {
+        return;
+    }
+    if (!this_week) {
+        lv_obj_scroll_to_y(s_body, 0, LV_ANIM_OFF);   /* start of the day */
         return;
     }
     time_t now;
@@ -413,6 +426,14 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
         }
         assign_columns(timed_start_h, timed_end_h, tn, timed_col, timed_ncols);
 
+        /* How many all-day chips this day has, so that when they don't all
+         * fit the last one shown says how many more there are. */
+        int allday_total = 0;
+        for (int e = 0; e < n; e++) {
+            if (events[e].all_day && ui_calendar_enabled(events[e].calendar_index)) {
+                allday_total++;
+            }
+        }
         int allday_shown = 0;
         bool has_before = false, has_after = false;
         int ti = 0;
@@ -421,9 +442,10 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
                 continue;
             }
             if (events[e].all_day) {
-                if (allday_shown >= 2) {
+                if (allday_shown >= ALLDAY_MAX) {
                     continue;
                 }
+                bool more_chip = (allday_shown == ALLDAY_MAX - 1 && allday_total > ALLDAY_MAX);
                 /* Past if either this whole event has ended, or - for a
                  * multi-day event still in progress - this day column is
                  * before today, same reasoning as ui_month.c's populate. */
@@ -431,7 +453,7 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
                 lv_obj_t *chip = lv_obj_create(s_day_allday_box[d]);
                 lv_obj_remove_style_all(chip);
                 lv_obj_set_width(chip, LV_PCT(100));
-                lv_obj_set_height(chip, 14);
+                lv_obj_set_height(chip, ALLDAY_CHIP_H);
                 lv_obj_add_style(chip, &s_bar_style, 0);
                 lv_obj_set_style_bg_color(chip, ui_color(is_past ? ui_lighten(events[e].color) : events[e].color), 0);
                 lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
@@ -440,7 +462,13 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
                 lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
                 lv_obj_set_width(lbl, LV_PCT(100));
                 lv_obj_add_style(lbl, is_past ? &s_lbl_past_style : &s_lbl_style, 0);
-                lv_label_set_text(lbl, events[e].summary);
+                if (more_chip) {
+                    /* The rest don't fit - say so rather than dropping them. */
+                    lv_label_set_text_fmt(lbl, "+%d more", allday_total - allday_shown);
+                    lv_obj_set_style_bg_color(chip, ui_color(UI_COLOR_TEXT_MUTED), 0);
+                } else {
+                    lv_label_set_text(lbl, events[e].summary);
+                }
                 allday_shown++;
             } else {
                 add_block(s_day_col[d], colw, &events[e], day, now, &has_before, &has_after,
@@ -457,7 +485,8 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
         }
     }
 
-    align_grid_to_now();
+    /* This week = the week containing today. */
+    align_grid(today >= s_week_start && today < ui_add_days(s_week_start, WEEK_DAYS));
 }
 
 void ui_week_title(time_t cursor, char *out, size_t out_sz)
