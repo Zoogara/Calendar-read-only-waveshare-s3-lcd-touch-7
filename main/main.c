@@ -248,6 +248,10 @@ static void net_task(void *arg)
          * does NOT rebuild the hidden calendar view (see its own comment
          * for the internal-RAM reason); touch-wake renders it fresh from
          * event_store instead. */
+        /* Make sure the mesh node we're on is actually passing traffic -
+         * see wifi_sta_check_link(). Moves to another node if not. */
+        wifi_sta_check_link();
+
         bool all_ok = false;
         /* Cache window is user-configurable (config_web.c - see
          * app_settings.h's fetch_past_days/fetch_future_days comment
