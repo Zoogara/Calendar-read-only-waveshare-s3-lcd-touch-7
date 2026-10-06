@@ -367,6 +367,10 @@ bool wifi_sta_check_link(void)
         ESP_LOGW(TAG, "not reconnected after %d s", REJOIN_WAIT_MS / 1000);
         return false;
     }
+    /* Give the new association a moment (ARP and the like) before measuring
+     * it - straight after reconnecting, most pings go unanswered on any
+     * node (seen on hardware: 1/5 on a good one). */
+    vTaskDelay(pdMS_TO_TICKS(2000));
     if (ping_gateway(&avg, &lost)) {
         ESP_LOGI(TAG, "new node: %lu/%d replies, avg %lu ms", (unsigned long)(PING_COUNT - lost),
                  PING_COUNT, (unsigned long)avg);
