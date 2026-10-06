@@ -155,9 +155,16 @@ const char *ui_weather_glyph(const char *cond, bool night)
 #define DATE_X 24
 static lv_coord_t s_date_y = WEATHER_Y;
 
-/* Tap the weather for the details panel (ui_weather.c). On PRESSED, not
- * CLICKED: the panel is open before ui_screensaver.c's next tick can see
- * the touch and wake the calendar (or open the PIN keypad). */
+/* Tap the date for "on this day in history" (ui_history.c), the weather for
+ * the details panel (ui_weather.c). On PRESSED, not CLICKED: the list or
+ * panel is open before ui_screensaver.c's next tick can see the touch and
+ * wake the calendar (or open the PIN keypad). */
+static void date_pressed_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_history_open();
+}
+
 static void weather_pressed_cb(lv_event_t *e)
 {
     (void)e;
@@ -261,6 +268,9 @@ lv_obj_t *ui_clock_create(lv_obj_t *parent)
     s_date_label = lv_label_create(s_cont);
     lv_obj_set_style_text_font(s_date_label, &gcal_font_20, 0);
     lv_label_set_text(s_date_label, "");
+    lv_obj_add_flag(s_date_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(s_date_label, 24);
+    lv_obj_add_event_cb(s_date_label, date_pressed_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_align(s_date_label, LV_ALIGN_TOP_LEFT, DATE_X, s_date_y);
 
     s_weather_icon = lv_label_create(s_weather_row);
