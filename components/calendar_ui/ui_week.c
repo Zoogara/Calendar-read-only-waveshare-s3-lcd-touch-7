@@ -9,13 +9,14 @@
 #define ROW_H         40
 #define TIME_COL_W    40
 /* Day header: the date line (gcal_font_14, 18px line) at the very top, then
- * up to ALLDAY_MAX all-day chips (ALLDAY_CHIP_H, 1px apart) - 64 = 18 + 3x14
- * + 2 + a pixel to spare above the header's bottom border. Was 56 with two
- * chips, and a third all-day event was silently dropped. */
+ * up to ALLDAY_MAX all-day chips (ALLDAY_CHIP_H, 1px apart) - 64 = 18 + 2x22
+ * + 1 + a pixel to spare above the header's bottom border. Chips are tall
+ * enough for the font's full line; a third event turns the second chip into
+ * a "+N more" marker rather than squeezing in a third, clipped chip. */
 #define HEADER_H      64
 #define ALLDAY_TOP    18
-#define ALLDAY_CHIP_H 14
-#define ALLDAY_MAX    3
+#define ALLDAY_CHIP_H 22
+#define ALLDAY_MAX    2
 #define MAX_DAY_EVENTS 24
 
 /* Hour range shown in the timed-event grid - see the matching comment in
@@ -461,7 +462,9 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
                 lv_obj_t *lbl = lv_label_create(chip);
                 lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
                 lv_obj_set_width(lbl, LV_PCT(100));
+                lv_obj_set_style_pad_left(lbl, 2, 0);
                 lv_obj_add_style(lbl, is_past ? &s_lbl_past_style : &s_lbl_style, 0);
+                lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
                 if (more_chip) {
                     /* The rest don't fit - say so rather than dropping them. */
                     lv_label_set_text_fmt(lbl, "+%d more", allday_total - allday_shown);
