@@ -293,6 +293,9 @@ void ui_month_populate(lv_obj_t *root, time_t cursor)
             lv_obj_set_width(lbl, LV_PCT(100));
             lv_obj_add_style(lbl, is_past ? &s_lbl_past_style : &s_lbl_style, 0);
             lv_label_set_text(lbl, events[e].summary);
+            /* The 18px font line sits in a 16px chip - nudge it up a pixel so
+             * the glyph bottoms (descenders) aren't clipped. */
+            lv_obj_set_y(lbl, -1);
             shown++;
         }
         if (hidden > 0) {
