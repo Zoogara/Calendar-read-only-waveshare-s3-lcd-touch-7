@@ -291,6 +291,11 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "+p+'extended_text_0, '+p+'extended_text_1'"
         ":'No prefix - the forecast is left out.';}"
         "f.addEventListener('input',u);u();})();</script>");
+    httpd_resp_sendstr_chunk(req,
+        "<label>Location name (optional)</label>"
+        "<input type='text' name='weather_place' placeholder='e.g. Rutherglen' value='");
+    send_value_chunk(req, s_cfg->weather_place);
+    httpd_resp_sendstr_chunk(req, "'><div class='hint'>Shown in the weather panel's heading.</div>");
     /* Own chunks, like the calendar rows - other[] below is close to full. */
     httpd_resp_sendstr_chunk(req,
         "<h2>Screen lock</h2>"
@@ -516,6 +521,7 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     form_get(body, "ha_rain_entity", s_cfg->ha_rain_entity, sizeof(s_cfg->ha_rain_entity));
     form_get(body, "ha_pressure_entity", s_cfg->ha_pressure_entity, sizeof(s_cfg->ha_pressure_entity));
     form_get(body, "ha_bom_prefix", s_cfg->ha_bom_prefix, sizeof(s_cfg->ha_bom_prefix));
+    form_get(body, "weather_place", s_cfg->weather_place, sizeof(s_cfg->weather_place));
     char sel[4];
     if (form_get(body, "ha_temp_select", sel, sizeof(sel))) {
         s_cfg->ha_temp_select = (strcmp(sel, "1") == 0) ? 1 : 0;
