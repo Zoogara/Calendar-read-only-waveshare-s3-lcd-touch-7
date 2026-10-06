@@ -45,6 +45,7 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddStringToObject(root, "ha_rain_entity", cfg->ha_rain_entity);
     cJSON_AddStringToObject(root, "ha_pressure_entity", cfg->ha_pressure_entity);
     cJSON_AddStringToObject(root, "ha_bom_prefix", cfg->ha_bom_prefix);
+    cJSON_AddStringToObject(root, "weather_place", cfg->weather_place);
     cJSON_AddStringToObject(root, "lock_pin", cfg->lock_pin);
     cJSON_AddNumberToObject(root, "lock_after_min", cfg->lock_after_min);
 
@@ -155,6 +156,7 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
     COPY_OR_DEFAULT(ha_rain_entity, "ha_rain_entity", APP_SETTINGS_DEFAULT_HA_RAIN_ENTITY)
     COPY_OR_DEFAULT(ha_pressure_entity, "ha_pressure_entity", APP_SETTINGS_DEFAULT_HA_PRESSURE_ENTITY)
     COPY_OR_DEFAULT(ha_bom_prefix, "ha_bom_prefix", APP_SETTINGS_DEFAULT_HA_BOM_PREFIX)
+    COPY_OR_DEFAULT(weather_place, "weather_place", APP_SETTINGS_DEFAULT_WEATHER_PLACE)
 #undef COPY_OR_DEFAULT
 
     j = cJSON_GetObjectItemCaseSensitive(root, "ha_temp_select");

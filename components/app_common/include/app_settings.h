@@ -188,6 +188,9 @@ typedef struct {
     char ha_rain_entity[64];
     char ha_pressure_entity[64];
     char ha_bom_prefix[48];
+    /* Shown in the weather panel's heading ("Weather for <place> - <date>").
+     * Optional; same field as on main. */
+    char weather_place[40];
     /* Screen lock (see calendar_ui/ui_lock.c). lock_pin is exactly 4 digits,
      * or empty for no lock at all - no lock icon, no auto-lock, never
      * locked. Set on the config web page only. Stored in plain text in NVS
@@ -218,6 +221,7 @@ typedef struct {
 #define APP_SETTINGS_DEFAULT_HA_RAIN_ENTITY     "sensor.rain_accumulation"
 #define APP_SETTINGS_DEFAULT_HA_PRESSURE_ENTITY "sensor.atmospheric_pressure_msl"
 #define APP_SETTINGS_DEFAULT_HA_BOM_PREFIX      "sensor.rutherglen_"
+#define APP_SETTINGS_DEFAULT_WEATHER_PLACE      "Rutherglen"
 #define APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX 150     /* ~typical lit-room lux for 100% */
 
 #ifdef __cplusplus

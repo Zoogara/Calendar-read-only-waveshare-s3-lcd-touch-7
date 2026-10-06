@@ -8,6 +8,7 @@
  * so its ~45 objects only cost internal RAM while it's showing. A tap closes
  * it (a drag scrolls); ui_screensaver.c closes it after a minute untouched.
  *
+ *   Weather for <place> - <date>   (a fixed heading; the rest scrolls)
  *   Now        16.0°C, feels like 14.4°C / wind / rain and pressure
  *   Today      [48px icon]  min / max, rain chance and amount, long forecast
  *   Tomorrow   [48px icon]  the same
@@ -241,10 +242,27 @@ void ui_weather_open(void)
     lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(s_overlay, tap_cb, LV_EVENT_CLICKED, NULL);
 
+    /* Fixed heading - outside the scrolling list below. */
+    time_t now_t = time(NULL);
+    struct tm today;
+    localtime_r(&now_t, &today);
+    char wday[12], month[12], heading[96];
+    strftime(wday, sizeof(wday), "%A", &today);
+    strftime(month, sizeof(month), "%B", &today);
+    const char *place = ui_get_cfg()->weather_place;
+    if (place[0] != '\0') {
+        snprintf(heading, sizeof(heading), "Weather for %s \xE2\x80\x93 %s, %d %s",
+                 place, wday, today.tm_mday, month);
+    } else {
+        snprintf(heading, sizeof(heading), "Weather \xE2\x80\x93 %s, %d %s", wday, today.tm_mday, month);
+    }
+    lv_obj_t *head = add_label(s_overlay, &gcal_font_20, HEAD_COLOR, heading);
+    lv_obj_align(head, LV_ALIGN_TOP_LEFT, 32, 20);
+
     lv_obj_t *list = lv_obj_create(s_overlay);
     lv_obj_remove_style_all(list);
-    lv_obj_set_size(list, LV_HOR_RES - 64, LV_VER_RES - 40);
-    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 32, 20);
+    lv_obj_set_size(list, LV_HOR_RES - 64, LV_VER_RES - 72);
+    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 32, 60);
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(list, 6, 0);
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
