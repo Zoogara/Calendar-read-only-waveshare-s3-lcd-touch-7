@@ -45,15 +45,27 @@ Left to right:
 - **Ambient clock** - after the *Screen timeout* without a touch, the
   calendar gives way to a large clock, each digit in one of your calendars'
   colours, dimmer at night (outside the *Week/day view* hours). The date
-  shows top left. A small **bell** bottom left means a reminder is waiting.
-  The clock and date shift a few pixels every 10 minutes to protect the
-  panel.
+  shows top left. With a location set (see *Config web page*), the
+  **weather** shows top right - an icon for the current conditions (a night
+  version after dark) and the temperature. A small **bell** bottom left
+  means a reminder is waiting. The clock, date and weather shift a few
+  pixels every 10 minutes to protect the panel.
+- **Tap the date** on the clock for *On this day* - notable events in
+  history for today's date, from Wikipedia: the year and headline of
+  each, with a sentence underneath. Drag to scroll.
+- **Tap the weather** on the clock for the details, headed with the place
+  and date: the temperature now and what it feels like, wind (direction,
+  speed, gusts), rain so far today and air pressure; Today and Tomorrow
+  with an icon, min / max, the chance and amount of rain and a short
+  summary; and a line each for the five days after.
+- Both close with a tap, or after a minute untouched, and go back to the
+  clock - not the calendar. They also work while the screen is locked.
 - **Screensaver** - if nobody's in front of it (with the optional presence
   sensor fitted; without one it always does this), it goes
   to a dark screensaver with the backlight off instead, and drops from the
   clock to the screensaver after 5 minutes with nobody there. Someone
   returning brings the clock back, never the calendar.
-- **Touch** anywhere to get back to the calendar. If it was away for 15
+- **Touch** anywhere else to get back to the calendar. If it was away for 15
   minutes or more, it comes back on today in Month view.
 - **Brightness** follows the room light automatically (with the optional
   light sensor fitted), fading smoothly rather than jumping.
@@ -114,6 +126,14 @@ device read your calendars (see the README's *Google Cloud setup*).
 - **Label** and **colour** - how it appears in the legend and on events.
 - **on** - shown when the device starts (the legend chips toggle it after).
 - **daily** - fetch only once a day, for calendars that rarely change.
+
+**Weather** - **Latitude** and **Longitude** of where you want the weather
+for, in decimal degrees (south and west are negative, e.g. `-36.05` and
+`146.46` - long-press a spot in Google Maps to see them), and an optional
+**Location name** for the weather panel's heading. Leave the latitude blank
+to turn the weather off. The weather comes from Open-Meteo, a free forecast
+service; it's a forecast model's estimate for that spot rather than a
+weather station's readings.
 
 **Screen lock** - **PIN** (exactly 4 digits; blank keeps the current one),
 **Remove the PIN** (turns the lock off), **Lock after** minutes without a
