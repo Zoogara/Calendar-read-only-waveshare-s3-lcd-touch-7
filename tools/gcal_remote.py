@@ -63,8 +63,31 @@ def cmd_ota(a):
         sys.exit("set GCAL_PASS to the config web page password")
     ip = local_ip(a.device)
 
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=os.path.dirname(build))
-    handler.log_message = lambda *args: None
+    done = threading.Event()
+    size = os.path.getsize(build)
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def copyfile(self, source, outputfile):
+            sent = 0
+            try:
+                while True:
+                    chunk = source.read(16384)
+                    if not chunk:
+                        break
+                    outputfile.write(chunk)
+                    sent += len(chunk)
+                    print(f"\r  sent {sent * 100 // size}%", end="", flush=True)
+            except (BrokenPipeError, ConnectionResetError):
+                print("\n  connection dropped - the device gave up or restarted")
+                return
+            if sent >= size:
+                print("\n  download complete")
+                done.set()
+
+    handler = functools.partial(Handler, directory=os.path.dirname(build))
     socketserver.TCPServer.allow_reuse_address = True
     srv = socketserver.ThreadingTCPServer(("0.0.0.0", a.serve_port), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -75,9 +98,12 @@ def cmd_ota(a):
     req.add_header("Authorization", "Basic " + base64.b64encode(f"x:{password}".encode()).decode())
     with urllib.request.urlopen(req, timeout=15) as r:
         print(r.status, r.read().decode().strip())
-    print(f"serving {fw_url} - waiting for the device to finish downloading (Ctrl-C to stop)")
+    print(f"serving {fw_url} - waiting for the device to download it (up to {a.wait}s, Ctrl-C to stop)")
     try:
-        threading.Event().wait(a.wait)
+        if done.wait(a.wait):
+            threading.Event().wait(5)    # let it finish writing and restart
+        else:
+            print("timed out waiting for the download")
     except KeyboardInterrupt:
         pass
 
@@ -93,7 +119,7 @@ o = sub.add_parser("ota")
 o.add_argument("--device", required=True, help="the display's IP or hostname")
 o.add_argument("--build", default="build/gcal_display.bin")
 o.add_argument("--serve-port", type=int, default=8070)
-o.add_argument("--wait", type=int, default=120, help="seconds to keep serving")
+o.add_argument("--wait", type=int, default=300, help="max seconds to keep serving")
 o.set_defaults(fn=cmd_ota)
 a = p.parse_args()
 a.fn(a)
