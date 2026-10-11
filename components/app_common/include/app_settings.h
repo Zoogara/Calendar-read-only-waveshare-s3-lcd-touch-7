@@ -180,6 +180,13 @@ typedef struct {
      * page. */
     char log_host[48];
 
+    /* Two news feeds shown from the bottom corners of the ambient clock (see
+     * components/rss_feed). label: a short name beside the icon; url: an RSS
+     * or Atom feed (http or https). A blank url hides that icon. Set on the
+     * config web page. */
+    char feed_label[2][14];
+    char feed_url[2][200];
+
     bool valid; /* true once loaded/saved successfully at least once */
 } app_settings_t;
 

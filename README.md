@@ -403,6 +403,34 @@ logging and `idf.py flash` over USB keep working exactly as before.
   then reverts to the previous image. The first build with rollback enabled
   has to be flashed over USB once (it changes the bootloader).
 
+## News feeds
+
+Two RSS 2.0 / Atom feeds, set by address on the config web page (*News feeds*:
+a short label and a URL each), opened from an RSS icon in the bottom-left and
+bottom-right corners of the ambient clock. `components/rss_feed` fetches them
+from `net_task` after the weather and "On this day" requests, one at a time,
+every ~20 minutes (a failed fetch is retried after 5); `calendar_ui/ui_feed.c`
+shows the list - heading and plain text per item, no images - as a scrolling
+overlay like the "On this day" list. A blank address hides that icon.
+
+- **Only https works for nearly every site** - all 15 well-known feeds tried
+  redirect `http://` to `https://`; the client follows redirects and verifies
+  the certificate with the built-in bundle, like the other HTTPS requests.
+- **Reader:** `rss_parse.c` is pure C (no ESP-IDF calls): finds `<item>` /
+  `<entry>`, takes `<title>` and `<description>` / `<summary>` / `<content>`,
+  unwraps CDATA, decodes entities, strips HTML (escaped or not), collapses
+  whitespace and cuts the text at 320 characters with an ellipsis. Tested on
+  the host against ABC, BBC, Guardian, SBS, NPR and NYT feeds. Reading stops
+  at 160 KB (a 430 KB feed costs time, not memory); 15 items per feed are
+  kept (~6.6 KB each, PSRAM).
+- **Fonts:** headings and text use gcal_font_20 / gcal_font_14, which cover
+  Latin-1, Latin Extended-A, Vietnamese and common punctuation; other
+  scripts and emoji show as blanks. The RSS glyph (U+F09E) is in
+  gcal_font_icon_clock.
+- **Cost:** no new task; the TLS handshake while fetching uses internal RAM
+  the same way "On this day" does. The reminder bell moves right of the
+  bottom-left icon when feed 1 is set.
+
 ## Weather
 
 Optional, and off until a location is set. On the runtime config page,
