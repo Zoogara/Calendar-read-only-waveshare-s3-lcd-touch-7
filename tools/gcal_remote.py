@@ -24,8 +24,20 @@ def cmd_logs(a):
     sock.bind(("0.0.0.0", a.port))
     out = open(a.file, "a") if a.file else None
     print(f"listening for device logs on UDP :{a.port}", file=sys.stderr)
+    # Port 9999 is also used by some smart-home gear, so other hosts' packets
+    # can land here. Lock onto the first sender whose packet looks like an
+    # ESP-IDF log line and ignore everyone else (or force it with --from).
+    device = a.sender
+    starts = (b"I (", b"W (", b"E (", b"D (", b"V (", b"\x1b[0;3", b"\x1b[1;3")
     while True:
-        data, _ = sock.recvfrom(4096)
+        data, (ip, _) = sock.recvfrom(4096)
+        if device is None:
+            if not data.startswith(starts):
+                continue
+            device = ip
+            print(f"locked onto {ip}", file=sys.stderr)
+        elif ip != device:
+            continue
         text = ANSI.sub("", data.decode(errors="replace"))
         sys.stdout.write(text)
         sys.stdout.flush()
@@ -75,6 +87,7 @@ sub = p.add_subparsers(dest="cmd", required=True)
 l = sub.add_parser("logs")
 l.add_argument("--port", type=int, default=9999)
 l.add_argument("--file")
+l.add_argument("--from", dest="sender", help="only accept packets from this IP (default: first sender that sends log lines)")
 l.set_defaults(fn=cmd_logs)
 o = sub.add_parser("ota")
 o.add_argument("--device", required=True, help="the display's IP or hostname")
