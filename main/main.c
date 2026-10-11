@@ -46,6 +46,8 @@
 #include "board_bsp.h"
 #include "sd_card.h"
 #include "presence_sensor.h"
+#include "remote_log.h"
+#include "ota_update.h"
 #include "calendar_ui.h"
 #include "gcal_client.h"
 #include "event_store.h"
@@ -394,6 +396,10 @@ void app_main(void)
      * anyway since it's a real (if apparently not dominant) risk it rules
      * out for free. */
     bool have_cfg = (provisioning_load(&s_cfg) == ESP_OK);
+    remote_log_start(s_cfg.log_host); /* no-op when blank */
+    /* After a wireless update: keep this image only if it gets this far
+     * and runs for a while - see ota_update_confirm_boot_after(). */
+    ota_update_confirm_boot_after(60);
 
     /* Bring the display up next regardless of whether setup is needed, so
      * show_provisioning_screen() below has something to draw on - see the
