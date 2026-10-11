@@ -27,6 +27,7 @@ static RingbufHandle_t s_rb;
 static vprintf_like_t s_orig;
 static char s_host[64];
 static int s_port;
+static volatile bool s_net_up;
 
 static int log_hook(const char *fmt, va_list args)
 {
@@ -50,6 +51,11 @@ static int log_hook(const char *fmt, va_list args)
 static void sender_task(void *arg)
 {
     (void)arg;
+    /* lwip asserts if it is called before the network stack exists, so
+     * touch nothing network-related until the caller says Wi-Fi is up. */
+    while (!s_net_up) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
     char *pkt = heap_caps_malloc(PKT_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (pkt == NULL) {
         vTaskDelete(NULL);
@@ -124,4 +130,9 @@ void remote_log_start(const char *host_port)
         return;
     }
     s_orig = esp_log_set_vprintf(log_hook);
+}
+
+void remote_log_net_up(void)
+{
+    s_net_up = true;
 }

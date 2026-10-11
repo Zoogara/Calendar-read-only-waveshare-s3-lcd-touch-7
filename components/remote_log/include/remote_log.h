@@ -6,3 +6,7 @@
  * logged before Wi-Fi is up are held in a PSRAM ring buffer and sent once it
  * is. Receive them with tools/gcal_remote.py logs (or any UDP listener). */
 void remote_log_start(const char *host_port);
+
+/* Call once Wi-Fi is connected (the network stack is up): only then does the
+ * forwarder resolve the host and start sending. Before it, lines just queue. */
+void remote_log_net_up(void);
