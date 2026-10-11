@@ -47,6 +47,7 @@
 #include "sd_card.h"
 #include "presence_sensor.h"
 #include "remote_log.h"
+#include "rss_feed.h"
 #include "ota_update.h"
 #include "calendar_ui.h"
 #include "gcal_client.h"
@@ -323,6 +324,10 @@ static void net_task(void *arg)
         /* "On this day" history for the clock's date (components/onthisday,
          * Wikipedia): a no-op except once a day. */
         onthisday_refresh();
+        /* The two news feeds on the clock's bottom corners
+         * (components/rss_feed): each is refetched only every ~20 minutes,
+         * and a no-op while its address is blank. */
+        rss_feed_refresh(&s_cfg);
 
         /* Waits for either the refresh/backoff interval above or an early
          * wake - which, since 2026-09-10, means only a manual force-sync
