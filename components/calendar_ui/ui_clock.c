@@ -421,10 +421,13 @@ void ui_clock_update(void)
         lv_obj_set_style_text_color(s_weather_label, ui_color(colon_color), 0);
         lv_obj_set_style_text_color(s_weather_icon, ui_color(colon_color), 0);
         lv_obj_set_style_text_color(s_date_label, ui_color(colon_color), 0);
+        /* The feed icons are a notch dimmer than the rest: 30% of the way
+         * further to black than whatever the day/night level is. */
+        uint32_t feed_color = ui_darken(UI_COLOR_TEXT_MUTED, (uint8_t)(pct + (100 - pct) * 30 / 100));
         for (int i = 0; i < 2; i++) {
             if (s_feed_btn[i] != NULL) {
-                lv_obj_set_style_text_color(s_feed_icon[i], ui_color(colon_color), 0);
-                lv_obj_set_style_text_color(s_feed_name[i], ui_color(colon_color), 0);
+                lv_obj_set_style_text_color(s_feed_icon[i], ui_color(feed_color), 0);
+                lv_obj_set_style_text_color(s_feed_name[i], ui_color(feed_color), 0);
             }
         }
         s_last_colon_color = (int32_t)colon_color;
