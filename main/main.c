@@ -240,6 +240,7 @@ static void net_task(void *arg)
     xTaskCreate(wifi_bringup_task, "wifi_bringup", 4096, NULL, 5, NULL);
     xSemaphoreTake(s_wifi_up, portMAX_DELAY);
     vSemaphoreDelete(s_wifi_up);
+    remote_log_net_up();
 
     /* No-ops if config_web_password isn't set - see config_web.c. */
     config_web_start(&s_cfg);
