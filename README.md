@@ -375,6 +375,25 @@ not fatal) and the backlight simply staying at whatever brightness it was
 last explicitly set to - no auto-dimming, but nothing crashes or hangs
 either.
 
+## Wireless logging and updates
+
+For development once the display is mounted away from the computer. Serial
+logging and `idf.py flash` over USB keep working exactly as before.
+
+- **Wireless log:** config page -> Developer -> *Log destination*, e.g.
+  `192.168.1.20:9999` (this computer), then run `tools/gcal_remote.py logs`
+  there. Every log line goes to USB serial *and* UDP; lines logged before Wi-Fi
+  is up wait in a 24 KB PSRAM buffer. Costs a few KB of PSRAM and ~3 KB of
+  flash, nothing measurable of internal RAM. Unencrypted - LAN only.
+- **Wireless update:** `GCAL_PASS=<config page password> tools/gcal_remote.py
+  ota --device <display IP>` serves `build/gcal_display.bin` and calls the
+  config web server's `POST /ota`, which downloads it with `esp_https_ota` on its
+  own task and restarts. The firmware URL must be one `esp_https_ota` accepts.
+- **Rollback:** app rollback is enabled. A new image is confirmed 60 s after
+  boot (`ota_update_confirm_boot_after`); one that crashes or resets before
+  then reverts to the previous image. The first build with rollback enabled
+  has to be flashed over USB once (it changes the bootloader).
+
 ## Weather
 
 Optional, and off until a location is set. On the runtime config page,
