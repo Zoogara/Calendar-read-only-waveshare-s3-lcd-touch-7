@@ -48,6 +48,7 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddStringToObject(root, "weather_place", cfg->weather_place);
     cJSON_AddStringToObject(root, "lock_pin", cfg->lock_pin);
     cJSON_AddNumberToObject(root, "lock_after_min", cfg->lock_after_min);
+    cJSON_AddStringToObject(root, "log_host", cfg->log_host);
 
     cJSON *cals = cJSON_AddArrayToObject(root, "calendars");
     for (int i = 0; i < cfg->calendar_count; i++) {
@@ -95,6 +96,7 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
     strncpy(out->ha_desc_entity, cJSON_IsString(j) && j->valuestring ? j->valuestring
                                                                       : APP_SETTINGS_DEFAULT_HA_DESC_ENTITY,
             sizeof(out->ha_desc_entity) - 1);
+    COPY_STR(log_host, "log_host");
 #undef COPY_STR
 
     j = cJSON_GetObjectItemCaseSensitive(root, "refresh_interval_s");

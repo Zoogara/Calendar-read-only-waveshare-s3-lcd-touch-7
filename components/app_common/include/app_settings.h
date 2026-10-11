@@ -201,6 +201,11 @@ typedef struct {
     char lock_pin[5];
     uint16_t lock_after_min;
 
+    /* Developer: forward the log over UDP to "host:port" (blank = off) - see
+     * components/remote_log and tools/gcal_remote.py. Set on the config web
+     * page. */
+    char log_host[48];
+
     bool valid; /* true once loaded/saved successfully at least once */
 } app_settings_t;
 
