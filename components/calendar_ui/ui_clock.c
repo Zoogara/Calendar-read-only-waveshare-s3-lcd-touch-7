@@ -91,6 +91,9 @@ static lv_obj_t *s_weather_row;
 static lv_obj_t *s_weather_icon;
 static lv_obj_t *s_weather_label;
 static lv_obj_t *s_date_label;
+static lv_obj_t *s_feed_btn[2];      /* NULL when that feed has no address set */
+static lv_obj_t *s_feed_icon[2];
+static lv_obj_t *s_feed_name[2];
 
 /* Home Assistant condition (the description sensor's raw state) -> Weather
  * Icons glyph, day and night. The night icons replace the sun with a moon
@@ -152,6 +155,9 @@ const char *ui_weather_glyph(const char *cond, bool night)
  * weather row (centred against the taller icon), so the two text lines are
  * level; worked out from the fonts in ui_clock_create(). */
 #define DATE_X 24
+
+/* Where the reminder bell goes when the bottom-left corner holds a feed icon. */
+#define FEED_BELL_X 170
 static lv_coord_t s_date_y = WEATHER_Y;
 
 static void date_pressed_cb(lv_event_t *e)
@@ -166,6 +172,12 @@ static void weather_pressed_cb(lv_event_t *e)
 {
     (void)e;
     ui_weather_open();
+}
+
+/* The two news-feed icons, bottom left and right (ui_feed.c). */
+static void feed_pressed_cb(lv_event_t *e)
+{
+    ui_feed_open((int)(uintptr_t)lv_event_get_user_data(e));
 }
 
 lv_obj_t *ui_clock_create(lv_obj_t *parent)
@@ -232,8 +244,44 @@ lv_obj_t *ui_clock_create(lv_obj_t *parent)
     s_bell_label = lv_label_create(s_cont);
     lv_label_set_text(s_bell_label, "\xEF\x83\xB3" /* U+F0F3 FontAwesome "bell" */);
     lv_obj_set_style_text_font(s_bell_label, &gcal_font_icon_bell, 0);
-    lv_obj_align(s_bell_label, LV_ALIGN_BOTTOM_LEFT, 16, -16);
+    /* Bottom left is the first news feed's icon when one is set - the bell
+     * then sits to its right instead. */
+    lv_obj_align(s_bell_label, LV_ALIGN_BOTTOM_LEFT, ui_get_cfg()->feed_url[0][0] ? FEED_BELL_X : 16, -16);
     lv_obj_add_flag(s_bell_label, LV_OBJ_FLAG_HIDDEN);
+
+    /* News feeds (components/rss_feed): an RSS icon and a short label in each
+     * bottom corner, only for a feed whose address is set on the config
+     * page. Shown in the colon's colour like the bell and weather. Taps open
+     * on PRESSED for the same reason as the date and weather above. */
+    for (int i = 0; i < 2; i++) {
+        const app_settings_t *cfg = ui_get_cfg();
+        if (cfg->feed_url[i][0] == '\0') {
+            continue;
+        }
+        lv_obj_t *btn = lv_obj_create(s_cont);
+        lv_obj_remove_style_all(btn);
+        lv_obj_set_size(btn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_column(btn, 8, 0);
+        lv_obj_align(btn, i == 0 ? LV_ALIGN_BOTTOM_LEFT : LV_ALIGN_BOTTOM_RIGHT,
+                     i == 0 ? 16 : -16, -16);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_ext_click_area(btn, 20);
+        lv_obj_add_event_cb(btn, feed_pressed_cb, LV_EVENT_PRESSED, (void *)(uintptr_t)i);
+
+        s_feed_icon[i] = lv_label_create(btn);
+        lv_label_set_text(s_feed_icon[i], "\xEF\x82\x9E" /* U+F09E FontAwesome "rss" */);
+        lv_obj_set_style_text_font(s_feed_icon[i], &gcal_font_icon_clock, 0);
+        lv_obj_clear_flag(s_feed_icon[i], LV_OBJ_FLAG_CLICKABLE);
+
+        s_feed_name[i] = lv_label_create(btn);
+        lv_label_set_text(s_feed_name[i], cfg->feed_label[i][0] ? cfg->feed_label[i] : "News");
+        lv_obj_set_style_text_font(s_feed_name[i], &gcal_font_14, 0);
+        lv_obj_clear_flag(s_feed_name[i], LV_OBJ_FLAG_CLICKABLE);
+        s_feed_btn[i] = btn;
+    }
 
     /* Weather from Home Assistant: a condition icon then the temperature,
      * e.g. [cloud] "16°C", in a row so they move together - a sibling of
@@ -373,6 +421,12 @@ void ui_clock_update(void)
         lv_obj_set_style_text_color(s_weather_label, ui_color(colon_color), 0);
         lv_obj_set_style_text_color(s_weather_icon, ui_color(colon_color), 0);
         lv_obj_set_style_text_color(s_date_label, ui_color(colon_color), 0);
+        for (int i = 0; i < 2; i++) {
+            if (s_feed_btn[i] != NULL) {
+                lv_obj_set_style_text_color(s_feed_icon[i], ui_color(colon_color), 0);
+                lv_obj_set_style_text_color(s_feed_name[i], ui_color(colon_color), 0);
+            }
+        }
         s_last_colon_color = (int32_t)colon_color;
     }
 
@@ -424,6 +478,13 @@ void ui_clock_update(void)
                      DATE_X + s_jitter[jitter_idx][0], s_date_y + s_jitter[jitter_idx][1]);
         lv_obj_align(s_weather_row, LV_ALIGN_TOP_RIGHT,
                      WEATHER_X + s_jitter[jitter_idx][0], WEATHER_Y + s_jitter[jitter_idx][1]);
+        for (int i = 0; i < 2; i++) {
+            if (s_feed_btn[i] != NULL) {
+                lv_obj_align(s_feed_btn[i], i == 0 ? LV_ALIGN_BOTTOM_LEFT : LV_ALIGN_BOTTOM_RIGHT,
+                             (i == 0 ? 16 : -16) + s_jitter[jitter_idx][0],
+                             -16 + s_jitter[jitter_idx][1]);
+            }
+        }
         s_last_jitter_idx = jitter_idx;
     }
 }

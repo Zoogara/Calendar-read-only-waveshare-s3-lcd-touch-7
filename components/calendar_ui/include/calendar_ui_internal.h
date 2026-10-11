@@ -140,6 +140,13 @@ void ui_history_open(void);
 void ui_history_close(void);
 bool ui_history_is_open(void);
 
+/* News feed list (ui_feed.c) for feed `idx` (0 bottom left, 1 bottom right),
+ * opened by tapping its icon on the ambient clock; closed by a tap or by
+ * ui_screensaver.c after a minute. Headings and text only. */
+void ui_feed_open(int idx);
+void ui_feed_close(void);
+bool ui_feed_is_open(void);
+
 /* The PIN keypad (ui_lock.c), opened and closed by ui_screensaver.c. */
 void ui_lock_keypad_open(void);
 void ui_lock_keypad_close(void);

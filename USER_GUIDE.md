@@ -59,8 +59,17 @@ Left to right:
   rain and air pressure; Today and Tomorrow with an icon, min / max, the
   chance and amount of rain and the full forecast; and a line each for the
   five days after.
-- Both close with a tap, or after a minute untouched, and go back to the
-  clock - not the calendar. They also work while the screen is locked.
+- **News feeds:** with a feed address set on the config web page (*News
+  feeds*), an RSS icon and its short label sit in the bottom-left corner
+  (feed 1) and bottom-right (feed 2). Tap one to read that feed: a
+  heading for each story with a few lines of text under it - no pictures.
+  Drag to scroll. Leave an address blank and that icon doesn't appear. They
+  refresh about every 20 minutes. A feed's address is usually shown on its
+  site's RSS page; https:// addresses are best (nearly all news sites
+  redirect plain http to https anyway). The bell moves to the right of the
+  bottom-left icon when feed 1 is set.
+- These all close with a tap, or after a minute untouched, and go back to
+  the clock - not the calendar. They also work while the screen is locked.
 - **Screensaver** - if nobody's in front of it (with the optional presence
   sensor fitted; without one it always does this), it goes
   to a dark screensaver with the backlight off instead, and drops from the
