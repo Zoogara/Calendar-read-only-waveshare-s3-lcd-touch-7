@@ -49,6 +49,10 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddStringToObject(root, "lock_pin", cfg->lock_pin);
     cJSON_AddNumberToObject(root, "lock_after_min", cfg->lock_after_min);
     cJSON_AddStringToObject(root, "log_host", cfg->log_host);
+    cJSON_AddStringToObject(root, "feed1_label", cfg->feed_label[0]);
+    cJSON_AddStringToObject(root, "feed1_url", cfg->feed_url[0]);
+    cJSON_AddStringToObject(root, "feed2_label", cfg->feed_label[1]);
+    cJSON_AddStringToObject(root, "feed2_url", cfg->feed_url[1]);
 
     cJSON *cals = cJSON_AddArrayToObject(root, "calendars");
     for (int i = 0; i < cfg->calendar_count; i++) {
@@ -97,6 +101,10 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
                                                                       : APP_SETTINGS_DEFAULT_HA_DESC_ENTITY,
             sizeof(out->ha_desc_entity) - 1);
     COPY_STR(log_host, "log_host");
+    COPY_STR(feed_label[0], "feed1_label");
+    COPY_STR(feed_url[0], "feed1_url");
+    COPY_STR(feed_label[1], "feed2_label");
+    COPY_STR(feed_url[1], "feed2_url");
 #undef COPY_STR
 
     j = cJSON_GetObjectItemCaseSensitive(root, "refresh_interval_s");
