@@ -198,3 +198,7 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # SNTP: three servers, and no random 0-5s delay before the first request
 CONFIG_LWIP_SNTP_MAX_SERVERS=3
 CONFIG_LWIP_SNTP_STARTUP_DELAY=n
+
+# Wireless updates: revert to the previous image if a new one never gets marked
+# valid (see ota_update_confirm_boot_after)
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

@@ -1,5 +1,6 @@
 #include "config_web.h"
 #include "provisioning.h"
+#include "ota_update.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -298,6 +299,18 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, "'><div class='hint'>Shown in the weather panel's heading.</div>");
     /* Own chunks, like the calendar rows - other[] below is close to full. */
     httpd_resp_sendstr_chunk(req,
+        "<h2>Developer</h2>"
+        "<div class='hint'>Send the device log over Wi-Fi (UDP) to a computer on your "
+        "network, as well as the USB serial port - run <b>tools/gcal_remote.py logs</b> "
+        "there. Enter <b>host:port</b>, e.g. 192.168.1.20:9999. Blank turns it off. The log "
+        "is not encrypted. Wireless firmware updates use this page's password: "
+        "<b>tools/gcal_remote.py ota</b>.</div>"
+        "<label>Log destination (host:port)</label>"
+        "<input type='text' name='log_host' placeholder='192.168.1.20:9999' value='");
+    send_value_chunk(req, s_cfg->log_host);
+    httpd_resp_sendstr_chunk(req, "'>");
+
+    httpd_resp_sendstr_chunk(req,
         "<h2>Screen lock</h2>"
         "<div class='hint'>A 4-digit PIN needed to get from the clock back to the "
         "calendar. Lock with the padlock icon in the top bar, or automatically "
@@ -522,6 +535,8 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     form_get(body, "ha_pressure_entity", s_cfg->ha_pressure_entity, sizeof(s_cfg->ha_pressure_entity));
     form_get(body, "ha_bom_prefix", s_cfg->ha_bom_prefix, sizeof(s_cfg->ha_bom_prefix));
     form_get(body, "weather_place", s_cfg->weather_place, sizeof(s_cfg->weather_place));
+    form_get(body, "log_host", s_cfg->log_host, sizeof(s_cfg->log_host));
+
     char sel[4];
     if (form_get(body, "ha_temp_select", sel, sizeof(sel))) {
         s_cfg->ha_temp_select = (strcmp(sel, "1") == 0) ? 1 : 0;
@@ -677,6 +692,44 @@ static esp_err_t test_brightness_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* POST /ota?url=<firmware .bin URL> - the wireless-update trigger used by
+ * tools/gcal_remote.py. Same Basic-auth password as the settings page; with
+ * no url it uses the configured Firmware update URL. Returns straight away:
+ * the download and restart happen on their own task. */
+static esp_err_t ota_post_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    char query[300], url[256] = "";
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        httpd_query_key_value(query, "url", url, sizeof(url));
+    }
+    /* The query value arrives percent-encoded. */
+    char decoded[256];
+    size_t n = 0;
+    for (const char *p = url; *p && n < sizeof(decoded) - 1; p++) {
+        if (*p == '%' && p[1] && p[2]) {
+            char hex[3] = {p[1], p[2], 0};
+            decoded[n++] = (char)strtol(hex, NULL, 16);
+            p += 2;
+        } else {
+            decoded[n++] = *p;
+        }
+    }
+    decoded[n] = '\0';
+    const char *use = decoded[0] ? decoded : s_cfg->ota_url;
+    if (ota_update_start_background(use) != ESP_OK) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "no firmware URL given and none configured\n");
+        return ESP_OK;
+    }
+    ESP_LOGI(TAG, "wireless update requested: %s", use);
+    httpd_resp_set_status(req, "202 Accepted");
+    httpd_resp_sendstr(req, "update started - the device restarts when it finishes\n");
+    return ESP_OK;
+}
+
 void config_web_start(app_settings_t *cfg)
 {
     if (s_server != NULL) {
@@ -716,6 +769,8 @@ void config_web_start(app_settings_t *cfg)
     httpd_register_uri_handler(s_server, &test_brightness_uri);
     httpd_register_uri_handler(s_server, &root_uri);
     httpd_register_uri_handler(s_server, &save_uri);
+    httpd_uri_t ota_uri = {.uri = "/ota", .method = HTTP_POST, .handler = ota_post_handler};
+    httpd_register_uri_handler(s_server, &ota_uri);
 
     ESP_LOGI(TAG, "config web server up");
 }
