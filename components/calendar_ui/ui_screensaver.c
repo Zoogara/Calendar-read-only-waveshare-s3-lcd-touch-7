@@ -693,7 +693,10 @@ static void check_timer_cb(lv_timer_t *timer)
     if (ui_history_is_open() && idle_ms >= PANEL_IDLE_CLOSE_MS) {
         ui_history_close();
     }
-    bool overlay_open = ui_lock_keypad_is_open() || ui_weather_is_open() || ui_history_is_open();
+    if (ui_feed_is_open() && idle_ms >= PANEL_IDLE_CLOSE_MS) {
+        ui_feed_close();
+    }
+    bool overlay_open = ui_lock_keypad_is_open() || ui_weather_is_open() || ui_history_is_open() || ui_feed_is_open();
 
     switch (s_state) {
     case DISPLAY_CALENDAR:

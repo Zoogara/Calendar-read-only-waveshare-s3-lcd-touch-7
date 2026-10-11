@@ -239,6 +239,30 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, "'><div class='hint'>Shown in the weather panel's heading.</div>");
 
     httpd_resp_sendstr_chunk(req,
+        "<h2>News feeds</h2>"
+        "<div class='hint'>Two RSS or Atom feeds, opened from the bottom corners of the "
+        "ambient clock - headings and text only. Paste the feed's address "
+        "(https:// is best: most news sites redirect plain http to it). A short label "
+        "shows beside each icon. Leave the address blank to hide that icon. Refreshed about "
+        "every 20 minutes; the 15 newest items are kept.</div>"
+        "<label>Feed 1 (bottom left) - label</label>"
+        "<input type='text' name='feed1_label' maxlength='13' placeholder='e.g. ABC' value='");
+    send_value_chunk(req, s_cfg->feed_label[0]);
+    httpd_resp_sendstr_chunk(req,
+        "'><label>Feed 1 address</label>"
+        "<input type='text' name='feed1_url' maxlength='150' placeholder='https://www.abc.net.au/news/feed/51120/rss.xml' value='");
+    send_value_chunk(req, s_cfg->feed_url[0]);
+    httpd_resp_sendstr_chunk(req,
+        "'><label>Feed 2 (bottom right) - label</label>"
+        "<input type='text' name='feed2_label' maxlength='13' placeholder='e.g. BBC' value='");
+    send_value_chunk(req, s_cfg->feed_label[1]);
+    httpd_resp_sendstr_chunk(req,
+        "'><label>Feed 2 address</label>"
+        "<input type='text' name='feed2_url' maxlength='150' placeholder='https://feeds.bbci.co.uk/news/world/rss.xml' value='");
+    send_value_chunk(req, s_cfg->feed_url[1]);
+    httpd_resp_sendstr_chunk(req, "'>");
+
+    httpd_resp_sendstr_chunk(req,
         "<h2>Developer</h2>"
         "<div class='hint'>Send the device log over Wi-Fi (UDP) to a computer on your "
         "network, as well as the USB serial port - run <b>tools/gcal_remote.py logs</b> "
@@ -465,6 +489,10 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 
     form_get(body, "weather_place", s_cfg->weather_place, sizeof(s_cfg->weather_place));
     form_get(body, "log_host", s_cfg->log_host, sizeof(s_cfg->log_host));
+    form_get(body, "feed1_label", s_cfg->feed_label[0], sizeof(s_cfg->feed_label[0]));
+    form_get(body, "feed1_url", s_cfg->feed_url[0], sizeof(s_cfg->feed_url[0]));
+    form_get(body, "feed2_label", s_cfg->feed_label[1], sizeof(s_cfg->feed_label[1]));
+    form_get(body, "feed2_url", s_cfg->feed_url[1], sizeof(s_cfg->feed_url[1]));
 
     /* Weather location: a valid number in range, or blank (weather off). */
     char coord[16];
