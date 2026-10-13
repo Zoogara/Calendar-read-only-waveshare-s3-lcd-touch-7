@@ -276,7 +276,10 @@ void ui_weather_open(void)
                            "with the temperature every few minutes.");
     } else {
         add_now(list, d);
-        add_big_day(list, &d->days[0], "Today");
+        /* Once today's minimum has passed (usually by the afternoon) the BOM
+         * stops publishing it - the forecast is then only for what's left of
+         * the day. */
+        add_big_day(list, &d->days[0], d->days[0].lo[0] ? "Today" : "Remainder of today");
         add_big_day(list, &d->days[1], "Tomorrow");
         lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
         lv_obj_set_height(gap, 8);
