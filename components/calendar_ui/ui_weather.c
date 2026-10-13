@@ -191,7 +191,7 @@ static void add_big_day(lv_obj_t *list, const ha_forecast_day_t *d, const char *
     char mm[32], rain[48], line[128];
     min_max(d, mm, sizeof(mm));
     rain_text(d, "rain ", rain, sizeof(rain));
-    snprintf(line, sizeof(line), "%s%s%s%s%s", name, mm[0] ? "   " : "", mm, rain[0] ? "   " : "", rain);
+    snprintf(line, sizeof(line), "%s:%s%s%s%s", name, mm[0] ? "   " : "", mm, rain[0] ? "   " : "", rain);
     add_label(col, &gcal_font_20, HEAD_COLOR, line);
     add_wrapping_label(col, &gcal_font_14, TEXT_COLOR, d->extended[0] ? d->extended : d->short_text);
 }
