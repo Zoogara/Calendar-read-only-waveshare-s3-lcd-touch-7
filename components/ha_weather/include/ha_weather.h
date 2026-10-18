@@ -102,6 +102,7 @@ void ha_weather_details_release(void);
 
 typedef struct {
     float v[HA_HISTORY_POINTS];   /* NAN where the sensor had no value yet */
+    int slot;                     /* 0 = graph line 1, 1 = line 2 (colour and label) */
     int have;                     /* how many points have a value */
     float min, max;
     int min_i, max_i;             /* grid positions of min and max */

@@ -195,6 +195,10 @@ typedef struct {
     /* A second line on the same graph. Blank = the BOM observation,
      * "<ha_bom_prefix>temp" (e.g. sensor.rutherglen_temp). */
     char ha_graph2_entity[64];
+    /* Names shown in the graph's legend; blank = the sensor's own name from
+     * Home Assistant. Line 2 defaults to APP_SETTINGS_DEFAULT_HA_GRAPH2_LABEL. */
+    char ha_graph_label[48];
+    char ha_graph2_label[48];
     /* Shown in the weather panel's heading ("Weather for <place> - <date>").
      * Optional; same field as on main. */
     char weather_place[40];
@@ -240,6 +244,7 @@ typedef struct {
 #define APP_SETTINGS_DEFAULT_HA_RAIN_ENTITY     "sensor.rain_accumulation"
 #define APP_SETTINGS_DEFAULT_HA_PRESSURE_ENTITY "sensor.atmospheric_pressure_msl"
 #define APP_SETTINGS_DEFAULT_HA_BOM_PREFIX      "sensor.rutherglen_"
+#define APP_SETTINGS_DEFAULT_HA_GRAPH2_LABEL    "BOM Rutherglen Temperature"
 #define APP_SETTINGS_DEFAULT_WEATHER_PLACE      "Rutherglen"
 #define APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX 150     /* ~typical lit-room lux for 100% */
 

@@ -364,6 +364,7 @@ esp_err_t ha_history_refresh(const app_settings_t *cfg)
         }
         esp_err_t err = fetch_series(cfg, base, want[i], end, &fresh->s[fresh->count]);
         if (err == ESP_OK) {
+            fresh->s[fresh->count].slot = i;
             fresh->count++;
         } else if (first_err == ESP_OK) {
             first_err = err;

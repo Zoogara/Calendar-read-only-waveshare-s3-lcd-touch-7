@@ -272,8 +272,12 @@ static void add_history_graph(lv_obj_t *list)
     for (int k = 0; k < h->count; k++) {
         const ha_series_t *sr = &h->s[k];
         char key[80];
-        snprintf(key, sizeof(key), "\xE2\x80\x94\xE2\x80\x94 %s", sr->name[0] ? sr->name : sr->entity);
-        add_label(legend, &gcal_font_14, SERIES_COLOR[k], key);
+        /* The label set on the config page wins over Home Assistant's name. */
+        const app_settings_t *cfg = ui_get_cfg();
+        const char *label = sr->slot == 0 ? cfg->ha_graph_label : cfg->ha_graph2_label;
+        snprintf(key, sizeof(key), "\xE2\x80\x94\xE2\x80\x94 %s",
+                 label[0] ? label : sr->name[0] ? sr->name : sr->entity);
+        add_label(legend, &gcal_font_14, SERIES_COLOR[sr->slot], key);
     }
 
     lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
@@ -309,7 +313,7 @@ static void add_history_graph(lv_obj_t *list)
     lv_obj_clear_flag(chart, LV_OBJ_FLAG_CLICKABLE);      /* taps and drags go to the list */
     lv_obj_add_flag(chart, LV_OBJ_FLAG_EVENT_BUBBLE);
     for (int k = 0; k < h->count; k++) {
-        lv_chart_series_t *ser = lv_chart_add_series(chart, lv_color_hex(SERIES_COLOR[k]),
+        lv_chart_series_t *ser = lv_chart_add_series(chart, lv_color_hex(SERIES_COLOR[h->s[k].slot]),
                                                      LV_CHART_AXIS_PRIMARY_Y);
         for (int i = 0; i < HA_HISTORY_POINTS; i++) {
             lv_chart_set_value_by_id(chart, ser, i, isnan(h->s[k].v[i]) ? LV_CHART_POINT_NONE
@@ -341,7 +345,7 @@ static void add_history_graph(lv_obj_t *list)
         snprintf(line, sizeof(line), "Now %.1f%s%s    Low %.1f at %s    High %.1f at %s",
                  (double)sr->v[HA_HISTORY_POINTS - 1], sr->unit[0] ? " " : "", sr->unit,
                  (double)sr->min, lo_t, (double)sr->max, hi_t);
-        lv_obj_t *sum = add_label(list, &gcal_font_14, SERIES_COLOR[k], line);
+        lv_obj_t *sum = add_label(list, &gcal_font_14, SERIES_COLOR[sr->slot], line);
         lv_obj_set_width(sum, LV_PCT(100));
     }
     ha_history_release();

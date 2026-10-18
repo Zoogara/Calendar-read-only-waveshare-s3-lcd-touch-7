@@ -272,6 +272,8 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         { "ha_bom_prefix", "BOM forecast entity prefix (e.g. sensor.rutherglen_)", offsetof(app_settings_t, ha_bom_prefix) },
         { "ha_graph_entity", "Graph line 1, last 24 hours - end of the details panel (blank = the temperature sensor)", offsetof(app_settings_t, ha_graph_entity) },
         { "ha_graph2_entity", "Graph line 2 (blank = the BOM temperature, <prefix>temp)", offsetof(app_settings_t, ha_graph2_entity) },
+        { "ha_graph_label", "Graph line 1 name in the legend (blank = the sensor's own name)", offsetof(app_settings_t, ha_graph_label) },
+        { "ha_graph2_label", "Graph line 2 name in the legend (blank = the sensor's own name)", offsetof(app_settings_t, ha_graph2_label) },
     };
     for (size_t i = 0; i < sizeof(detail_fields) / sizeof(detail_fields[0]); i++) {
         char head[160];
@@ -562,6 +564,8 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     form_get(body, "ha_bom_prefix", s_cfg->ha_bom_prefix, sizeof(s_cfg->ha_bom_prefix));
     form_get(body, "ha_graph_entity", s_cfg->ha_graph_entity, sizeof(s_cfg->ha_graph_entity));
     form_get(body, "ha_graph2_entity", s_cfg->ha_graph2_entity, sizeof(s_cfg->ha_graph2_entity));
+    form_get(body, "ha_graph_label", s_cfg->ha_graph_label, sizeof(s_cfg->ha_graph_label));
+    form_get(body, "ha_graph2_label", s_cfg->ha_graph2_label, sizeof(s_cfg->ha_graph2_label));
     form_get(body, "weather_place", s_cfg->weather_place, sizeof(s_cfg->weather_place));
     form_get(body, "log_host", s_cfg->log_host, sizeof(s_cfg->log_host));
     form_get(body, "feed1_label", s_cfg->feed_label[0], sizeof(s_cfg->feed_label[0]));
