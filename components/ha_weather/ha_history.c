@@ -29,7 +29,7 @@
 static const char *TAG = "ha_history";
 
 #define HTTP_TIMEOUT_MS  15000
-#define MAX_BYTES        (384 * 1024)
+#define MAX_BYTES        (640 * 1024)
 #define REFRESH_US       (10LL * 60 * 1000000)
 #define RETRY_US         (3LL * 60 * 1000000)
 #define STALE_AFTER_US   (60LL * 60 * 1000000)
@@ -412,8 +412,7 @@ void ha_history_release(void)
  * Seven-day bars: daily low / high temperature and daily rainfall.
  * ------------------------------------------------------------------------ */
 
-#define WEEK_MAX_BYTES   (384 * 1024)
-#define WEEK_MAX_CHANGES 6000
+#define WEEK_MAX_CHANGES 12000
 #define WEEK_REFRESH_US  (30LL * 60 * 1000000)
 #define WEEK_RETRY_US    (5LL * 60 * 1000000)
 #define WEEK_STALE_US    (2LL * 3600 * 1000000)
@@ -502,7 +501,7 @@ static int fetch_week_changes(const app_settings_t *cfg, const char *base, const
         return -1;
     }
     if (resp.full) {
-        ESP_LOGW(TAG, "week %s: reply over %d KB - too many readings for a 7-day graph, skipped",
+        ESP_LOGW(TAG, "week %s: reply over %d KB - too many readings for the daily graphs, skipped",
                  entity, MAX_BYTES / 1024);
         free(resp.data);
         return -2;
@@ -580,6 +579,9 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg)
     if (n >= 0) {
         float cur = NAN;
         int k = 0;
+        /* HA purges old history (10 days by default): days that start before
+         * the first reading we got aren't covered, so they get no bar. */
+        time_t first_t = n > 0 ? ch[0].t : 0;
         for (int i = 0; i < HA_WEEK_DAYS; i++) {
             float mn = INFINITY, mx = -INFINITY;
             bool any = false;
@@ -600,7 +602,7 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg)
                 }
                 k++;
             }
-            if (any) {
+            if (any && first_t <= b[i] + 3600) {
                 w->tmin[i] = mn;
                 w->tmax[i] = mx;
                 w->t_ok[i] = true;
@@ -618,6 +620,10 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg)
     n = r_ent[0] ? fetch_week_changes(cfg, base, r_ent, b[0] - 1, now, &ch) : -1;
     if (n > 0) {
         float prev = NAN;
+        time_t first_t = ch[0].t;
+        for (int i = 0; i < HA_WEEK_DAYS; i++) {
+            w->r_day_ok[i] = first_t <= b[i] + 3600;
+        }
         for (int k = 0; k < n; k++) {
             if (!isnan(prev) && ch[k].v > prev) {
                 for (int i = 0; i < HA_WEEK_DAYS; i++) {
@@ -640,11 +646,24 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg)
         s_week_next_us = esp_timer_get_time() + WEEK_RETRY_US;
         return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "week: temp %d days, rain %s; highs %.1f %.1f %.1f %.1f %.1f %.1f %.1f; rain %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
-             w->t_have, w->r_ok ? "ok" : "none", (double)w->tmax[0], (double)w->tmax[1], (double)w->tmax[2],
-             (double)w->tmax[3], (double)w->tmax[4], (double)w->tmax[5], (double)w->tmax[6],
-             (double)w->rain[0], (double)w->rain[1], (double)w->rain[2], (double)w->rain[3],
-             (double)w->rain[4], (double)w->rain[5], (double)w->rain[6]);
+    {
+        char hi[160] = "", rn[160] = "";
+        for (int i = 0; i < HA_WEEK_DAYS; i++) {
+            size_t a = strlen(hi), r = strlen(rn);
+            if (w->t_ok[i]) {
+                snprintf(hi + a, sizeof(hi) - a, " %.1f", (double)w->tmax[i]);
+            } else {
+                snprintf(hi + a, sizeof(hi) - a, " -");
+            }
+            if (w->r_day_ok[i]) {
+                snprintf(rn + r, sizeof(rn) - r, " %.1f", (double)w->rain[i]);
+            } else {
+                snprintf(rn + r, sizeof(rn) - r, " -");
+            }
+        }
+        ESP_LOGI(TAG, "week: temp %d/%d days, rain %s; highs%s; rain%s", w->t_have, HA_WEEK_DAYS,
+                 w->r_ok ? "ok" : "none", hi, rn);
+    }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     ha_week_t *old = s_week;
     s_week = w;

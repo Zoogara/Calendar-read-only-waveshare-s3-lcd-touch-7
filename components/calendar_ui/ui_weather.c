@@ -351,8 +351,8 @@ static void add_history_graph(lv_obj_t *list)
     ha_history_release();
 }
 
-/* ---- Seven-day bar graphs: daily low / high temperature, daily rainfall ---- */
-#define BAR_H 110
+/* ---- 14-day bar graphs: daily low / high temperature, daily rainfall ---- */
+#define BAR_H 220
 #define TEMP_HI_COLOR 0xF6AD55
 #define TEMP_LO_COLOR 0x8AB4F8
 #define RAIN_COLOR    0x5BC0EB
@@ -369,31 +369,63 @@ static void bar_section(lv_obj_t *list, const char *title, const ha_week_t *w, i
     lv_obj_set_width(heading, LV_PCT(100));
     lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
 
+    /* A "nice" tick step (1, 2, 5, 10 ...) that gives about 5-10 intervals, then
+     * the range widened to whole steps so every gridline has a label. */
+    float step = 1.0f;
+    {
+        static const float steps[] = { 1, 2, 5, 10, 20, 50, 100 };
+        for (size_t s = 0; s < sizeof(steps) / sizeof(steps[0]); s++) {
+            step = steps[s];
+            if ((hi - lo) / step <= 10.0f) {
+                break;
+            }
+        }
+        lo = floorf(lo / step) * step;
+        hi = ceilf(hi / step) * step;
+        if (hi <= lo) {
+            hi = lo + step;
+        }
+    }
+    int intervals = (int)lroundf((hi - lo) / step);
+
     const lv_coord_t chart_w = LV_HOR_RES - 64 - GRAPH_AXIS_W - 6;
     lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_column(row, 6, 0);
 
-    lv_obj_t *axis = add_container(row, LV_FLEX_FLOW_COLUMN);
+    /* Y scale: a label at every gridline, each centred on its line. */
+    lv_obj_t *axis = lv_obj_create(row);
+    lv_obj_remove_style_all(axis);
     lv_obj_set_size(axis, GRAPH_AXIS_W, BAR_H);
-    lv_obj_set_flex_align(axis, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-    char buf[24];
-    snprintf(buf, sizeof(buf), "%.0f", (double)hi);
-    add_label(axis, &gcal_font_14, DIM_COLOR, buf);
-    snprintf(buf, sizeof(buf), "%.0f", (double)lo);
-    add_label(axis, &gcal_font_14, DIM_COLOR, buf);
+    lv_obj_clear_flag(axis, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(axis, LV_OBJ_FLAG_EVENT_BUBBLE);
+    for (int t = 0; t <= intervals; t++) {
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%g", (double)(hi - t * step));
+        lv_obj_t *l = add_label(axis, &gcal_font_14, DIM_COLOR, buf);
+        lv_obj_set_width(l, GRAPH_AXIS_W);
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_coord_t y = (lv_coord_t)((BAR_H - 1) * t / intervals) - 9;     /* 18 px label, centred */
+        if (y < 0) {
+            y = 0;
+        }
+        if (y > BAR_H - 18) {
+            y = BAR_H - 18;
+        }
+        lv_obj_set_pos(l, 0, y);
+    }
 
     lv_obj_t *chart = lv_chart_create(row);
     lv_obj_set_size(chart, chart_w, BAR_H);
     lv_chart_set_type(chart, LV_CHART_TYPE_BAR);
     lv_chart_set_point_count(chart, HA_WEEK_DAYS);
     lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)(lo * 10), (lv_coord_t)(hi * 10));
-    lv_chart_set_div_line_count(chart, 3, 0);
+    lv_chart_set_div_line_count(chart, intervals - 1, 0);      /* a line at every labelled step */
     lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(chart, 1, 0);
     lv_obj_set_style_border_color(chart, lv_color_hex(0x3C4043), 0);
     lv_obj_set_style_pad_all(chart, 0, 0);
-    lv_obj_set_style_pad_column(chart, 14, LV_PART_MAIN);     /* gap between days */
+    lv_obj_set_style_pad_column(chart, 5, LV_PART_MAIN);      /* gap between days */
     lv_obj_set_style_pad_column(chart, 2, LV_PART_ITEMS);     /* gap between a day's bars */
     lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2C2E), LV_PART_MAIN);
     lv_obj_set_style_radius(chart, 0, LV_PART_ITEMS);
@@ -402,7 +434,7 @@ static void bar_section(lv_obj_t *list, const char *title, const ha_week_t *w, i
     for (int k = 0; k < nser; k++) {
         lv_chart_series_t *ser = lv_chart_add_series(chart, lv_color_hex(colors[k]), LV_CHART_AXIS_PRIMARY_Y);
         for (int i = 0; i < HA_WEEK_DAYS; i++) {
-            bool have = temp ? w->t_ok[i] : true;
+            bool have = temp ? w->t_ok[i] : w->r_day_ok[i];
             lv_chart_set_value_by_id(chart, ser, i,
                                      have ? (lv_coord_t)lroundf(vals[k][i] * 10.0f) : LV_CHART_POINT_NONE);
         }
@@ -415,13 +447,16 @@ static void bar_section(lv_obj_t *list, const char *title, const ha_week_t *w, i
     lv_obj_set_style_pad_column(days, 0, 0);
     lv_obj_set_flex_align(days, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     for (int i = 0; i < HA_WEEK_DAYS; i++) {
-        char name[8], text[96];
+        char name[16], text[112];
         if (i == HA_WEEK_DAYS - 1) {
-            snprintf(name, sizeof(name), "Today");
+            snprintf(name, sizeof(name), "Now");
         } else {
             struct tm lt;
             localtime_r(&w->day[i], &lt);
-            strftime(name, sizeof(name), "%a", &lt);
+            char wd[8];
+            strftime(wd, sizeof(wd), "%a", &lt);
+            /* 14 days repeat the weekday names, so the date goes under them. */
+            snprintf(name, sizeof(name), "%.1s\n%d", wd, lt.tm_mday);
         }
         if (temp) {
             if (w->t_ok[i]) {
@@ -430,8 +465,10 @@ static void bar_section(lv_obj_t *list, const char *title, const ha_week_t *w, i
             } else {
                 snprintf(text, sizeof(text), "%s\n-", name);
             }
-        } else {
+        } else if (w->r_day_ok[i]) {
             snprintf(text, sizeof(text), "%s\n#%06X %.1f#", name, RAIN_COLOR, (double)w->rain[i]);
+        } else {
+            snprintf(text, sizeof(text), "%s\n-", name);
         }
         lv_obj_t *l = add_label(days, &gcal_font_14, DIM_COLOR, text);
         lv_label_set_recolor(l, true);
@@ -463,7 +500,7 @@ static void add_week_graphs(lv_obj_t *list)
         const float *vals[2] = { w->tmax, w->tmin };
         const uint32_t colors[2] = { TEMP_HI_COLOR, TEMP_LO_COLOR };
         char title[64];
-        snprintf(title, sizeof(title), "Last 7 days \xE2\x80\x93 daily high and low%s%s",
+        snprintf(title, sizeof(title), "Last 14 days \xE2\x80\x93 daily high and low%s%s",
                  w->t_unit[0] ? " " : "", w->t_unit);
         bar_section(list, title, w, 2, vals, colors, lo, hi, true);
     }
@@ -475,7 +512,7 @@ static void add_week_graphs(lv_obj_t *list)
         const float *vals[1] = { w->rain };
         const uint32_t colors[1] = { RAIN_COLOR };
         char title[64];
-        snprintf(title, sizeof(title), "Last 7 days \xE2\x80\x93 daily rainfall %s", w->r_unit[0] ? w->r_unit : "mm");
+        snprintf(title, sizeof(title), "Last 14 days \xE2\x80\x93 daily rainfall %s", w->r_unit[0] ? w->r_unit : "mm");
         bar_section(list, title, w, 1, vals, colors, 0.0f, hi, false);
     }
     ha_week_release();

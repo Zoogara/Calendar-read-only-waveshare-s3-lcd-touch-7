@@ -127,12 +127,12 @@ esp_err_t ha_history_refresh(const app_settings_t *cfg);
 const ha_history_t *ha_history_acquire(void);
 void ha_history_release(void);
 
-/* ----- Seven-day bar graphs (below the 24-hour graph) -----
+/* ----- 14-day bar graphs (below the 24-hour graph) -----
  * Daily low / high of the temperature sensor (graph line 1) and daily rainfall
  * (ha_rain_entity, a running total that resets - summed from its rises), for
  * today and the six days before, bucketed by the display's local midnight.
  * Fetched every ~30 minutes. See ha_history.c. */
-#define HA_WEEK_DAYS 7
+#define HA_WEEK_DAYS 14
 
 typedef struct {
     time_t day[HA_WEEK_DAYS];       /* local midnight of each day, oldest first, today last */
@@ -140,6 +140,7 @@ typedef struct {
     bool t_ok[HA_WEEK_DAYS];        /* the sensor had a value that day */
     int t_have;
     float rain[HA_WEEK_DAYS];
+    bool r_day_ok[HA_WEEK_DAYS];    /* rain history covers that day (HA keeps ~10 days by default) */
     bool r_ok;                      /* rain data present at all */
     char t_unit[12], r_unit[12];
 } ha_week_t;
