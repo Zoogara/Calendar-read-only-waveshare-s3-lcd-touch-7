@@ -91,22 +91,30 @@ const ha_weather_details_t *ha_weather_details_acquire(void);
 void ha_weather_details_release(void);
 
 /* ----- Sensor history graph (bottom of the weather details panel) -----
- * The last 24 hours of one sensor (ha_graph_entity, else the temperature
- * sensor the clock shows), resampled onto HA_HISTORY_POINTS steps of
- * HA_HISTORY_STEP_S ending at `end`. See ha_history.c. */
+ * The last 24 hours of up to two sensors, each resampled onto
+ * HA_HISTORY_POINTS steps of HA_HISTORY_STEP_S ending at `end`: series 0 is
+ * ha_graph_entity (else the temperature sensor the clock shows), series 1 is
+ * ha_graph2_entity (else the BOM observation "<ha_bom_prefix>temp"). See
+ * ha_history.c. */
 #define HA_HISTORY_POINTS  96
 #define HA_HISTORY_STEP_S  900
+#define HA_HISTORY_SERIES  2
 
 typedef struct {
     float v[HA_HISTORY_POINTS];   /* NAN where the sensor had no value yet */
-    time_t end;                   /* time of v[HA_HISTORY_POINTS - 1] */
-    int step_s;
     int have;                     /* how many points have a value */
     float min, max;
     int min_i, max_i;             /* grid positions of min and max */
     char entity[64];
     char name[48];                /* friendly name, may be empty */
     char unit[12];                /* e.g. "°C", may be empty */
+} ha_series_t;
+
+typedef struct {
+    time_t end;                   /* time of v[HA_HISTORY_POINTS - 1] */
+    int step_s;
+    int count;                    /* series with data: they are s[0..count-1] */
+    ha_series_t s[HA_HISTORY_SERIES];
 } ha_history_t;
 
 /* Fetched at most every ~10 minutes (a failure is retried after 3); call from

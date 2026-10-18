@@ -38,7 +38,7 @@ static SemaphoreHandle_t s_lock;
 static ha_history_t *s_cur;             /* PSRAM; NULL until the first success */
 static int64_t s_ok_us = -1;
 static int64_t s_next_try_us;
-static char s_cur_entity[64];
+static char s_cur_entity[HA_HISTORY_SERIES][64];
 
 struct resp_buf {
     char *data;
@@ -160,42 +160,51 @@ static void urlencode_iso(time_t t, char *out, size_t sz)
              tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 }
 
-/* The sensor shown by the graph: the configured one, else whichever
- * temperature sensor the clock is using. */
-static const char *graph_entity(const app_settings_t *cfg)
+/* Line 1: the configured sensor, else whichever temperature sensor the clock
+ * is using. Line 2: the configured one, else the BOM observation. */
+static const char *graph_entity(const app_settings_t *cfg, int which, char *buf, size_t sz)
 {
-    if (cfg->ha_graph_entity[0]) {
-        return cfg->ha_graph_entity;
+    if (which == 0) {
+        if (cfg->ha_graph_entity[0]) {
+            return cfg->ha_graph_entity;
+        }
+        if (cfg->ha_temp_select == 1 && cfg->ha_temp2_entity[0]) {
+            return cfg->ha_temp2_entity;
+        }
+        return cfg->ha_temp_entity;
     }
-    if (cfg->ha_temp_select == 1 && cfg->ha_temp2_entity[0]) {
-        return cfg->ha_temp2_entity;
+    if (cfg->ha_graph2_entity[0]) {
+        return cfg->ha_graph2_entity;
     }
-    return cfg->ha_temp_entity;
+    if (cfg->ha_bom_prefix[0] == '\0') {
+        return "";
+    }
+    snprintf(buf, sz, "%stemp", cfg->ha_bom_prefix);
+    return buf;
 }
 
-static esp_err_t fetch(const app_settings_t *cfg, const char *entity, ha_history_t *out)
+/* Base URL with a scheme and no trailing slash; false if it can't be used. */
+static bool base_url(const app_settings_t *cfg, char *out, size_t sz)
 {
-    char base[APP_SETTINGS_MAX_STR];
     size_t bl = strlen(cfg->ha_base_url);
     while (bl > 0 && cfg->ha_base_url[bl - 1] == '/') {
         bl--;
     }
     if (strncasecmp(cfg->ha_base_url, "https://", 8) == 0) {
-        return ESP_ERR_NOT_SUPPORTED;
+        return false;
     }
-    snprintf(base, sizeof(base), "%s%.*s", strncasecmp(cfg->ha_base_url, "http://", 7) == 0 ? "" : "http://",
+    snprintf(out, sz, "%s%.*s", strncasecmp(cfg->ha_base_url, "http://", 7) == 0 ? "" : "http://",
              (int)bl, cfg->ha_base_url);
+    return true;
+}
 
-    time_t end = time(NULL);
-    if (end < 1700000000) {
-        return ESP_ERR_INVALID_STATE;   /* clock not set */
-    }
-    /* Align the grid to whole steps so the time labels land on 15 minutes. */
-    end -= end % HA_HISTORY_STEP_S;
+/* One sensor's last 24 hours onto the grid ending at `end`. */
+static esp_err_t fetch_series(const app_settings_t *cfg, const char *base, const char *entity,
+                              time_t end, ha_series_t *out)
+{
     time_t start = end - (time_t)(HA_HISTORY_POINTS - 1) * HA_HISTORY_STEP_S - HA_HISTORY_STEP_S;
-    char s_iso[64];
+    char s_iso[64], e_iso[64];
     urlencode_iso(start, s_iso, sizeof(s_iso));
-    char e_iso[64];
     urlencode_iso(end + HA_HISTORY_STEP_S, e_iso, sizeof(e_iso));
 
     char *url = heap_caps_malloc(512, MALLOC_CAP_SPIRAM);
@@ -220,8 +229,6 @@ static esp_err_t fetch(const app_settings_t *cfg, const char *entity, ha_history
     for (int i = 0; i < HA_HISTORY_POINTS; i++) {
         out->v[i] = NAN;
     }
-    out->end = end;
-    out->step_s = HA_HISTORY_STEP_S;
     strncpy(out->entity, entity, sizeof(out->entity) - 1);
 
     /* Walk the state changes in order, filling each grid step with the last
@@ -269,7 +276,6 @@ static esp_err_t fetch(const app_settings_t *cfg, const char *entity, ha_history
         out->v[next++] = last;     /* the final state holds to now */
     }
 
-    out->have = 0;
     out->min = INFINITY;
     out->max = -INFINITY;
     for (int i = 0; i < HA_HISTORY_POINTS; i++) {
@@ -320,32 +326,65 @@ esp_err_t ha_history_refresh(const app_settings_t *cfg)
     if (s_lock == NULL) {
         s_lock = xSemaphoreCreateMutex();
     }
-    const char *entity = graph_entity(cfg);
-    if (entity[0] == '\0') {
+    char names[HA_HISTORY_SERIES][64];
+    const char *want[HA_HISTORY_SERIES];
+    bool unchanged = true;
+    for (int i = 0; i < HA_HISTORY_SERIES; i++) {
+        want[i] = graph_entity(cfg, i, names[i], sizeof(names[i]));
+        if (strcmp(want[i], s_cur_entity[i]) != 0) {
+            unchanged = false;
+        }
+    }
+    if (want[0][0] == '\0') {
         return ESP_ERR_INVALID_STATE;
     }
-    int64_t t = esp_timer_get_time();
-    if (t < s_next_try_us && strcmp(entity, s_cur_entity) == 0) {
+    if (unchanged && esp_timer_get_time() < s_next_try_us) {
         return ESP_OK;
     }
-    ha_history_t *fresh = heap_caps_malloc(sizeof(*fresh), MALLOC_CAP_SPIRAM);
+    char base[APP_SETTINGS_MAX_STR];
+    if (!base_url(cfg, base, sizeof(base))) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    time_t end = time(NULL);
+    if (end < 1700000000) {
+        return ESP_ERR_INVALID_STATE;   /* clock not set */
+    }
+    end -= end % HA_HISTORY_STEP_S;   /* whole steps, so the time labels land on 15 minutes */
+
+    ha_history_t *fresh = heap_caps_calloc(1, sizeof(*fresh), MALLOC_CAP_SPIRAM);
     if (fresh == NULL) {
         return ESP_ERR_NO_MEM;
     }
-    esp_err_t err = fetch(cfg, entity, fresh);
-    if (err != ESP_OK) {
+    fresh->end = end;
+    fresh->step_s = HA_HISTORY_STEP_S;
+    esp_err_t first_err = ESP_OK;
+    for (int i = 0; i < HA_HISTORY_SERIES; i++) {
+        if (want[i][0] == '\0' || (i > 0 && strcmp(want[i], want[0]) == 0)) {
+            continue;                    /* nothing to plot, or the same sensor twice */
+        }
+        esp_err_t err = fetch_series(cfg, base, want[i], end, &fresh->s[fresh->count]);
+        if (err == ESP_OK) {
+            fresh->count++;
+        } else if (first_err == ESP_OK) {
+            first_err = err;
+        }
+    }
+    if (fresh->count == 0) {
         free(fresh);
         s_next_try_us = esp_timer_get_time() + RETRY_US;
-        return err;
+        return first_err != ESP_OK ? first_err : ESP_ERR_NOT_FOUND;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     ha_history_t *old = s_cur;
     s_cur = fresh;
     s_ok_us = esp_timer_get_time();
-    strncpy(s_cur_entity, entity, sizeof(s_cur_entity) - 1);
+    for (int i = 0; i < HA_HISTORY_SERIES; i++) {
+        strncpy(s_cur_entity[i], want[i], sizeof(s_cur_entity[i]) - 1);
+    }
     xSemaphoreGive(s_lock);
     free(old);
-    s_next_try_us = esp_timer_get_time() + REFRESH_US;
+    /* A line that failed while the other worked is retried sooner. */
+    s_next_try_us = esp_timer_get_time() + (first_err == ESP_OK ? REFRESH_US : RETRY_US);
     return ESP_OK;
 }
 

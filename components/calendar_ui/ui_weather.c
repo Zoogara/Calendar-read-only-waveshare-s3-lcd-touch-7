@@ -223,12 +223,15 @@ static void add_small_day(lv_obj_t *list, const ha_forecast_day_t *d, const char
     lv_obj_set_style_text_align(r, LV_TEXT_ALIGN_RIGHT, 0);
 }
 
-/* The last 24 hours of one sensor (components/ha_weather/ha_history.c) as a
- * line graph at the end of the list: heading, a Y-axis label column and the
- * chart side by side, a row of times under it, and a summary line. Left out
- * entirely when there is no history yet. */
+/* The last 24 hours of up to two sensors (components/ha_weather/ha_history.c)
+ * as line graphs on shared axes at the end of the list: a legend, a Y-axis
+ * label column and the chart side by side, a row of times under it, and a
+ * Now / Low / High line per sensor in that sensor's colour. Left out entirely
+ * when there is no history yet. */
 #define GRAPH_H        150
 #define GRAPH_AXIS_W   56
+
+static const uint32_t SERIES_COLOR[HA_HISTORY_SERIES] = { 0x8AB4F8, 0xF6AD55 };   /* blue, orange */
 
 static void hhmm(time_t t, char *out, size_t sz)
 {
@@ -240,33 +243,44 @@ static void hhmm(time_t t, char *out, size_t sz)
 static void add_history_graph(lv_obj_t *list)
 {
     const ha_history_t *h = ha_history_acquire();
-    if (h == NULL || h->have < 2) {
+    if (h == NULL || h->count < 1) {
         ha_history_release();
         return;
     }
 
-    /* Y range: whole degrees (or units) around the data, never flatter than 2. */
-    float lo = floorf(h->min), hi = ceilf(h->max);
+    /* One Y range for every line: whole units around all the data, never flatter than 2. */
+    float mn = h->s[0].min, mx = h->s[0].max;
+    for (int k = 1; k < h->count; k++) {
+        mn = fminf(mn, h->s[k].min);
+        mx = fmaxf(mx, h->s[k].max);
+    }
+    float lo = floorf(mn), hi = ceilf(mx);
     if (hi - lo < 2.0f) {
         lo -= 1.0f;
         hi += 1.0f;
     }
 
-    char title[120], unit[16];
-    snprintf(unit, sizeof(unit), "%s", h->unit);
-    snprintf(title, sizeof(title), "%s \xE2\x80\x93 last 24 hours", h->name[0] ? h->name : h->entity);
-
     lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
     lv_obj_set_height(gap, 10);
-    lv_obj_t *heading = add_label(list, &gcal_font_20, HEAD_COLOR, title);
+    lv_obj_t *heading = add_label(list, &gcal_font_20, HEAD_COLOR, "Last 24 hours");
     lv_obj_set_width(heading, LV_PCT(100));
-    lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
+
+    /* Legend: a coloured bar and the sensor's name, one per line on the graph. */
+    lv_obj_t *legend = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(legend, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(legend, 24, 0);
+    for (int k = 0; k < h->count; k++) {
+        const ha_series_t *sr = &h->s[k];
+        char key[80];
+        snprintf(key, sizeof(key), "\xE2\x80\x94\xE2\x80\x94 %s", sr->name[0] ? sr->name : sr->entity);
+        add_label(legend, &gcal_font_14, SERIES_COLOR[k], key);
+    }
 
     lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_column(row, 6, 0);
 
-    /* Y-axis labels: the range top and bottom, spread over the chart's height. */
+    /* Y-axis labels: the range top, middle and bottom, spread over the chart's height. */
     lv_obj_t *axis = add_container(row, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_size(axis, GRAPH_AXIS_W, GRAPH_H);
     lv_obj_set_flex_align(axis, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
@@ -290,14 +304,17 @@ static void add_history_graph(lv_obj_t *list)
     lv_obj_set_style_pad_all(chart, 0, 0);
     lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2C2E), LV_PART_MAIN);
     lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
-    lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);   /* a plain line, no dots */
+    lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);   /* plain lines, no dots */
     lv_obj_set_style_line_width(chart, 3, LV_PART_ITEMS);
     lv_obj_clear_flag(chart, LV_OBJ_FLAG_CLICKABLE);      /* taps and drags go to the list */
     lv_obj_add_flag(chart, LV_OBJ_FLAG_EVENT_BUBBLE);
-    lv_chart_series_t *ser = lv_chart_add_series(chart, lv_color_hex(ICON_COLOR), LV_CHART_AXIS_PRIMARY_Y);
-    for (int i = 0; i < HA_HISTORY_POINTS; i++) {
-        lv_chart_set_value_by_id(chart, ser, i,
-                                 isnan(h->v[i]) ? LV_CHART_POINT_NONE : (lv_coord_t)lroundf(h->v[i] * 10.0f));
+    for (int k = 0; k < h->count; k++) {
+        lv_chart_series_t *ser = lv_chart_add_series(chart, lv_color_hex(SERIES_COLOR[k]),
+                                                     LV_CHART_AXIS_PRIMARY_Y);
+        for (int i = 0; i < HA_HISTORY_POINTS; i++) {
+            lv_chart_set_value_by_id(chart, ser, i, isnan(h->s[k].v[i]) ? LV_CHART_POINT_NONE
+                                                  : (lv_coord_t)lroundf(h->s[k].v[i] * 10.0f));
+        }
     }
     lv_chart_refresh(chart);
 
@@ -315,17 +332,18 @@ static void add_history_graph(lv_obj_t *list)
     add_label(times, &gcal_font_14, DIM_COLOR, b);
     add_label(times, &gcal_font_14, DIM_COLOR, c);
 
-    /* "Now 16.1 °C   Low 10.5 at 04:43   High 23.6 at 13:47" */
-    float now_v = h->v[HA_HISTORY_POINTS - 1];
-    char lo_t[8], hi_t[8];
-    hhmm(t_end - (time_t)(HA_HISTORY_POINTS - 1 - h->min_i) * h->step_s, lo_t, sizeof(lo_t));
-    hhmm(t_end - (time_t)(HA_HISTORY_POINTS - 1 - h->max_i) * h->step_s, hi_t, sizeof(hi_t));
-    snprintf(buf, sizeof(buf), "%s", unit[0] ? unit : "");
-    char line[160];
-    snprintf(line, sizeof(line), "Now %.1f%s%s    Low %.1f at %s    High %.1f at %s", (double)now_v,
-             unit[0] ? " " : "", unit, (double)h->min, lo_t, (double)h->max, hi_t);
-    lv_obj_t *sum = add_label(list, &gcal_font_14, TEXT_COLOR, line);
-    lv_obj_set_width(sum, LV_PCT(100));
+    /* "Now 16.1 °C    Low 10.5 at 04:43    High 23.6 at 13:47" per line, in its colour. */
+    for (int k = 0; k < h->count; k++) {
+        const ha_series_t *sr = &h->s[k];
+        char lo_t[8], hi_t[8], line[160];
+        hhmm(t_end - (time_t)(HA_HISTORY_POINTS - 1 - sr->min_i) * h->step_s, lo_t, sizeof(lo_t));
+        hhmm(t_end - (time_t)(HA_HISTORY_POINTS - 1 - sr->max_i) * h->step_s, hi_t, sizeof(hi_t));
+        snprintf(line, sizeof(line), "Now %.1f%s%s    Low %.1f at %s    High %.1f at %s",
+                 (double)sr->v[HA_HISTORY_POINTS - 1], sr->unit[0] ? " " : "", sr->unit,
+                 (double)sr->min, lo_t, (double)sr->max, hi_t);
+        lv_obj_t *sum = add_label(list, &gcal_font_14, SERIES_COLOR[k], line);
+        lv_obj_set_width(sum, LV_PCT(100));
+    }
     ha_history_release();
 }
 

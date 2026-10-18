@@ -192,6 +192,9 @@ typedef struct {
      * history, see ha_weather/ha_history.c). Blank = the temperature sensor
      * the clock is showing. */
     char ha_graph_entity[64];
+    /* A second line on the same graph. Blank = the BOM observation,
+     * "<ha_bom_prefix>temp" (e.g. sensor.rutherglen_temp). */
+    char ha_graph2_entity[64];
     /* Shown in the weather panel's heading ("Weather for <place> - <date>").
      * Optional; same field as on main. */
     char weather_place[40];
