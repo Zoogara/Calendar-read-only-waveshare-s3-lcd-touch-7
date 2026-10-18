@@ -407,3 +407,271 @@ void ha_history_release(void)
         xSemaphoreGive(s_lock);
     }
 }
+
+/* ---------------------------------------------------------------------------
+ * Seven-day bars: daily low / high temperature and daily rainfall.
+ * ------------------------------------------------------------------------ */
+
+#define WEEK_MAX_BYTES   (384 * 1024)
+#define WEEK_MAX_CHANGES 6000
+#define WEEK_REFRESH_US  (30LL * 60 * 1000000)
+#define WEEK_RETRY_US    (5LL * 60 * 1000000)
+#define WEEK_STALE_US    (2LL * 3600 * 1000000)
+
+typedef struct {
+    time_t t;
+    float v;
+} change_t;
+
+static ha_week_t *s_week;
+static int64_t s_week_ok_us = -1;
+static int64_t s_week_next_us;
+static char s_week_temp_ent[64], s_week_rain_ent[64];
+
+/* All numeric state changes in a minimal_response reply, in order. */
+static int scan_changes(const char *data, size_t len, change_t *out, int max)
+{
+    int n = 0;
+    char state[24], when[48];
+    const char *p = data, *stop = data + len;
+    while (n < max) {
+        const char *sp = read_value(p, stop, "\"state\":\"", state, sizeof(state));
+        if (sp == NULL) {
+            break;
+        }
+        const char *nx = strstr(sp, "\"state\":\"");
+        const char *lim = nx ? nx : stop;
+        p = sp;
+        if (read_value(sp, lim, "\"last_changed\":\"", when, sizeof(when)) == NULL &&
+            read_value(sp, lim, "\"last_updated\":\"", when, sizeof(when)) == NULL) {
+            continue;
+        }
+        char *endp;
+        float v = strtof(state, &endp);
+        if (endp == state || *endp != '\0') {
+            continue;              /* unavailable / unknown / text */
+        }
+        time_t at = parse_iso(when);
+        if (at < 0) {
+            continue;
+        }
+        out[n].t = at;
+        out[n].v = v;
+        n++;
+    }
+    return n;
+}
+
+/* Local midnights: b[0..6] for the seven days (today last), b[7] = tomorrow. */
+static void day_bounds(time_t now, time_t b[HA_WEEK_DAYS + 1])
+{
+    struct tm lt;
+    localtime_r(&now, &lt);
+    lt.tm_hour = lt.tm_min = lt.tm_sec = 0;
+    for (int i = 0; i <= HA_WEEK_DAYS; i++) {
+        struct tm d = lt;
+        d.tm_mday += i - (HA_WEEK_DAYS - 1);
+        d.tm_isdst = -1;
+        b[i] = mktime(&d);
+    }
+}
+
+/* Fetches 7 days of one entity into a PSRAM array of changes (caller frees).
+ * Returns the count, or <0 on failure. A reply that hit the size cap is
+ * refused: it would hold only the oldest days and be silently wrong. */
+static int fetch_week_changes(const app_settings_t *cfg, const char *base, const char *entity,
+                              time_t from, time_t now, change_t **out)
+{
+    char s_iso[64], e_iso[64];
+    urlencode_iso(from, s_iso, sizeof(s_iso));
+    urlencode_iso(now + 60, e_iso, sizeof(e_iso));
+    char *url = heap_caps_malloc(512, MALLOC_CAP_SPIRAM);
+    if (url == NULL) {
+        return -1;
+    }
+    snprintf(url, 512, "%s/api/history/period/%s?filter_entity_id=%s&end_time=%s"
+             "&minimal_response&no_attributes&significant_changes_only=0",
+             base, s_iso, entity, e_iso);
+    struct resp_buf resp;
+    int status = 0;
+    esp_err_t err = http_get(cfg, url, &resp, &status);
+    free(url);
+    if (err != ESP_OK || status != 200 || resp.data == NULL) {
+        ESP_LOGW(TAG, "week %s: %s, HTTP %d", entity, esp_err_to_name(err), status);
+        free(resp.data);
+        return -1;
+    }
+    if (resp.full) {
+        ESP_LOGW(TAG, "week %s: reply over %d KB - too many readings for a 7-day graph, skipped",
+                 entity, MAX_BYTES / 1024);
+        free(resp.data);
+        return -2;
+    }
+    change_t *ch = heap_caps_malloc(sizeof(change_t) * WEEK_MAX_CHANGES, MALLOC_CAP_SPIRAM);
+    if (ch == NULL) {
+        free(resp.data);
+        return -1;
+    }
+    int n = scan_changes(resp.data, resp.len, ch, WEEK_MAX_CHANGES);
+    ESP_LOGI(TAG, "week %s: %d changes in %u bytes", entity, n, (unsigned)resp.len);
+    free(resp.data);
+    *out = ch;
+    return n;
+}
+
+static void unit_of(const app_settings_t *cfg, const char *base, const char *entity, char *unit, size_t sz)
+{
+    char *url = heap_caps_malloc(512, MALLOC_CAP_SPIRAM);
+    if (url == NULL) {
+        return;
+    }
+    snprintf(url, 512, "%s/api/states/%s", base, entity);
+    struct resp_buf resp;
+    int status = 0;
+    if (http_get(cfg, url, &resp, &status) == ESP_OK && status == 200 && resp.data != NULL) {
+        cJSON *root = cJSON_Parse(resp.data);
+        cJSON *un = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(root, "attributes"),
+                                                     "unit_of_measurement");
+        if (cJSON_IsString(un) && un->valuestring) {
+            strncpy(unit, un->valuestring, sz - 1);
+        }
+        cJSON_Delete(root);
+    }
+    free(resp.data);
+    free(url);
+}
+
+esp_err_t ha_week_refresh(const app_settings_t *cfg)
+{
+    if (cfg->ha_base_url[0] == '\0' || cfg->ha_token[0] == '\0') {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_lock == NULL) {
+        s_lock = xSemaphoreCreateMutex();
+    }
+    char tbuf[64];
+    const char *t_ent = graph_entity(cfg, 0, tbuf, sizeof(tbuf));
+    const char *r_ent = cfg->ha_rain_entity;
+    bool same = strcmp(t_ent, s_week_temp_ent) == 0 && strcmp(r_ent, s_week_rain_ent) == 0;
+    if (same && esp_timer_get_time() < s_week_next_us) {
+        return ESP_OK;
+    }
+    char base[APP_SETTINGS_MAX_STR];
+    if (!base_url(cfg, base, sizeof(base))) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    time_t now = time(NULL);
+    if (now < 1700000000) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    time_t b[HA_WEEK_DAYS + 1];
+    day_bounds(now, b);
+
+    ha_week_t *w = heap_caps_calloc(1, sizeof(*w), MALLOC_CAP_SPIRAM);
+    if (w == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    memcpy(w->day, b, sizeof(w->day));
+    int ok_parts = 0;
+
+    /* Temperature: low / high per day, the value held across midnight. */
+    change_t *ch = NULL;
+    int n = t_ent[0] ? fetch_week_changes(cfg, base, t_ent, b[0] - 1, now, &ch) : -1;
+    if (n >= 0) {
+        float cur = NAN;
+        int k = 0;
+        for (int i = 0; i < HA_WEEK_DAYS; i++) {
+            float mn = INFINITY, mx = -INFINITY;
+            bool any = false;
+            if (!isnan(cur)) {
+                mn = mx = cur;
+                any = true;
+            }
+            while (k < n && ch[k].t < b[i + 1]) {
+                cur = ch[k].v;
+                if (ch[k].t >= b[i]) {
+                    if (cur < mn) {
+                        mn = cur;
+                    }
+                    if (cur > mx) {
+                        mx = cur;
+                    }
+                    any = true;
+                }
+                k++;
+            }
+            if (any) {
+                w->tmin[i] = mn;
+                w->tmax[i] = mx;
+                w->t_ok[i] = true;
+                w->t_have++;
+            }
+        }
+        unit_of(cfg, base, t_ent, w->t_unit, sizeof(w->t_unit));
+        ok_parts++;
+    }
+    free(ch);
+
+    /* Rainfall: the sensor is a running total that resets (midnight, and when
+     * the station reconnects), so each day's rain is the sum of its rises. */
+    ch = NULL;
+    n = r_ent[0] ? fetch_week_changes(cfg, base, r_ent, b[0] - 1, now, &ch) : -1;
+    if (n > 0) {
+        float prev = NAN;
+        for (int k = 0; k < n; k++) {
+            if (!isnan(prev) && ch[k].v > prev) {
+                for (int i = 0; i < HA_WEEK_DAYS; i++) {
+                    if (ch[k].t >= b[i] && ch[k].t < b[i + 1]) {
+                        w->rain[i] += ch[k].v - prev;
+                        break;
+                    }
+                }
+            }
+            prev = ch[k].v;
+        }
+        w->r_ok = true;
+        unit_of(cfg, base, r_ent, w->r_unit, sizeof(w->r_unit));
+        ok_parts++;
+    }
+    free(ch);
+
+    if (ok_parts == 0) {
+        free(w);
+        s_week_next_us = esp_timer_get_time() + WEEK_RETRY_US;
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "week: temp %d days, rain %s; highs %.1f %.1f %.1f %.1f %.1f %.1f %.1f; rain %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
+             w->t_have, w->r_ok ? "ok" : "none", (double)w->tmax[0], (double)w->tmax[1], (double)w->tmax[2],
+             (double)w->tmax[3], (double)w->tmax[4], (double)w->tmax[5], (double)w->tmax[6],
+             (double)w->rain[0], (double)w->rain[1], (double)w->rain[2], (double)w->rain[3],
+             (double)w->rain[4], (double)w->rain[5], (double)w->rain[6]);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    ha_week_t *old = s_week;
+    s_week = w;
+    s_week_ok_us = esp_timer_get_time();
+    strncpy(s_week_temp_ent, t_ent, sizeof(s_week_temp_ent) - 1);
+    strncpy(s_week_rain_ent, r_ent, sizeof(s_week_rain_ent) - 1);
+    xSemaphoreGive(s_lock);
+    free(old);
+    s_week_next_us = esp_timer_get_time() + (ok_parts == 2 || (!t_ent[0] || !r_ent[0]) ? WEEK_REFRESH_US : WEEK_RETRY_US);
+    return ESP_OK;
+}
+
+const ha_week_t *ha_week_acquire(void)
+{
+    if (s_lock == NULL) {
+        return NULL;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_week == NULL || esp_timer_get_time() - s_week_ok_us > WEEK_STALE_US) {
+        return NULL;
+    }
+    return s_week;
+}
+
+void ha_week_release(void)
+{
+    if (s_lock != NULL) {
+        xSemaphoreGive(s_lock);
+    }
+}

@@ -182,6 +182,7 @@ esp_err_t ha_weather_refresh(const app_settings_t *cfg)
     esp_err_t err = refresh_now(cfg);
     ha_weather_details_refresh(cfg);   /* independent of the temperature's success */
     ha_history_refresh(cfg);           /* the graph - throttled to every ~10 minutes inside */
+    ha_week_refresh(cfg);              /* the 7-day bars - every ~30 minutes */
     HEAP_LOG("refresh end");
     return err;
 }

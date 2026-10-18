@@ -351,6 +351,136 @@ static void add_history_graph(lv_obj_t *list)
     ha_history_release();
 }
 
+/* ---- Seven-day bar graphs: daily low / high temperature, daily rainfall ---- */
+#define BAR_H 110
+#define TEMP_HI_COLOR 0xF6AD55
+#define TEMP_LO_COLOR 0x8AB4F8
+#define RAIN_COLOR    0x5BC0EB
+
+/* One section: heading, Y labels + bar chart, and under it a label per day
+ * (weekday, then the value(s) in the bars' colours - recolor syntax). */
+static void bar_section(lv_obj_t *list, const char *title, const ha_week_t *w, int nser,
+                        const float *const vals[], const uint32_t colors[], float lo, float hi,
+                        bool temp)
+{
+    lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_height(gap, 10);
+    lv_obj_t *heading = add_label(list, &gcal_font_20, HEAD_COLOR, title);
+    lv_obj_set_width(heading, LV_PCT(100));
+    lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
+
+    const lv_coord_t chart_w = LV_HOR_RES - 64 - GRAPH_AXIS_W - 6;
+    lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_column(row, 6, 0);
+
+    lv_obj_t *axis = add_container(row, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_size(axis, GRAPH_AXIS_W, BAR_H);
+    lv_obj_set_flex_align(axis, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%.0f", (double)hi);
+    add_label(axis, &gcal_font_14, DIM_COLOR, buf);
+    snprintf(buf, sizeof(buf), "%.0f", (double)lo);
+    add_label(axis, &gcal_font_14, DIM_COLOR, buf);
+
+    lv_obj_t *chart = lv_chart_create(row);
+    lv_obj_set_size(chart, chart_w, BAR_H);
+    lv_chart_set_type(chart, LV_CHART_TYPE_BAR);
+    lv_chart_set_point_count(chart, HA_WEEK_DAYS);
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)(lo * 10), (lv_coord_t)(hi * 10));
+    lv_chart_set_div_line_count(chart, 3, 0);
+    lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(chart, 1, 0);
+    lv_obj_set_style_border_color(chart, lv_color_hex(0x3C4043), 0);
+    lv_obj_set_style_pad_all(chart, 0, 0);
+    lv_obj_set_style_pad_column(chart, 14, LV_PART_MAIN);     /* gap between days */
+    lv_obj_set_style_pad_column(chart, 2, LV_PART_ITEMS);     /* gap between a day's bars */
+    lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2C2E), LV_PART_MAIN);
+    lv_obj_set_style_radius(chart, 0, LV_PART_ITEMS);
+    lv_obj_clear_flag(chart, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(chart, LV_OBJ_FLAG_EVENT_BUBBLE);
+    for (int k = 0; k < nser; k++) {
+        lv_chart_series_t *ser = lv_chart_add_series(chart, lv_color_hex(colors[k]), LV_CHART_AXIS_PRIMARY_Y);
+        for (int i = 0; i < HA_WEEK_DAYS; i++) {
+            bool have = temp ? w->t_ok[i] : true;
+            lv_chart_set_value_by_id(chart, ser, i,
+                                     have ? (lv_coord_t)lroundf(vals[k][i] * 10.0f) : LV_CHART_POINT_NONE);
+        }
+    }
+    lv_chart_refresh(chart);
+
+    /* Weekday and value labels, one slot per day, lined up under the bars. */
+    lv_obj_t *days = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_left(days, GRAPH_AXIS_W + 6, 0);
+    lv_obj_set_style_pad_column(days, 0, 0);
+    lv_obj_set_flex_align(days, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    for (int i = 0; i < HA_WEEK_DAYS; i++) {
+        char name[8], text[96];
+        if (i == HA_WEEK_DAYS - 1) {
+            snprintf(name, sizeof(name), "Today");
+        } else {
+            struct tm lt;
+            localtime_r(&w->day[i], &lt);
+            strftime(name, sizeof(name), "%a", &lt);
+        }
+        if (temp) {
+            if (w->t_ok[i]) {
+                snprintf(text, sizeof(text), "%s\n#%06X %.1f#\n#%06X %.1f#", name, TEMP_HI_COLOR,
+                         (double)w->tmax[i], TEMP_LO_COLOR, (double)w->tmin[i]);
+            } else {
+                snprintf(text, sizeof(text), "%s\n-", name);
+            }
+        } else {
+            snprintf(text, sizeof(text), "%s\n#%06X %.1f#", name, RAIN_COLOR, (double)w->rain[i]);
+        }
+        lv_obj_t *l = add_label(days, &gcal_font_14, DIM_COLOR, text);
+        lv_label_set_recolor(l, true);
+        lv_obj_set_width(l, chart_w / HA_WEEK_DAYS);
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    }
+}
+
+static void add_week_graphs(lv_obj_t *list)
+{
+    const ha_week_t *w = ha_week_acquire();
+    if (w == NULL) {
+        ha_week_release();
+        return;
+    }
+    if (w->t_have > 0) {
+        float lo = 0.0f, hi = -1000.0f, mn = 1000.0f;
+        for (int i = 0; i < HA_WEEK_DAYS; i++) {
+            if (w->t_ok[i]) {
+                hi = fmaxf(hi, w->tmax[i]);
+                mn = fminf(mn, w->tmin[i]);
+            }
+        }
+        lo = fminf(0.0f, floorf(mn));
+        hi = ceilf(hi);
+        if (hi - lo < 2.0f) {
+            hi = lo + 2.0f;
+        }
+        const float *vals[2] = { w->tmax, w->tmin };
+        const uint32_t colors[2] = { TEMP_HI_COLOR, TEMP_LO_COLOR };
+        char title[64];
+        snprintf(title, sizeof(title), "Last 7 days \xE2\x80\x93 daily high and low%s%s",
+                 w->t_unit[0] ? " " : "", w->t_unit);
+        bar_section(list, title, w, 2, vals, colors, lo, hi, true);
+    }
+    if (w->r_ok) {
+        float hi = 2.0f;
+        for (int i = 0; i < HA_WEEK_DAYS; i++) {
+            hi = fmaxf(hi, ceilf(w->rain[i]));
+        }
+        const float *vals[1] = { w->rain };
+        const uint32_t colors[1] = { RAIN_COLOR };
+        char title[64];
+        snprintf(title, sizeof(title), "Last 7 days \xE2\x80\x93 daily rainfall %s", w->r_unit[0] ? w->r_unit : "mm");
+        bar_section(list, title, w, 1, vals, colors, 0.0f, hi, false);
+    }
+    ha_week_release();
+}
+
 bool ui_weather_is_open(void)
 {
     return s_overlay != NULL;
@@ -427,6 +557,7 @@ void ui_weather_open(void)
     }
     ha_weather_details_release();
     add_history_graph(list);
+    add_week_graphs(list);
 
     /* The opening tap's release mustn't land on the panel and close it. */
     lv_indev_t *indev = lv_indev_get_act();
