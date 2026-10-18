@@ -22,6 +22,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 #include "esp_err.h"
 #include "app_settings.h"
 
@@ -88,6 +89,34 @@ typedef struct {
  * always release, NULL or not. */
 const ha_weather_details_t *ha_weather_details_acquire(void);
 void ha_weather_details_release(void);
+
+/* ----- Sensor history graph (bottom of the weather details panel) -----
+ * The last 24 hours of one sensor (ha_graph_entity, else the temperature
+ * sensor the clock shows), resampled onto HA_HISTORY_POINTS steps of
+ * HA_HISTORY_STEP_S ending at `end`. See ha_history.c. */
+#define HA_HISTORY_POINTS  96
+#define HA_HISTORY_STEP_S  900
+
+typedef struct {
+    float v[HA_HISTORY_POINTS];   /* NAN where the sensor had no value yet */
+    time_t end;                   /* time of v[HA_HISTORY_POINTS - 1] */
+    int step_s;
+    int have;                     /* how many points have a value */
+    float min, max;
+    int min_i, max_i;             /* grid positions of min and max */
+    char entity[64];
+    char name[48];                /* friendly name, may be empty */
+    char unit[12];                /* e.g. "°C", may be empty */
+} ha_history_t;
+
+/* Fetched at most every ~10 minutes (a failure is retried after 3); call from
+ * the background network task. Done as part of ha_weather_refresh(). */
+esp_err_t ha_history_refresh(const app_settings_t *cfg);
+
+/* The latest history, or NULL if there is none or it is over an hour old.
+ * Holds a lock until ha_history_release() - keep it brief, always release. */
+const ha_history_t *ha_history_acquire(void);
+void ha_history_release(void);
 
 /* Internal: called from ha_weather_refresh(). */
 esp_err_t ha_weather_details_refresh(const app_settings_t *cfg);

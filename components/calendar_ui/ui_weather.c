@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <time.h>
 #include "esp_log.h"
 
@@ -222,6 +223,112 @@ static void add_small_day(lv_obj_t *list, const ha_forecast_day_t *d, const char
     lv_obj_set_style_text_align(r, LV_TEXT_ALIGN_RIGHT, 0);
 }
 
+/* The last 24 hours of one sensor (components/ha_weather/ha_history.c) as a
+ * line graph at the end of the list: heading, a Y-axis label column and the
+ * chart side by side, a row of times under it, and a summary line. Left out
+ * entirely when there is no history yet. */
+#define GRAPH_H        150
+#define GRAPH_AXIS_W   56
+
+static void hhmm(time_t t, char *out, size_t sz)
+{
+    struct tm lt;
+    localtime_r(&t, &lt);
+    strftime(out, sz, "%H:%M", &lt);
+}
+
+static void add_history_graph(lv_obj_t *list)
+{
+    const ha_history_t *h = ha_history_acquire();
+    if (h == NULL || h->have < 2) {
+        ha_history_release();
+        return;
+    }
+
+    /* Y range: whole degrees (or units) around the data, never flatter than 2. */
+    float lo = floorf(h->min), hi = ceilf(h->max);
+    if (hi - lo < 2.0f) {
+        lo -= 1.0f;
+        hi += 1.0f;
+    }
+
+    char title[120], unit[16];
+    snprintf(unit, sizeof(unit), "%s", h->unit);
+    snprintf(title, sizeof(title), "%s \xE2\x80\x93 last 24 hours", h->name[0] ? h->name : h->entity);
+
+    lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_height(gap, 10);
+    lv_obj_t *heading = add_label(list, &gcal_font_20, HEAD_COLOR, title);
+    lv_obj_set_width(heading, LV_PCT(100));
+    lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
+
+    lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_column(row, 6, 0);
+
+    /* Y-axis labels: the range top and bottom, spread over the chart's height. */
+    lv_obj_t *axis = add_container(row, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_size(axis, GRAPH_AXIS_W, GRAPH_H);
+    lv_obj_set_flex_align(axis, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+    char buf[40];
+    snprintf(buf, sizeof(buf), "%.0f", (double)hi);
+    add_label(axis, &gcal_font_14, DIM_COLOR, buf);
+    snprintf(buf, sizeof(buf), "%.0f", (double)((lo + hi) / 2.0f));
+    add_label(axis, &gcal_font_14, DIM_COLOR, buf);
+    snprintf(buf, sizeof(buf), "%.0f", (double)lo);
+    add_label(axis, &gcal_font_14, DIM_COLOR, buf);
+
+    lv_obj_t *chart = lv_chart_create(row);
+    lv_obj_set_size(chart, LV_HOR_RES - 64 - GRAPH_AXIS_W - 6, GRAPH_H);
+    lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(chart, HA_HISTORY_POINTS);
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)(lo * 10), (lv_coord_t)(hi * 10));
+    lv_chart_set_div_line_count(chart, 4, 7);    /* a line every 4 hours, 3 horizontal */
+    lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(chart, 1, 0);
+    lv_obj_set_style_border_color(chart, lv_color_hex(0x3C4043), 0);
+    lv_obj_set_style_pad_all(chart, 0, 0);
+    lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2C2E), LV_PART_MAIN);
+    lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
+    lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);   /* a plain line, no dots */
+    lv_obj_set_style_line_width(chart, 3, LV_PART_ITEMS);
+    lv_obj_clear_flag(chart, LV_OBJ_FLAG_CLICKABLE);      /* taps and drags go to the list */
+    lv_obj_add_flag(chart, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_chart_series_t *ser = lv_chart_add_series(chart, lv_color_hex(ICON_COLOR), LV_CHART_AXIS_PRIMARY_Y);
+    for (int i = 0; i < HA_HISTORY_POINTS; i++) {
+        lv_chart_set_value_by_id(chart, ser, i,
+                                 isnan(h->v[i]) ? LV_CHART_POINT_NONE : (lv_coord_t)lroundf(h->v[i] * 10.0f));
+    }
+    lv_chart_refresh(chart);
+
+    /* Times under the chart: start, middle, end. */
+    time_t t_end = h->end;
+    time_t t_start = t_end - (time_t)(HA_HISTORY_POINTS - 1) * h->step_s;
+    lv_obj_t *times = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(times, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_left(times, GRAPH_AXIS_W + 6, 0);
+    char a[8], b[8], c[8];
+    hhmm(t_start, a, sizeof(a));
+    hhmm((t_start + t_end) / 2, b, sizeof(b));
+    hhmm(t_end, c, sizeof(c));
+    add_label(times, &gcal_font_14, DIM_COLOR, a);
+    add_label(times, &gcal_font_14, DIM_COLOR, b);
+    add_label(times, &gcal_font_14, DIM_COLOR, c);
+
+    /* "Now 16.1 °C   Low 10.5 at 04:43   High 23.6 at 13:47" */
+    float now_v = h->v[HA_HISTORY_POINTS - 1];
+    char lo_t[8], hi_t[8];
+    hhmm(t_end - (time_t)(HA_HISTORY_POINTS - 1 - h->min_i) * h->step_s, lo_t, sizeof(lo_t));
+    hhmm(t_end - (time_t)(HA_HISTORY_POINTS - 1 - h->max_i) * h->step_s, hi_t, sizeof(hi_t));
+    snprintf(buf, sizeof(buf), "%s", unit[0] ? unit : "");
+    char line[160];
+    snprintf(line, sizeof(line), "Now %.1f%s%s    Low %.1f at %s    High %.1f at %s", (double)now_v,
+             unit[0] ? " " : "", unit, (double)h->min, lo_t, (double)h->max, hi_t);
+    lv_obj_t *sum = add_label(list, &gcal_font_14, TEXT_COLOR, line);
+    lv_obj_set_width(sum, LV_PCT(100));
+    ha_history_release();
+}
+
 bool ui_weather_is_open(void)
 {
     return s_overlay != NULL;
@@ -297,6 +404,7 @@ void ui_weather_open(void)
         }
     }
     ha_weather_details_release();
+    add_history_graph(list);
 
     /* The opening tap's release mustn't land on the panel and close it. */
     lv_indev_t *indev = lv_indev_get_act();

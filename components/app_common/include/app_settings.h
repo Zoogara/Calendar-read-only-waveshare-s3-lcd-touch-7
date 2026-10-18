@@ -188,6 +188,10 @@ typedef struct {
     char ha_rain_entity[64];
     char ha_pressure_entity[64];
     char ha_bom_prefix[48];
+    /* The sensor graphed at the bottom of the weather details panel (24 h of
+     * history, see ha_weather/ha_history.c). Blank = the temperature sensor
+     * the clock is showing. */
+    char ha_graph_entity[64];
     /* Shown in the weather panel's heading ("Weather for <place> - <date>").
      * Optional; same field as on main. */
     char weather_place[40];

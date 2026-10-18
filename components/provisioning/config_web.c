@@ -270,6 +270,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         { "ha_rain_entity", "Rainfall sensor", offsetof(app_settings_t, ha_rain_entity) },
         { "ha_pressure_entity", "Air pressure sensor", offsetof(app_settings_t, ha_pressure_entity) },
         { "ha_bom_prefix", "BOM forecast entity prefix (e.g. sensor.rutherglen_)", offsetof(app_settings_t, ha_bom_prefix) },
+        { "ha_graph_entity", "Graph sensor, last 24 hours - end of the details panel (blank = the temperature sensor)", offsetof(app_settings_t, ha_graph_entity) },
     };
     for (size_t i = 0; i < sizeof(detail_fields) / sizeof(detail_fields[0]); i++) {
         char head[160];
@@ -558,6 +559,7 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     form_get(body, "ha_rain_entity", s_cfg->ha_rain_entity, sizeof(s_cfg->ha_rain_entity));
     form_get(body, "ha_pressure_entity", s_cfg->ha_pressure_entity, sizeof(s_cfg->ha_pressure_entity));
     form_get(body, "ha_bom_prefix", s_cfg->ha_bom_prefix, sizeof(s_cfg->ha_bom_prefix));
+    form_get(body, "ha_graph_entity", s_cfg->ha_graph_entity, sizeof(s_cfg->ha_graph_entity));
     form_get(body, "weather_place", s_cfg->weather_place, sizeof(s_cfg->weather_place));
     form_get(body, "log_host", s_cfg->log_host, sizeof(s_cfg->log_host));
     form_get(body, "feed1_label", s_cfg->feed_label[0], sizeof(s_cfg->feed_label[0]));
