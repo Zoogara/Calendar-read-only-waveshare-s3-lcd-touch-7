@@ -47,6 +47,12 @@ void calendar_ui_sync_today(void);
  * the thing on screen. */
 bool calendar_ui_is_asleep(void);
 
+/* True while a full-screen panel (the weather details, "On this day" or a
+ * news feed) is open on the ambient clock. Each is built from dozens of
+ * labels in internal RAM; the background task holds off its secure (TLS)
+ * requests while one is up so the two never compete for the same memory. */
+bool calendar_ui_panel_open(void);
+
 /* Blocks the calling task until the screensaver wakes (a touch is
  * detected) or timeout_ms elapses, whichever comes first. Returns true if
  * woken by touch, false on timeout. Meant to replace a plain vTaskDelay()
