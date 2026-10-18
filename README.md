@@ -524,6 +524,34 @@ condition-to-icon table is `s_weather_glyphs[]` in
 codepoint there and to the font's `-r` list (the regenerate command is in
 the font file's header).
 
+### Sensor history graphs (end of the details panel)
+
+Three graphs below the forecast, all from Home Assistant's REST history API
+(`components/ha_weather/ha_history.c`, plain http on the LAN like the rest):
+
+- **Last 24 hours** - up to two sensors as lines on shared axes, in different
+  colours with a legend (blue / orange) and a Now / Low / High line each.
+  Line 1 is `ha_graph_entity` (blank = the temperature sensor the clock
+  shows); line 2 is `ha_graph2_entity` (blank = the BOM observation,
+  `<ha_bom_prefix>temp`). Legend names are the `ha_graph_label` /
+  `ha_graph2_label` settings (line 2 defaults to "BOM Rutherglen
+  Temperature"; blank = the sensor's own name). Resampled to 96 steps of 15
+  minutes, each holding the last value; refreshed every ~10 minutes.
+- **Last 14 days - daily high and low** - paired bars per day for line 1's
+  sensor (the value is held across midnight), with a labelled scale at every
+  gridline and the high / low under each day.
+- **Last 14 days - daily rainfall** - from `ha_rain_entity`. That sensor is a
+  running total that resets (midnight, and when the station reconnects), so a
+  day's rain is the sum of its rises.
+- Days are bucketed by the display's local midnight. Days before the first
+  reading Home Assistant still holds (it purges old history, 10 days by
+  default - this install keeps more) show a dash, not a zero. The scan reads
+  `"state"` / `"last_changed"` pairs rather than parsing JSON, so nothing big
+  is built in RAM; a reply over 640 KB (a very chatty sensor) is refused for
+  the 14-day graphs rather than drawn wrongly. The 14-day fetch is ~330 KB
+  every ~30 minutes. Typical cost: ~1.1 KB of PSRAM for the 24-hour data and
+  ~1 KB for the bars.
+
 ## On this day (this branch only)
 
 Tapping the date on the ambient clock opens a scrolling list of notable

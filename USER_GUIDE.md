@@ -58,7 +58,9 @@ Left to right:
   temperature now and what it feels like, wind (direction, speed, gusts),
   rain and air pressure; Today and Tomorrow with an icon, min / max, the
   chance and amount of rain and the full forecast; and a line each for the
-  five days after.
+  five days after. Scroll to the end for graphs: the last 24 hours of the
+  temperature (blue) and the BOM temperature (orange) as lines, then the
+  last 14 days as bars - each day's high and low, and each day's rainfall.
 - **News feeds:** with a feed address set on the config web page (*News
   feeds*), an RSS icon and its short label sit in the bottom-left corner
   (feed 1) and bottom-right (feed 2). Tap one to read that feed: a
