@@ -229,19 +229,26 @@ esp_err_t provisioning_load(app_settings_t *out)
         return ESP_ERR_NOT_FOUND;
     }
 
+    /* Saved as a blob (see provisioning_save()); an older save is a string. */
+    bool is_blob = true;
     size_t len = 0;
-    err = nvs_get_str(h, NVS_KEY_JSON, NULL, &len);
+    err = nvs_get_blob(h, NVS_KEY_JSON, NULL, &len);
+    if (err != ESP_OK) {
+        is_blob = false;
+        err = nvs_get_str(h, NVS_KEY_JSON, NULL, &len);
+    }
     if (err != ESP_OK || len == 0) {
         nvs_close(h);
         return ESP_ERR_NOT_FOUND;
     }
 
-    char *buf = malloc(len);
+    char *buf = malloc(len + 1);
     if (buf == NULL) {
         nvs_close(h);
         return ESP_ERR_NO_MEM;
     }
-    err = nvs_get_str(h, NVS_KEY_JSON, buf, &len);
+    err = is_blob ? nvs_get_blob(h, NVS_KEY_JSON, buf, &len) : nvs_get_str(h, NVS_KEY_JSON, buf, &len);
+    buf[len] = '\0';
     nvs_close(h);
     if (err != ESP_OK) {
         free(buf);
@@ -268,6 +275,7 @@ esp_err_t provisioning_save(const app_settings_t *cfg)
     if (str == NULL) {
         return ESP_ERR_NO_MEM;
     }
+    size_t json_len = strlen(str);
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
@@ -275,7 +283,11 @@ esp_err_t provisioning_save(const app_settings_t *cfg)
         free(str);
         return err;
     }
-    err = nvs_set_str(h, NVS_KEY_JSON, str);
+    /* A blob, not a string: nvs_set_str() refuses anything over ~4000 bytes
+     * (ESP_ERR_NVS_VALUE_TOO_LONG), which the settings JSON outgrew once the
+     * Home Assistant, feed and graph fields were added next to the service
+     * account's private key. The terminating NUL is stored too. */
+    err = nvs_set_blob(h, NVS_KEY_JSON, str, json_len + 1);
     if (err == ESP_OK) {
         err = nvs_commit(h);
     }
@@ -297,7 +309,8 @@ esp_err_t provisioning_save(const app_settings_t *cfg)
      * two in sync within seconds of any real change, without mounting the
      * card again mid-session. */
 
-    ESP_LOGI(TAG, "config %s", err == ESP_OK ? "saved" : "save FAILED");
+    ESP_LOGI(TAG, "config %s (%u bytes, %s)", err == ESP_OK ? "saved" : "save FAILED",
+             (unsigned)json_len, esp_err_to_name(err));
     return err;
 }
 
