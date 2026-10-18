@@ -813,6 +813,11 @@ bool calendar_ui_is_asleep(void)
     return s_state != DISPLAY_CALENDAR;
 }
 
+bool calendar_ui_panel_open(void)
+{
+    return ui_weather_is_open() || ui_history_is_open() || ui_feed_is_open();
+}
+
 bool calendar_ui_wait_wake(uint32_t timeout_ms)
 {
     EventBits_t bits = xEventGroupWaitBits(s_wake_event, WAKE_BIT, pdTRUE, pdFALSE,

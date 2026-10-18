@@ -233,6 +233,24 @@ static void wifi_bringup_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/* The weather, "On this day" and news-feed panels cost 10-25KB of internal RAM
+ * while open, and a TLS request (calendar sync, "On this day", feeds) needs
+ * its own contiguous chunk - seen on hardware with the weather panel open the
+ * largest free block fell to 7KB during a sync. The panels close themselves
+ * after a minute untouched, so hold the request until then. Gives up after
+ * PANEL_WAIT_MAX_S so a panel being scrolled for ever can't starve the sync. */
+#define PANEL_WAIT_MAX_S 150
+
+static void wait_for_panels(const char *what)
+{
+    for (int waited = 0; calendar_ui_panel_open() && waited < PANEL_WAIT_MAX_S; waited++) {
+        if (waited == 0) {
+            ESP_LOGI(TAG, "a panel is open - holding %s until it closes", what);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 static void net_task(void *arg)
 {
     (void)arg;
@@ -276,6 +294,7 @@ static void net_task(void *arg)
          * event_store instead. */
         /* Make sure the mesh node we're on is actually passing traffic -
          * see wifi_sta_check_link(). Moves to another node if not. */
+        wait_for_panels("the calendar sync");
         wifi_sta_check_link();
 
         bool all_ok = false;
@@ -323,10 +342,12 @@ static void net_task(void *arg)
         weather_refresh(&s_cfg);
         /* "On this day" history for the clock's date (components/onthisday,
          * Wikipedia): a no-op except once a day. */
+        wait_for_panels("\"On this day\"");
         onthisday_refresh();
         /* The two news feeds on the clock's bottom corners
          * (components/rss_feed): each is refetched only every ~20 minutes,
          * and a no-op while its address is blank. */
+        wait_for_panels("the news feeds");
         rss_feed_refresh(&s_cfg);
 
         /* Waits for either the refresh/backoff interval above or an early
