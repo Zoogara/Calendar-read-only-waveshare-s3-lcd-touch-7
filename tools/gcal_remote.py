@@ -14,7 +14,7 @@
 Serial logging and `idf.py flash` over USB are unaffected and still work.
 """
 import argparse, base64, functools, http.server, os, re, socket, socketserver
-import sys, threading, urllib.parse, urllib.request
+import sys, threading, urllib.error, urllib.parse, urllib.request
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -96,8 +96,19 @@ def cmd_ota(a):
     req = urllib.request.Request(
         f"http://{a.device}/ota?url={urllib.parse.quote(fw_url, safe='')}", method="POST", data=b"")
     req.add_header("Authorization", "Basic " + base64.b64encode(f"x:{password}".encode()).decode())
-    with urllib.request.urlopen(req, timeout=15) as r:
-        print(r.status, r.read().decode().strip())
+    # The display needs a free 8KB chunk of internal RAM to start the update
+    # task; right after a sync or with a panel open there can briefly be none
+    # (it answers 400 / 503). Retry a few times before giving up.
+    for attempt in range(1, 7):
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                print(r.status, r.read().decode().strip())
+            break
+        except urllib.error.HTTPError as e:
+            if e.code not in (400, 503) or attempt == 6:
+                raise
+            print(f"  display not ready ({e.code}) - retrying in 5s ({attempt}/6)")
+            threading.Event().wait(5)
     print(f"serving {fw_url} - waiting for the device to download it (up to {a.wait}s, Ctrl-C to stop)")
     try:
         if done.wait(a.wait):
