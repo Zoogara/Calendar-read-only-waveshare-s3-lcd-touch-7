@@ -48,6 +48,7 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddStringToObject(root, "ha_bom_prefix", cfg->ha_bom_prefix);
     cJSON_AddStringToObject(root, "ha_graph_entity", cfg->ha_graph_entity);
     cJSON_AddStringToObject(root, "ha_graph2_entity", cfg->ha_graph2_entity);
+    cJSON_AddStringToObject(root, "ha_hourly_entity", cfg->ha_hourly_entity);
     cJSON_AddStringToObject(root, "ha_graph_label", cfg->ha_graph_label);
     cJSON_AddStringToObject(root, "ha_graph2_label", cfg->ha_graph2_label);
     cJSON_AddStringToObject(root, "weather_place", cfg->weather_place);
@@ -174,6 +175,7 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
     COPY_OR_DEFAULT(ha_bom_prefix, "ha_bom_prefix", APP_SETTINGS_DEFAULT_HA_BOM_PREFIX)
     COPY_OR_DEFAULT(ha_graph_entity, "ha_graph_entity", "")
     COPY_OR_DEFAULT(ha_graph2_entity, "ha_graph2_entity", "")
+    COPY_OR_DEFAULT(ha_hourly_entity, "ha_hourly_entity", APP_SETTINGS_DEFAULT_HA_HOURLY_ENTITY)
     COPY_OR_DEFAULT(ha_graph_label, "ha_graph_label", "")
     COPY_OR_DEFAULT(ha_graph2_label, "ha_graph2_label", APP_SETTINGS_DEFAULT_HA_GRAPH2_LABEL)
     COPY_OR_DEFAULT(weather_place, "weather_place", APP_SETTINGS_DEFAULT_WEATHER_PLACE)

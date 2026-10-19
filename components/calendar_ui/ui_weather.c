@@ -352,6 +352,163 @@ static void add_history_graph(lv_obj_t *list)
     ha_history_release();
 }
 
+/* ---- Hourly forecast: a horizontally scrolling strip, one cell per hour ----
+ * Each cell: the time, the condition icon (as wide as the cell), the forecast
+ * temperature and the chance and amount of rain. Drawn by ONE object - a wide
+ * child of a horizontally scrolling row - rather than 24 x 5 labels: with the
+ * panel open internal RAM is tight and ~120 label objects would take most of
+ * what is left. The strings are formatted once when the panel opens. */
+#define HOURLY_CELL_W 64
+#define HOURLY_H      138
+#define RAIN_COLOR_HR 0x5BC0EB
+
+static struct {
+    char time[16], temp[16], pct[12], mm[16];
+    const char *glyph;
+    bool now, day_start;
+} s_hr[HA_HOURLY_MAX];
+static int s_hr_n;
+
+/* Home Assistant condition names -> the BOM-style descriptors ui_weather_glyph() knows. */
+static const char *hourly_descriptor(const char *c)
+{
+    static const struct { const char *ha, *bom; } MAP[] = {
+        {"sunny", "sunny"}, {"clear-night", "clear"}, {"partlycloudy", "partly_cloudy"},
+        {"cloudy", "cloudy"}, {"rainy", "rain"}, {"pouring", "heavy_shower"},
+        {"lightning", "storm"}, {"lightning-rainy", "storm"}, {"fog", "fog"},
+        {"hail", "heavy_shower"}, {"snowy", "snow"}, {"snowy-rainy", "snow"},
+        {"windy", "windy"}, {"windy-variant", "windy"},
+    };
+    for (size_t i = 0; i < sizeof(MAP) / sizeof(MAP[0]); i++) {
+        if (strcmp(c, MAP[i].ha) == 0) {
+            return MAP[i].bom;
+        }
+    }
+    return "";
+}
+
+static void hourly_draw_cb(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_target(e);
+    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    for (int i = 0; i < s_hr_n; i++) {
+        lv_area_t cell = { a.x1 + i * HOURLY_CELL_W, a.y1, a.x1 + (i + 1) * HOURLY_CELL_W - 2, a.y2 };
+        lv_area_t vis;
+        if (!_lv_area_intersect(&vis, &cell, ctx->clip_area)) {
+            continue;                             /* off screen in the scrolled row */
+        }
+        if (s_hr[i].now) {
+            lv_draw_rect_dsc_t bg;
+            lv_draw_rect_dsc_init(&bg);
+            bg.bg_color = lv_color_hex(0x1B2A3F);
+            bg.bg_opa = LV_OPA_COVER;
+            bg.radius = 8;
+            lv_draw_rect(ctx, &bg, &cell);
+        }
+        if (s_hr[i].day_start) {                  /* a faint line where a new day begins */
+            lv_draw_line_dsc_t ln;
+            lv_draw_line_dsc_init(&ln);
+            ln.color = lv_color_hex(0x3C4043);
+            ln.width = 1;
+            lv_point_t p1 = { cell.x1 - 1, cell.y1 + 6 }, p2 = { cell.x1 - 1, cell.y2 - 6 };
+            lv_draw_line(ctx, &ln, &p1, &p2);
+        }
+        lv_draw_label_dsc_t d;
+        lv_area_t r;
+        /* time */
+        lv_draw_label_dsc_init(&d);
+        d.font = &gcal_font_14;
+        d.color = lv_color_hex(s_hr[i].now ? HEAD_COLOR : DIM_COLOR);
+        d.align = LV_TEXT_ALIGN_CENTER;
+        r = (lv_area_t){ cell.x1, cell.y1 + 4, cell.x2, cell.y1 + 22 };
+        lv_draw_label(ctx, &d, &r, s_hr[i].time, NULL);
+        /* icon, filling the cell width */
+        d.font = &gcal_font_weather_48;
+        d.color = lv_color_hex(ICON_COLOR);
+        r = (lv_area_t){ cell.x1, cell.y1 + 26, cell.x2, cell.y1 + 78 };
+        lv_draw_label(ctx, &d, &r, s_hr[i].glyph, NULL);
+        /* temperature */
+        d.font = &gcal_font_20;
+        d.color = lv_color_hex(HEAD_COLOR);
+        r = (lv_area_t){ cell.x1, cell.y1 + 82, cell.x2, cell.y1 + 104 };
+        lv_draw_label(ctx, &d, &r, s_hr[i].temp, NULL);
+        /* chance of rain, then the amount when there is some */
+        d.font = &gcal_font_14;
+        d.color = lv_color_hex(RAIN_COLOR_HR);
+        r = (lv_area_t){ cell.x1, cell.y1 + 106, cell.x2, cell.y1 + 122 };
+        lv_draw_label(ctx, &d, &r, s_hr[i].pct, NULL);
+        if (s_hr[i].mm[0]) {
+            d.color = lv_color_hex(TEXT_COLOR);
+            r = (lv_area_t){ cell.x1, cell.y1 + 121, cell.x2, cell.y1 + 137 };
+            lv_draw_label(ctx, &d, &r, s_hr[i].mm, NULL);
+        }
+    }
+}
+
+static void add_hourly_strip(lv_obj_t *list)
+{
+    const ha_hourly_t *h = ha_hourly_acquire();
+    if (h == NULL || h->count == 0) {
+        ha_hourly_release();
+        return;
+    }
+    s_hr_n = h->count;
+    int prev_day = -1;
+    for (int i = 0; i < h->count; i++) {
+        struct tm lt;
+        localtime_r(&h->t[i], &lt);
+        int h12 = lt.tm_hour % 12 == 0 ? 12 : lt.tm_hour % 12;
+        if (i == 0) {
+            snprintf(s_hr[i].time, sizeof(s_hr[i].time), "Now");
+        } else {
+            snprintf(s_hr[i].time, sizeof(s_hr[i].time), "%d %s", h12, lt.tm_hour < 12 ? "AM" : "PM");
+        }
+        if (isnan(h->temp[i])) {
+            snprintf(s_hr[i].temp, sizeof(s_hr[i].temp), "-");
+        } else {
+            snprintf(s_hr[i].temp, sizeof(s_hr[i].temp), "%.0f" DEG, (double)h->temp[i]);
+        }
+        if (h->rain_pct[i] >= 0) {
+            snprintf(s_hr[i].pct, sizeof(s_hr[i].pct), "%d%%", h->rain_pct[i]);
+        } else {
+            s_hr[i].pct[0] = '\0';
+        }
+        if (h->rain_mm[i] >= 0.1f) {
+            snprintf(s_hr[i].mm, sizeof(s_hr[i].mm), "%.1f mm", (double)h->rain_mm[i]);
+        } else {
+            s_hr[i].mm[0] = '\0';
+        }
+        bool night = h->night[i] || strcmp(h->cond[i], "clear-night") == 0;
+        s_hr[i].glyph = ui_weather_glyph(hourly_descriptor(h->cond[i]), night);
+        s_hr[i].now = (i == 0);
+        s_hr[i].day_start = (i > 0 && lt.tm_yday != prev_day);
+        prev_day = lt.tm_yday;
+    }
+    ha_hourly_release();
+
+    lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_height(gap, 10);
+    lv_obj_t *heading = add_label(list, &gcal_font_20, HEAD_COLOR, "Next 24 hours");
+    lv_obj_set_width(heading, LV_PCT(100));
+
+    /* The scrolling row; its one wide child is the drawn strip. Horizontal
+     * drags scroll it, vertical ones fall through to the panel's list. */
+    lv_obj_t *row = lv_obj_create(list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), HOURLY_H);
+    lv_obj_set_scroll_dir(row, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_add_flag(row, LV_OBJ_FLAG_EVENT_BUBBLE | LV_OBJ_FLAG_SCROLL_CHAIN_VER);
+    lv_obj_t *strip = lv_obj_create(row);
+    lv_obj_remove_style_all(strip);
+    lv_obj_set_size(strip, HOURLY_CELL_W * s_hr_n, HOURLY_H);
+    lv_obj_clear_flag(strip, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(strip, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_event_cb(strip, hourly_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
+}
+
 /* ---- Wind: 24-hour speed and gust lines with an arrow for each hour ---- */
 #define WIND_CHART_H   130
 #define WIND_ARROWS_H  34
@@ -806,6 +963,7 @@ void ui_weather_open(void)
         }
     }
     ha_weather_details_release();
+    add_hourly_strip(list);
     add_history_graph(list);
     add_wind_section(list);
     add_week_graphs(list);

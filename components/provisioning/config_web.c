@@ -273,6 +273,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         { "ha_bom_prefix", "BOM forecast entity prefix (e.g. sensor.rutherglen_)", offsetof(app_settings_t, ha_bom_prefix) },
         { "ha_graph_entity", "Graph line 1, last 24 hours - end of the details panel (blank = the temperature sensor)", offsetof(app_settings_t, ha_graph_entity) },
         { "ha_graph2_entity", "Graph line 2 (blank = the BOM temperature, <prefix>temp)", offsetof(app_settings_t, ha_graph2_entity) },
+        { "ha_hourly_entity", "Hourly forecast sensor (24 hours of datetime_N, temperature_N, condition_N, ...) - blank = no hourly strip", offsetof(app_settings_t, ha_hourly_entity) },
         { "ha_graph_label", "Graph line 1 name in the legend (blank = the sensor's own name)", offsetof(app_settings_t, ha_graph_label) },
         { "ha_graph2_label", "Graph line 2 name in the legend (blank = the sensor's own name)", offsetof(app_settings_t, ha_graph2_label) },
     };
@@ -566,6 +567,7 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     form_get(body, "ha_graph_entity", s_cfg->ha_graph_entity, sizeof(s_cfg->ha_graph_entity));
     form_get(body, "ha_wdeg_entity", s_cfg->ha_wdeg_entity, sizeof(s_cfg->ha_wdeg_entity));
     form_get(body, "ha_graph2_entity", s_cfg->ha_graph2_entity, sizeof(s_cfg->ha_graph2_entity));
+    form_get(body, "ha_hourly_entity", s_cfg->ha_hourly_entity, sizeof(s_cfg->ha_hourly_entity));
     form_get(body, "ha_graph_label", s_cfg->ha_graph_label, sizeof(s_cfg->ha_graph_label));
     form_get(body, "ha_graph2_label", s_cfg->ha_graph2_label, sizeof(s_cfg->ha_graph2_label));
     form_get(body, "weather_place", s_cfg->weather_place, sizeof(s_cfg->weather_place));

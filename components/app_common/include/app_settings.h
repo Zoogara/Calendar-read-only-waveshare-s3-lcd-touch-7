@@ -199,6 +199,11 @@ typedef struct {
     /* A second line on the same graph. Blank = the BOM observation,
      * "<ha_bom_prefix>temp" (e.g. sensor.rutherglen_temp). */
     char ha_graph2_entity[64];
+    /* Hourly forecast for the weather panel's horizontal strip: a sensor whose
+     * attributes hold datetime_N / temperature_N / condition_N /
+     * precipitation_N / precipitation_probability_N for N = 0..23 (the
+     * "Hourly Weather Data" template sensor). Blank = no strip. */
+    char ha_hourly_entity[64];
     /* Names shown in the graph's legend; blank = the sensor's own name from
      * Home Assistant. Line 2 defaults to APP_SETTINGS_DEFAULT_HA_GRAPH2_LABEL. */
     char ha_graph_label[48];
@@ -245,6 +250,8 @@ typedef struct {
 #define APP_SETTINGS_DEFAULT_HA_WIND_ENTITY     "sensor.wind_speed"
 #define APP_SETTINGS_DEFAULT_HA_GUST_ENTITY     "sensor.wind_gust"
 #define APP_SETTINGS_DEFAULT_HA_WDEG_ENTITY     "sensor.wind_direction"
+
+#define APP_SETTINGS_DEFAULT_HA_HOURLY_ENTITY   "sensor.weather_data"
 #define APP_SETTINGS_DEFAULT_HA_WDIR_ENTITY     "sensor.named_wind_direction"
 #define APP_SETTINGS_DEFAULT_HA_RAIN_ENTITY     "sensor.rain_accumulation"
 #define APP_SETTINGS_DEFAULT_HA_PRESSURE_ENTITY "sensor.atmospheric_pressure_msl"

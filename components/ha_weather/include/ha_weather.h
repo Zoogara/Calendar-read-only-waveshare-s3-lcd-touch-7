@@ -177,6 +177,26 @@ esp_err_t ha_wind_refresh(const app_settings_t *cfg);
 const ha_wind_t *ha_wind_acquire(void);   /* NULL if none / over an hour old */
 void ha_wind_release(void);
 
+/* ----- Hourly forecast strip (weather panel) -----
+ * The next 24 hours from the hourly forecast sensor (ha_hourly_entity): one
+ * small GET of its state attributes, refreshed every ~5 minutes. Hour 0 is
+ * the current hour. See ha_history.c. */
+#define HA_HOURLY_MAX 24
+
+typedef struct {
+    int count;
+    time_t t[HA_HOURLY_MAX];
+    float temp[HA_HOURLY_MAX];
+    char cond[HA_HOURLY_MAX][20];     /* Home Assistant condition: "sunny", "clear-night", "rainy" ... */
+    float rain_mm[HA_HOURLY_MAX];
+    int rain_pct[HA_HOURLY_MAX];      /* chance of rain, percent; -1 if not given */
+    bool night[HA_HOURLY_MAX];        /* after sunset / before sunrise (for the day or night icon) */
+} ha_hourly_t;
+
+esp_err_t ha_hourly_refresh(const app_settings_t *cfg);
+const ha_hourly_t *ha_hourly_acquire(void);   /* NULL if none / over an hour old */
+void ha_hourly_release(void);
+
 /* True while the latest attempt at any history graph's data failed or came
  * back cut off - the weather panel shows a warning icon then. */
 bool ha_graphs_incomplete(void);

@@ -38,11 +38,11 @@ static const char *TAG = "ha_history";
 static SemaphoreHandle_t s_lock;
 /* Set when the latest attempt at a graph's data failed or came back cut off
  * (cleared by the next good one), for the warning icon on the weather panel. */
-static bool s_bad_hist, s_bad_week, s_bad_wind;
+static bool s_bad_hist, s_bad_week, s_bad_wind, s_bad_hourly;
 
 bool ha_graphs_incomplete(void)
 {
-    return s_bad_hist || s_bad_week || s_bad_wind;
+    return s_bad_hist || s_bad_week || s_bad_wind || s_bad_hourly;
 }
 
 static ha_history_t *s_cur;             /* PSRAM; NULL until the first success */
@@ -887,6 +887,148 @@ const ha_wind_t *ha_wind_acquire(void)
 }
 
 void ha_wind_release(void)
+{
+    if (s_lock != NULL) {
+        xSemaphoreGive(s_lock);
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Hourly forecast strip.
+ * ------------------------------------------------------------------------ */
+
+#define HOURLY_REFRESH_US (5LL * 60 * 1000000)
+#define HOURLY_RETRY_US   (2LL * 60 * 1000000)
+#define HOURLY_STALE_US   (60LL * 60 * 1000000)
+
+static ha_hourly_t *s_hourly;
+static int64_t s_hourly_ok_us = -1;
+static int64_t s_hourly_next_us;
+static char s_hourly_ent[64];
+
+static float num_attr(cJSON *attr, const char *fmt, int i, float dflt)
+{
+    char key[40];
+    snprintf(key, sizeof(key), fmt, i);
+    cJSON *j = cJSON_GetObjectItemCaseSensitive(attr, key);
+    return cJSON_IsNumber(j) ? (float)j->valuedouble : dflt;
+}
+
+esp_err_t ha_hourly_refresh(const app_settings_t *cfg)
+{
+    if (cfg->ha_base_url[0] == '\0' || cfg->ha_token[0] == '\0' || cfg->ha_hourly_entity[0] == '\0') {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_lock == NULL) {
+        s_lock = xSemaphoreCreateMutex();
+    }
+    if (strcmp(cfg->ha_hourly_entity, s_hourly_ent) == 0 && esp_timer_get_time() < s_hourly_next_us) {
+        return ESP_OK;
+    }
+    char base[APP_SETTINGS_MAX_STR];
+    if (!base_url(cfg, base, sizeof(base))) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    char *url = heap_caps_malloc(512, MALLOC_CAP_SPIRAM);
+    if (url == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    snprintf(url, 512, "%s/api/states/%s", base, cfg->ha_hourly_entity);
+    struct resp_buf resp;
+    int status = 0;
+    esp_err_t err = http_get(cfg, url, &resp, &status);
+    free(url);
+    if (err != ESP_OK || status != 200 || resp.data == NULL) {
+        ESP_LOGW(TAG, "hourly %s: %s, HTTP %d", cfg->ha_hourly_entity, esp_err_to_name(err), status);
+        free(resp.data);
+        s_bad_hourly = true;
+        s_hourly_next_us = esp_timer_get_time() + HOURLY_RETRY_US;
+        return err != ESP_OK ? err : ESP_FAIL;
+    }
+    cJSON *root = cJSON_Parse(resp.data);
+    free(resp.data);
+    cJSON *attr = cJSON_GetObjectItemCaseSensitive(root, "attributes");
+    ha_hourly_t *h = heap_caps_calloc(1, sizeof(*h), MALLOC_CAP_SPIRAM);
+    if (h == NULL || !cJSON_IsObject(attr)) {
+        cJSON_Delete(root);
+        free(h);
+        ESP_LOGW(TAG, "hourly %s: no attributes in the reply", cfg->ha_hourly_entity);
+        s_bad_hourly = true;
+        s_hourly_next_us = esp_timer_get_time() + HOURLY_RETRY_US;
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    /* Sunrise / sunset as seconds into the local day, for the night icons. */
+    int rise_tod = -1, set_tod = -1;
+    cJSON *sr = cJSON_GetObjectItemCaseSensitive(attr, "sunrise");
+    cJSON *ss = cJSON_GetObjectItemCaseSensitive(attr, "sunset");
+    if (cJSON_IsNumber(sr) && cJSON_IsNumber(ss)) {
+        struct tm lt;
+        time_t t = (time_t)sr->valuedouble;
+        localtime_r(&t, &lt);
+        rise_tod = lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec;
+        t = (time_t)ss->valuedouble;
+        localtime_r(&t, &lt);
+        set_tod = lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec;
+    }
+    for (int i = 0; i < HA_HOURLY_MAX; i++) {
+        char key[40];
+        snprintf(key, sizeof(key), "datetime_%d", i);
+        cJSON *dt = cJSON_GetObjectItemCaseSensitive(attr, key);
+        if (!cJSON_IsNumber(dt)) {
+            break;
+        }
+        h->t[i] = (time_t)dt->valuedouble;
+        h->temp[i] = num_attr(attr, "temperature_%d", i, NAN);
+        h->rain_mm[i] = num_attr(attr, "precipitation_%d", i, 0.0f);
+        h->rain_pct[i] = (int)lroundf(num_attr(attr, "precipitation_probability_%d", i, -1.0f));
+        snprintf(key, sizeof(key), "condition_%d", i);
+        cJSON *cd = cJSON_GetObjectItemCaseSensitive(attr, key);
+        if (cJSON_IsString(cd) && cd->valuestring) {
+            strncpy(h->cond[i], cd->valuestring, sizeof(h->cond[i]) - 1);
+        }
+        if (rise_tod >= 0) {
+            struct tm lt;
+            localtime_r(&h->t[i], &lt);
+            int tod = lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec;
+            h->night[i] = (tod >= set_tod) || (tod < rise_tod);
+        }
+        h->count = i + 1;
+    }
+    cJSON_Delete(root);
+    if (h->count == 0) {
+        free(h);
+        ESP_LOGW(TAG, "hourly %s: no hourly entries (datetime_0 ...)", cfg->ha_hourly_entity);
+        s_bad_hourly = true;
+        s_hourly_next_us = esp_timer_get_time() + HOURLY_RETRY_US;
+        return ESP_ERR_NOT_FOUND;
+    }
+    ESP_LOGI(TAG, "hourly: %d hours from %s; now %.0f, %s, rain %d%%", h->count, cfg->ha_hourly_entity,
+             (double)h->temp[0], h->cond[0], h->rain_pct[0]);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    ha_hourly_t *old = s_hourly;
+    s_hourly = h;
+    s_hourly_ok_us = esp_timer_get_time();
+    strncpy(s_hourly_ent, cfg->ha_hourly_entity, sizeof(s_hourly_ent) - 1);
+    xSemaphoreGive(s_lock);
+    free(old);
+    s_bad_hourly = false;
+    s_hourly_next_us = esp_timer_get_time() + HOURLY_REFRESH_US;
+    return ESP_OK;
+}
+
+const ha_hourly_t *ha_hourly_acquire(void)
+{
+    if (s_lock == NULL) {
+        return NULL;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_hourly == NULL || esp_timer_get_time() - s_hourly_ok_us > HOURLY_STALE_US) {
+        return NULL;
+    }
+    return s_hourly;
+}
+
+void ha_hourly_release(void)
 {
     if (s_lock != NULL) {
         xSemaphoreGive(s_lock);
