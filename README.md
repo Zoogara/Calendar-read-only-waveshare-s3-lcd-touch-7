@@ -859,10 +859,10 @@ network or against someone who can touch the hardware**. What that means in prac
   account and share only the calendars you want shown; give Home Assistant its own user for the
   token; take the card out after setup if you don't need the backup.
 - **The config web page** (runs only if you set a password) uses HTTP Basic over **plain HTTP** -
-  anyone on your network can read the password and the settings. It has no CSRF or origin checks,
-  and some saved values are put into the page without HTML escaping, so a malicious web page opened
-  in a browser that is logged in to the display could change its settings. Use a strong, unique
-  password, don't stay logged in, and keep the device on a network you control.
+  anyone on your network can read the password and the settings. Saving settings and starting an
+  update refuse requests from other web sites (Origin check), and saved values are HTML-escaped
+  when shown. Use a strong, unique password, don't stay logged in, and keep the device on a network
+  you control.
 - **The setup portal is an open access point.** On first boot, or after *Setup*, the device runs
   `GCal-Display-Setup` with no Wi-Fi password and serves its setup page over plain HTTP on
   `192.168.4.1`, so the Wi-Fi password and service-account key you type are sent unencrypted. Do
