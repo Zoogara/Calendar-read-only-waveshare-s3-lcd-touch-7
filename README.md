@@ -81,6 +81,22 @@ For a quick tour of using it - every feature, option and setting - see
 - **On this day**: tap the date on the ambient clock for notable events
   in history on today's date, from Wikipedia. See "On this day" below.
 
+## More screens
+
+| | |
+|---|---|
+| ![Week view](docs/week_view.png) **Week** | ![Day view](docs/day_view.png) **Day** |
+| ![Ambient clock at night](docs/clock_night.png) **Ambient clock, after dark** | ![Lock keypad](docs/lock_keypad.png) **Screen lock** |
+| ![On this day](docs/on_this_day.png) **On this day** (tap the date) | ![News feed](docs/news_feed.png) **News feed** (corner icon) |
+
+The weather panel (tap the weather on the clock) scrolls through its sections:
+
+| | |
+|---|---|
+| ![Weather details](docs/weather_details.png) **Now, today, tomorrow, the week** | ![Hourly forecast](docs/weather_hourly.png) **Hourly strip** (swipe sideways) |
+| ![24-hour temperature graph](docs/weather_24h.png) **24-hour graph** | ![Wind graph](docs/weather_wind.png) **Wind with hourly arrows** |
+| ![14-day highs and lows](docs/weather_14day.png) **14-day highs and lows** | ![14-day rainfall](docs/weather_rain.png) **14-day rainfall** |
+
 ## Hardware
 
 Waveshare ESP32-S3-Touch-LCD-7:
