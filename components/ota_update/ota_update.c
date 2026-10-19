@@ -19,6 +19,18 @@ esp_err_t ota_update_check_and_apply(const char *url)
         return ESP_ERR_INVALID_ARG;
     }
 
+    /* With app rollback on, esp_ota_begin() refuses (ESP_ERR_OTA_ROLLBACK_INVALID_STATE)
+     * while the running image is still pending verification - i.e. in the first
+     * minute after a restart, before ota_update_confirm_boot_after() fires. An
+     * update was asked for and this image is up and talking to us, so confirm it
+     * now rather than turn the request down. */
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t st;
+    if (running != NULL && esp_ota_get_state_partition(running, &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY) {
+        ESP_LOGI(TAG, "running image not yet confirmed - confirming it before the update");
+        esp_ota_mark_app_valid_cancel_rollback();
+    }
+
     ESP_LOGI(TAG, "fetching update from %s", url);
 
     esp_http_client_config_t http_cfg = {
