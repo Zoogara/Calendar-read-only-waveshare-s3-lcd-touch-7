@@ -37,16 +37,6 @@ static const char *TAG = "ui_weather";
 
 static lv_obj_t *s_overlay;
 
-/* TEMPORARY memory instrumentation: internal RAM after each stage of building
- * the panel, to see where its ~30KB goes. Remove once that is understood. */
-static void memlog(const char *what)
-{
-    ESP_LOGI(TAG, "[mem] %-22s internal free %6u  largest %6u  (PSRAM free %u)", what,
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-}
-
 static void delete_overlay(void)
 {
     if (s_overlay == NULL) {
@@ -973,7 +963,6 @@ void ui_weather_open(void)
         lv_obj_align(warn, LV_ALIGN_TOP_RIGHT, -32, 20);
     }
 
-    memlog("overlay + heading");
     lv_obj_t *list = lv_obj_create(s_overlay);
     lv_obj_remove_style_all(list);
     lv_obj_set_size(list, LV_HOR_RES - 64, LV_VER_RES - 72);
@@ -1012,15 +1001,10 @@ void ui_weather_open(void)
         }
     }
     ha_weather_details_release();
-    memlog("details (now/days)");
     add_hourly_strip(list);
-    memlog("hourly strip");
     add_history_graph(list);
-    memlog("24 h graph");
     add_wind_section(list);
-    memlog("wind");
     add_week_graphs(list);
-    memlog("14-day bars");
 
     /* The opening tap's release mustn't land on the panel and close it. */
     lv_indev_t *indev = lv_indev_get_act();
