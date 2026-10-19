@@ -618,7 +618,7 @@ static void ambient_brightness_tick(void)
      * DRAM exhaustion, not a light_sensor/backlight bug as such, but this
      * is the fastest way to see whether adding light_sensor's I2C device +
      * the new LEDC channel is what tipped an already-marginal internal-RAM
-     * budget (see the pre-existing TEMPORARY diag block below, tracking a
+     * budget (see the [diag] logging in check_timer_cb() below, tracking a
      * separate unexplained internal-RAM drop) over the edge. Remove once
      * that's confirmed either way. */
     if (s_diag_ticks_left > 0) {
@@ -642,12 +642,11 @@ static void ambient_brightness_tick(void)
     }
 }
 
-/* TEMPORARY - tracking down an internal-RAM drop between refresh cycles
- * that isn't explained by any populate()/fetch code path (all checked and
- * correctly paired) - logs every 30s regardless of display state to see
- * whether the drop is a step (tied to one specific event) or a gradual
- * decline (pointing at Wi-Fi/TLS session state instead). Remove once
- * root-caused. */
+/* Diagnostic: logs the internal-RAM free / largest-block figures every 30s
+ * regardless of display state. Internal RAM is this firmware's scarcest
+ * resource, and these lines (read over the wireless log - see
+ * tools/gcal_remote.py) are how a step change (tied to one event) is told
+ * from a gradual decline (a leak, or Wi-Fi/TLS session state). Cheap; kept. */
 static void check_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
