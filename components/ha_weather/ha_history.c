@@ -38,11 +38,11 @@ static const char *TAG = "ha_history";
 static SemaphoreHandle_t s_lock;
 /* Set when the latest attempt at a graph's data failed or came back cut off
  * (cleared by the next good one), for the warning icon on the weather panel. */
-static bool s_bad_hist, s_bad_week;
+static bool s_bad_hist, s_bad_week, s_bad_wind;
 
 bool ha_graphs_incomplete(void)
 {
-    return s_bad_hist || s_bad_week;
+    return s_bad_hist || s_bad_week || s_bad_wind;
 }
 
 static ha_history_t *s_cur;             /* PSRAM; NULL until the first success */
@@ -795,6 +795,7 @@ esp_err_t ha_wind_refresh(const app_settings_t *cfg)
     int ns = fetch_week_changes(cfg, base, ents[0], start - 1, now, WIND_MAX_CHANGES, &spd);
     if (ns <= 0) {
         free(spd);
+        s_bad_wind = true;
         s_wind_next_us = esp_timer_get_time() + WIND_RETRY_US;
         return ESP_FAIL;
     }
@@ -804,7 +805,8 @@ esp_err_t ha_wind_refresh(const app_settings_t *cfg)
     /* A configured sensor whose fetch failed or came back cut off must not
      * replace a good graph with one missing its gust or arrows - keep the old
      * data and try again soon. */
-    if (((ents[1][0] && ng < 0) || (ents[2][0] && nd < 0)) && s_wind != NULL) {
+    s_bad_wind = (ents[1][0] && ng < 0) || (ents[2][0] && nd < 0);
+    if (s_bad_wind && s_wind != NULL) {
         free(spd);
         free(gst);
         free(dir);
