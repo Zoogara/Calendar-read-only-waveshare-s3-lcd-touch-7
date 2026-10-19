@@ -61,6 +61,11 @@ Left to right:
   five days after. Scroll to the end for graphs: the last 24 hours of the
   temperature (blue) and the BOM temperature (orange) as lines, then the
   last 14 days as bars - each day's high and low, and each day's rainfall.
+  Above the 24-hour graph a strip you can swipe sideways shows the next 24
+  hours: the time, an icon, the temperature and the chance of rain. A wind
+  graph shows speed and gusts for the last 24 hours with an arrow for each
+  hour (the arrow points the way the wind is blowing). A small amber warning
+  triangle at the top right means a graph couldn't be loaded fully.
 - **News feeds:** with a feed address set on the config web page (*News
   feeds*), an RSS icon and its short label sit in the bottom-left corner
   (feed 1) and bottom-right (feed 2). Tap one to read that feed: a

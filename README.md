@@ -543,6 +543,26 @@ Three graphs below the forecast, all from Home Assistant's REST history API
 - **Last 14 days - daily rainfall** - from `ha_rain_entity`. That sensor is a
   running total that resets (midnight, and when the station reconnects), so a
   day's rain is the sum of its rises.
+- **Hourly forecast strip** (above the 24-hour graph, below the daily rows) - a
+  horizontally scrolling strip of the next 24 hours: time, the condition icon
+  at 48 px, the forecast temperature, the chance of rain and, when some is
+  forecast, the amount. One GET of `ha_hourly_entity` (default
+  `sensor.weather_data`, whose attributes are `datetime_N`, `temperature_N`,
+  `condition_N`, `precipitation_N`, `precipitation_probability_N` for N = 0-23)
+  every ~5 minutes. Drawn by a single custom-draw object, not 24 x 5 labels:
+  with the panel open internal RAM is tight. Home Assistant's condition names
+  are mapped to the BOM-style icons in `hourly_descriptor()`.
+- **Wind - last 24 hours** - speed (blue) and gust (orange) lines from
+  `ha_wind_entity` / `ha_gust_entity`, with an arrow per hour above them from
+  `ha_wdeg_entity` (wind direction in degrees, default `sensor.wind_direction`):
+  each is the speed-weighted vector-mean direction for the hour, pointing the
+  way the wind blows, orange when the hour averages 12 km/h or more, a dot when
+  calm. The arithmetic is `ha_wind_calc.c`, pure C and host-tested. About 3,400
+  speed readings a day, so three fetches of ~200 KB every ~10 minutes.
+- **Warning icon** - an amber triangle at the top right of the panel while the
+  latest attempt at any history graph or the hourly strip failed or came back
+  cut off (the reply must be complete, end `]]`, and a failed half never
+  replaces good data).
 - Days are bucketed by the display's local midnight. Days before the first
   reading Home Assistant still holds (it purges old history, 10 days by
   default - this install keeps more) show a dash, not a zero. The scan reads
