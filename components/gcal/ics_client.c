@@ -71,8 +71,12 @@ static void normalize_and_unfold(char *s)
     char *r = s, *w = s;
     while (*r) {
         if (r[0] == '\r' && r[1] == '\n') {
-            r += 2;
-            *w++ = '\n';
+            if (r[2] == ' ' || r[2] == '\t') {
+                r += 3;                 /* CRLF + space: a fold - rejoin */
+            } else {
+                r += 2;
+                *w++ = '\n';
+            }
         } else if (r[0] == '\n' && (r[1] == ' ' || r[1] == '\t')) {
             r += 2;
         } else {
@@ -102,9 +106,10 @@ static bool prop_match(const char *line, const char *name, const char **out_valu
     return true;
 }
 
-/* Substring search restricted to the "NAME;params" portion of a line
- * (before the first ':') - used to look for e.g. "VALUE=DATE" without
- * false-matching something that happens to appear in the value itself. */
+/* Looks for one whole parameter (e.g. "VALUE=DATE") in the "NAME;params"
+ * portion of a line (before the first ':'), without false-matching something
+ * that happens to appear in the value itself, or a longer parameter that
+ * starts the same way ("VALUE=DATE-TIME"). */
 static bool params_contain(const char *line, const char *needle)
 {
     const char *colon = strchr(line, ':');
@@ -113,8 +118,9 @@ static bool params_contain(const char *line, const char *needle)
     if (needle_len > prefix_len) {
         return false;
     }
-    for (size_t i = 0; i + needle_len <= prefix_len; i++) {
-        if (strncmp(line + i, needle, needle_len) == 0) {
+    for (size_t i = 1; i + needle_len <= prefix_len; i++) {
+        if (line[i - 1] == ';' && strncmp(line + i, needle, needle_len) == 0 &&
+            (i + needle_len == prefix_len || line[i + needle_len] == ';')) {
             return true;
         }
     }
