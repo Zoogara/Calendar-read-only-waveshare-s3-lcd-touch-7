@@ -5,3 +5,8 @@ sdkconfig.old
 *.d
 .DS_Store
 extracted_display_touch_bsp/
+
+# host-side screenshot renderer
+tools/screenshots/build/
+tools/screenshots/out/
+tools/screenshots/render
