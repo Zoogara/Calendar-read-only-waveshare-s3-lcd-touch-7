@@ -788,8 +788,13 @@ network or against someone who can touch the hardware**. What that means in prac
 - **The config web page** (runs only if you set a password) uses HTTP Basic over **plain HTTP** -
   anyone on your network can read the password and the settings. Saving settings and starting an
   update refuse requests from other web sites (Origin check), and saved values are HTML-escaped
-  when shown. Use a strong, unique password, don't stay logged in, and keep the device on a network
-  you control.
+  when shown. The password is compared in constant time, and wrong guesses are throttled: after 5
+  failures in a row every request gets `429 Too Many Requests` (with a `Retry-After` header) for
+  30 s - even one with the right password - and each further wrong guess locks it out for twice as
+  long, up to 15 minutes; a correct password resets the count. The counter lives in RAM only, so a
+  restart clears it, and it is **per device, not per client**: anyone on your network can keep the
+  page locked against you for up to 15 minutes at a time (the display itself is unaffected). Use a
+  strong, unique password, don't stay logged in, and keep the device on a network you control.
 - **The setup portal is an open access point.** On first boot, or after *Setup*, the device runs
   `GCal-Display-Setup` with no Wi-Fi password and serves its setup page over plain HTTP on
   `192.168.4.1`, so the Wi-Fi password and service-account key you type are sent unencrypted. Do
