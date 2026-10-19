@@ -801,6 +801,17 @@ esp_err_t ha_wind_refresh(const app_settings_t *cfg)
     int ng = ents[1][0] ? fetch_week_changes(cfg, base, ents[1], start - 1, now, WIND_MAX_CHANGES, &gst) : -1;
     int nd = ents[2][0] ? fetch_week_changes(cfg, base, ents[2], start - 1, now, WIND_MAX_CHANGES, &dir) : -1;
 
+    /* A configured sensor whose fetch failed or came back cut off must not
+     * replace a good graph with one missing its gust or arrows - keep the old
+     * data and try again soon. */
+    if (((ents[1][0] && ng < 0) || (ents[2][0] && nd < 0)) && s_wind != NULL) {
+        free(spd);
+        free(gst);
+        free(dir);
+        s_wind_next_us = esp_timer_get_time() + WIND_RETRY_US;
+        return ESP_FAIL;
+    }
+
     ha_wind_t *w = heap_caps_calloc(1, sizeof(*w), MALLOC_CAP_SPIRAM);
     if (w == NULL) {
         free(spd);
