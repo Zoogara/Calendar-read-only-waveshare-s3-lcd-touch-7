@@ -1,0 +1,13 @@
+name: host tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  parsers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run the parser tests
+        run: make -C tests/host test

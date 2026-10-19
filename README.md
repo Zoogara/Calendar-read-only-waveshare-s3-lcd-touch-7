@@ -163,6 +163,8 @@ components/
                            esp_lcd component (overrides $IDF_PATH's) -
                            fixes a real bug in the RGB panel driver, see
                            "Ambient clock digit tearing (fixed)" below
+tests/host/              unit tests for the parsers (RSS/Atom, ICS), run on a
+                           computer: `make -C tests/host test`
 ```
 
 ## Building
