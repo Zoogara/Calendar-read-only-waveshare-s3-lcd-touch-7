@@ -10,6 +10,7 @@
  * arrived, and nothing big is built in memory. Plain http:// on the LAN only,
  * like the rest of ha_weather. */
 #include "ha_weather.h"
+#include "ha_wind_calc.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -454,11 +455,6 @@ void ha_history_release(void)
 #define WEEK_RETRY_US    (5LL * 60 * 1000000)
 #define WEEK_STALE_US    (2LL * 3600 * 1000000)
 
-typedef struct {
-    time_t t;
-    float v;
-} change_t;
-
 static ha_week_t *s_week;
 static int64_t s_week_ok_us = -1;
 static int64_t s_week_next_us;
@@ -516,7 +512,7 @@ static void day_bounds(time_t now, time_t b[HA_WEEK_DAYS + 1])
  * Returns the count, or <0 on failure. A reply that hit the size cap is
  * refused: it would hold only the oldest days and be silently wrong. */
 static int fetch_week_changes(const app_settings_t *cfg, const char *base, const char *entity,
-                              time_t from, time_t now, change_t **out)
+                              time_t from, time_t now, int max, change_t **out)
 {
     char s_iso[64], e_iso[64];
     urlencode_iso(from, s_iso, sizeof(s_iso));
@@ -548,12 +544,20 @@ static int fetch_week_changes(const app_settings_t *cfg, const char *base, const
         free(resp.data);
         return -3;
     }
-    change_t *ch = heap_caps_malloc(sizeof(change_t) * WEEK_MAX_CHANGES, MALLOC_CAP_SPIRAM);
+    change_t *ch = heap_caps_malloc(sizeof(change_t) * max, MALLOC_CAP_SPIRAM);
     if (ch == NULL) {
         free(resp.data);
         return -1;
     }
-    int n = scan_changes(resp.data, resp.len, ch, WEEK_MAX_CHANGES);
+    int n = scan_changes(resp.data, resp.len, ch, max);
+    if (n >= max) {
+        /* Stopped at the array size: only the oldest readings, so the recent
+         * end would be silently missing. */
+        ESP_LOGW(TAG, "week %s: over %d readings - too many for the graph, skipped", entity, max);
+        free(ch);
+        free(resp.data);
+        return -2;
+    }
     ESP_LOGI(TAG, "week %s: %d changes in %u bytes", entity, n, (unsigned)resp.len);
     free(resp.data);
     *out = ch;
@@ -617,7 +621,7 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg)
 
     /* Temperature: low / high per day, the value held across midnight. */
     change_t *ch = NULL;
-    int n = t_ent[0] ? fetch_week_changes(cfg, base, t_ent, b[0] - 1, now, &ch) : -1;
+    int n = t_ent[0] ? fetch_week_changes(cfg, base, t_ent, b[0] - 1, now, WEEK_MAX_CHANGES, &ch) : -1;
     const bool t_failed = t_ent[0] && n < 0;
     if (n >= 0) {
         float cur = NAN;
@@ -660,7 +664,7 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg)
     /* Rainfall: the sensor is a running total that resets (midnight, and when
      * the station reconnects), so each day's rain is the sum of its rises. */
     ch = NULL;
-    n = r_ent[0] ? fetch_week_changes(cfg, base, r_ent, b[0] - 1, now, &ch) : -1;
+    n = r_ent[0] ? fetch_week_changes(cfg, base, r_ent, b[0] - 1, now, WEEK_MAX_CHANGES, &ch) : -1;
     const bool r_failed = r_ent[0] && n < 0;
     if (n > 0) {
         float prev = NAN;
@@ -736,6 +740,140 @@ const ha_week_t *ha_week_acquire(void)
 }
 
 void ha_week_release(void)
+{
+    if (s_lock != NULL) {
+        xSemaphoreGive(s_lock);
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Wind graph: speed and gust lines, hourly direction arrows.
+ * ------------------------------------------------------------------------ */
+
+#define WIND_MAX_CHANGES 8000
+#define WIND_REFRESH_US  (10LL * 60 * 1000000)
+#define WIND_RETRY_US    (3LL * 60 * 1000000)
+#define WIND_STALE_US    (60LL * 60 * 1000000)
+#define WIND_CALM_BELOW  2.0f          /* km/h-ish: under this an hour has no direction */
+
+static ha_wind_t *s_wind;
+static int64_t s_wind_ok_us = -1;
+static int64_t s_wind_next_us;
+static char s_wind_ents[3][64];
+
+esp_err_t ha_wind_refresh(const app_settings_t *cfg)
+{
+    if (cfg->ha_base_url[0] == '\0' || cfg->ha_token[0] == '\0' || cfg->ha_wind_entity[0] == '\0') {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_lock == NULL) {
+        s_lock = xSemaphoreCreateMutex();
+    }
+    const char *ents[3] = { cfg->ha_wind_entity, cfg->ha_gust_entity, cfg->ha_wdeg_entity };
+    bool same = true;
+    for (int i = 0; i < 3; i++) {
+        if (strcmp(ents[i], s_wind_ents[i]) != 0) {
+            same = false;
+        }
+    }
+    if (same && esp_timer_get_time() < s_wind_next_us) {
+        return ESP_OK;
+    }
+    char base[APP_SETTINGS_MAX_STR];
+    if (!base_url(cfg, base, sizeof(base))) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    time_t now = time(NULL);
+    if (now < 1700000000) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    time_t end = now - now % HA_HISTORY_STEP_S;
+    time_t start = end - (time_t)HA_WIND_STEPS * HA_HISTORY_STEP_S;
+
+    /* Speed first - without it there is no graph. */
+    change_t *spd = NULL, *gst = NULL, *dir = NULL;
+    int ns = fetch_week_changes(cfg, base, ents[0], start - 1, now, WIND_MAX_CHANGES, &spd);
+    if (ns <= 0) {
+        free(spd);
+        s_wind_next_us = esp_timer_get_time() + WIND_RETRY_US;
+        return ESP_FAIL;
+    }
+    int ng = ents[1][0] ? fetch_week_changes(cfg, base, ents[1], start - 1, now, WIND_MAX_CHANGES, &gst) : -1;
+    int nd = ents[2][0] ? fetch_week_changes(cfg, base, ents[2], start - 1, now, WIND_MAX_CHANGES, &dir) : -1;
+
+    ha_wind_t *w = heap_caps_calloc(1, sizeof(*w), MALLOC_CAP_SPIRAM);
+    if (w == NULL) {
+        free(spd);
+        free(gst);
+        free(dir);
+        return ESP_ERR_NO_MEM;
+    }
+    w->end = end;
+    wind_resample_mean(spd, ns, start, HA_HISTORY_STEP_S, HA_WIND_STEPS, w->speed);
+    if (ng > 0) {
+        wind_resample_max(gst, ng, start, HA_HISTORY_STEP_S, HA_WIND_STEPS, w->gust);
+        w->gust_ok = true;
+    }
+    w->now_speed = spd[ns - 1].v;
+    w->now_dir = -1.0f;
+    w->prevailing = -1.0f;
+    if (nd > 0) {
+        wind_hour_t hr[HA_WIND_HOURS];
+        wind_hourly(dir, nd, spd, ns, start, HA_WIND_HOURS, WIND_CALM_BELOW, hr);
+        for (int i = 0; i < HA_WIND_HOURS; i++) {
+            w->hr_dir[i] = hr[i].dir;
+            w->hr_speed[i] = hr[i].speed;
+            w->hr_calm[i] = hr[i].calm;
+        }
+        w->dir_ok = true;
+        w->prevailing = wind_overall_dir(hr, HA_WIND_HOURS);
+        if (!hr[HA_WIND_HOURS - 1].calm) {
+            w->now_dir = hr[HA_WIND_HOURS - 1].dir;
+        }
+    }
+    float mg = -1.0f;
+    for (int i = 0; i < HA_WIND_STEPS; i++) {
+        float v = w->gust_ok ? w->gust[i] : w->speed[i];
+        if (!isnan(v) && v > mg) {
+            mg = v;
+            w->max_gust_i = i;
+        }
+    }
+    w->max_gust = mg;
+    unit_of(cfg, base, ents[0], w->unit, sizeof(w->unit));
+    free(spd);
+    free(gst);
+    free(dir);
+
+    ESP_LOGI(TAG, "wind: %d speed, %d gust, %d direction readings; now %.1f %s, max gust %.1f, prevailing %s",
+             ns, ng, nd, (double)w->now_speed, w->unit, (double)w->max_gust,
+             w->prevailing >= 0 ? wind_compass16(w->prevailing) : "-");
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    ha_wind_t *old = s_wind;
+    s_wind = w;
+    s_wind_ok_us = esp_timer_get_time();
+    for (int i = 0; i < 3; i++) {
+        strncpy(s_wind_ents[i], ents[i], sizeof(s_wind_ents[i]) - 1);
+    }
+    xSemaphoreGive(s_lock);
+    free(old);
+    s_wind_next_us = esp_timer_get_time() + WIND_REFRESH_US;
+    return ESP_OK;
+}
+
+const ha_wind_t *ha_wind_acquire(void)
+{
+    if (s_lock == NULL) {
+        return NULL;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_wind == NULL || esp_timer_get_time() - s_wind_ok_us > WIND_STALE_US) {
+        return NULL;
+    }
+    return s_wind;
+}
+
+void ha_wind_release(void)
 {
     if (s_lock != NULL) {
         xSemaphoreGive(s_lock);

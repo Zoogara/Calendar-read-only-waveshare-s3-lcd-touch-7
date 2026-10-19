@@ -267,6 +267,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         { "ha_wind_entity", "Wind speed sensor", offsetof(app_settings_t, ha_wind_entity) },
         { "ha_gust_entity", "Wind gust sensor", offsetof(app_settings_t, ha_gust_entity) },
         { "ha_wdir_entity", "Wind direction sensor (e.g. NNW)", offsetof(app_settings_t, ha_wdir_entity) },
+        { "ha_wdeg_entity", "Wind direction in degrees - arrows on the wind graph (blank = no arrows)", offsetof(app_settings_t, ha_wdeg_entity) },
         { "ha_rain_entity", "Rainfall sensor", offsetof(app_settings_t, ha_rain_entity) },
         { "ha_pressure_entity", "Air pressure sensor", offsetof(app_settings_t, ha_pressure_entity) },
         { "ha_bom_prefix", "BOM forecast entity prefix (e.g. sensor.rutherglen_)", offsetof(app_settings_t, ha_bom_prefix) },
@@ -563,6 +564,7 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     form_get(body, "ha_pressure_entity", s_cfg->ha_pressure_entity, sizeof(s_cfg->ha_pressure_entity));
     form_get(body, "ha_bom_prefix", s_cfg->ha_bom_prefix, sizeof(s_cfg->ha_bom_prefix));
     form_get(body, "ha_graph_entity", s_cfg->ha_graph_entity, sizeof(s_cfg->ha_graph_entity));
+    form_get(body, "ha_wdeg_entity", s_cfg->ha_wdeg_entity, sizeof(s_cfg->ha_wdeg_entity));
     form_get(body, "ha_graph2_entity", s_cfg->ha_graph2_entity, sizeof(s_cfg->ha_graph2_entity));
     form_get(body, "ha_graph_label", s_cfg->ha_graph_label, sizeof(s_cfg->ha_graph_label));
     form_get(body, "ha_graph2_label", s_cfg->ha_graph2_label, sizeof(s_cfg->ha_graph2_label));

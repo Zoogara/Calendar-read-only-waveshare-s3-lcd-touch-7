@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include "ha_wind_calc.h"
 #include <time.h>
 #include "esp_log.h"
 
@@ -351,6 +352,211 @@ static void add_history_graph(lv_obj_t *list)
     ha_history_release();
 }
 
+/* ---- Wind: 24-hour speed and gust lines with an arrow for each hour ---- */
+#define WIND_CHART_H   130
+#define WIND_ARROWS_H  34
+#define WIND_GUST_COLOR 0xF6AD55
+#define WIND_STRONG     12.0f     /* an hour at or above this (km/h) is drawn in the gust colour */
+
+static struct {
+    float dir;        /* degrees the wind comes FROM */
+    bool calm;
+    uint32_t color;
+} s_arrows[HA_WIND_HOURS];
+
+/* One arrow per hour, evenly spread over the object's width (the same width
+ * as the chart below it, so each sits over its hour). The arrow points the
+ * way the wind is blowing, i.e. opposite to the bearing it comes from; a calm
+ * hour is a small dot. */
+static void arrows_draw_cb(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_target(e);
+    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    int w = lv_area_get_width(&a), h = lv_area_get_height(&a);
+    float len = (float)(h / 2 - 3);
+    for (int i = 0; i < HA_WIND_HOURS; i++) {
+        float cx = (float)a.x1 + (float)w * (2 * i + 1) / (2.0f * HA_WIND_HOURS);
+        float cy = (float)a.y1 + (float)h / 2.0f;
+        lv_draw_line_dsc_t ln;
+        lv_draw_line_dsc_init(&ln);
+        ln.color = lv_color_hex(s_arrows[i].color);
+        ln.opa = LV_OPA_COVER;
+        ln.round_start = ln.round_end = 1;
+        if (s_arrows[i].calm) {
+            ln.width = 3;
+            lv_point_t p = { (lv_coord_t)cx, (lv_coord_t)cy };
+            lv_draw_line(ctx, &ln, &p, &p);
+            continue;
+        }
+        ln.width = 2;
+        float to = (s_arrows[i].dir + 180.0f) * (float)M_PI / 180.0f;
+        float dx = sinf(to) * len, dy = -cosf(to) * len;
+        lv_point_t tail = { (lv_coord_t)lroundf(cx - dx), (lv_coord_t)lroundf(cy - dy) };
+        lv_point_t head = { (lv_coord_t)lroundf(cx + dx), (lv_coord_t)lroundf(cy + dy) };
+        lv_draw_line(ctx, &ln, &tail, &head);
+        for (int side = -1; side <= 1; side += 2) {
+            float ang = to + (float)side * 150.0f * (float)M_PI / 180.0f;
+            lv_point_t barb = { (lv_coord_t)lroundf((float)head.x + sinf(ang) * 6.0f),
+                                (lv_coord_t)lroundf((float)head.y - cosf(ang) * 6.0f) };
+            lv_draw_line(ctx, &ln, &head, &barb);
+        }
+    }
+}
+
+static void add_wind_section(lv_obj_t *list)
+{
+    const ha_wind_t *w = ha_wind_acquire();
+    if (w == NULL) {
+        ha_wind_release();
+        return;
+    }
+    const char *unit = w->unit[0] ? w->unit : "km/h";
+
+    /* Y range: from 0, to the highest gust (or speed) in whole nice steps. */
+    float top = 5.0f;
+    for (int i = 0; i < HA_WIND_STEPS; i++) {
+        float v = (w->gust_ok && !isnan(w->gust[i])) ? w->gust[i] : w->speed[i];
+        if (!isnan(v) && v > top) {
+            top = v;
+        }
+    }
+    float step = 1.0f;
+    static const float steps[] = { 1, 2, 5, 10, 20, 50 };
+    for (size_t s = 0; s < sizeof(steps) / sizeof(steps[0]); s++) {
+        step = steps[s];
+        if (top / step <= 8.0f) {
+            break;
+        }
+    }
+    float hi = ceilf(top / step) * step;
+    int intervals = (int)lroundf(hi / step);
+
+    lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_height(gap, 10);
+    char title[64];
+    snprintf(title, sizeof(title), "Wind \xE2\x80\x93 last 24 hours (%s)", unit);
+    lv_obj_t *heading = add_label(list, &gcal_font_20, HEAD_COLOR, title);
+    lv_obj_set_width(heading, LV_PCT(100));
+
+    lv_obj_t *legend = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(legend, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(legend, 24, 0);
+    add_label(legend, &gcal_font_14, ICON_COLOR, "\xE2\x80\x94\xE2\x80\x94 speed");
+    if (w->gust_ok) {
+        add_label(legend, &gcal_font_14, WIND_GUST_COLOR, "\xE2\x80\x94\xE2\x80\x94 gust");
+    }
+    if (w->dir_ok) {
+        add_label(legend, &gcal_font_14, DIM_COLOR, "arrows: the way the wind blows, hourly");
+    }
+
+    const lv_coord_t chart_w = LV_HOR_RES - 64 - GRAPH_AXIS_W - 6;
+    const lv_coord_t arrows_h = w->dir_ok ? WIND_ARROWS_H : 0;
+    lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_column(row, 6, 0);
+
+    /* Y labels, one per gridline, centred on the chart's lines (below the arrows). */
+    lv_obj_t *axis = lv_obj_create(row);
+    lv_obj_remove_style_all(axis);
+    lv_obj_set_size(axis, GRAPH_AXIS_W, arrows_h + WIND_CHART_H);
+    lv_obj_clear_flag(axis, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(axis, LV_OBJ_FLAG_EVENT_BUBBLE);
+    for (int t = 0; t <= intervals; t++) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%g", (double)(hi - t * step));
+        lv_obj_t *l = add_label(axis, &gcal_font_14, DIM_COLOR, buf);
+        lv_obj_set_width(l, GRAPH_AXIS_W);
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_coord_t y = arrows_h + (lv_coord_t)((WIND_CHART_H - 1) * t / intervals) - 9;
+        if (y < arrows_h) {
+            y = arrows_h;
+        }
+        if (y > arrows_h + WIND_CHART_H - 18) {
+            y = arrows_h + WIND_CHART_H - 18;
+        }
+        lv_obj_set_pos(l, 0, y);
+    }
+
+    lv_obj_t *col = add_container(row, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_width(col, chart_w);
+    lv_obj_set_style_pad_row(col, 0, 0);
+    if (w->dir_ok) {
+        for (int i = 0; i < HA_WIND_HOURS; i++) {
+            s_arrows[i].dir = w->hr_dir[i];
+            s_arrows[i].calm = w->hr_calm[i];
+            s_arrows[i].color = (!isnan(w->hr_speed[i]) && w->hr_speed[i] >= WIND_STRONG) ? WIND_GUST_COLOR : ICON_COLOR;
+        }
+        lv_obj_t *arrows = lv_obj_create(col);
+        lv_obj_remove_style_all(arrows);
+        lv_obj_set_size(arrows, chart_w, WIND_ARROWS_H);
+        lv_obj_clear_flag(arrows, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(arrows, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_add_event_cb(arrows, arrows_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
+    }
+    lv_obj_t *chart = lv_chart_create(col);
+    lv_obj_set_size(chart, chart_w, WIND_CHART_H);
+    lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(chart, HA_WIND_STEPS);
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, (lv_coord_t)(hi * 10));
+    lv_chart_set_div_line_count(chart, intervals - 1, 5);       /* a line per label; one every 4 hours */
+    lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(chart, 1, 0);
+    lv_obj_set_style_border_color(chart, lv_color_hex(0x3C4043), 0);
+    lv_obj_set_style_pad_all(chart, 0, 0);
+    lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2C2E), LV_PART_MAIN);
+    lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
+    lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_line_width(chart, 2, LV_PART_ITEMS);
+    lv_obj_clear_flag(chart, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(chart, LV_OBJ_FLAG_EVENT_BUBBLE);
+    if (w->gust_ok) {
+        lv_chart_series_t *g = lv_chart_add_series(chart, lv_color_hex(WIND_GUST_COLOR), LV_CHART_AXIS_PRIMARY_Y);
+        for (int i = 0; i < HA_WIND_STEPS; i++) {
+            lv_chart_set_value_by_id(chart, g, i, isnan(w->gust[i]) ? LV_CHART_POINT_NONE
+                                                    : (lv_coord_t)lroundf(w->gust[i] * 10.0f));
+        }
+    }
+    lv_chart_series_t *sp = lv_chart_add_series(chart, lv_color_hex(ICON_COLOR), LV_CHART_AXIS_PRIMARY_Y);
+    for (int i = 0; i < HA_WIND_STEPS; i++) {
+        lv_chart_set_value_by_id(chart, sp, i, isnan(w->speed[i]) ? LV_CHART_POINT_NONE
+                                                : (lv_coord_t)lroundf(w->speed[i] * 10.0f));
+    }
+    lv_chart_refresh(chart);
+
+    /* Times under the chart: start, middle, end. */
+    time_t t_end = w->end, t_start = t_end - (time_t)HA_WIND_STEPS * 900;
+    lv_obj_t *times = add_container(list, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(times, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_left(times, GRAPH_AXIS_W + 6, 0);
+    char a[8], b[8], c[8];
+    hhmm(t_start, a, sizeof(a));
+    hhmm((t_start + t_end) / 2, b, sizeof(b));
+    hhmm(t_end, c, sizeof(c));
+    add_label(times, &gcal_font_14, DIM_COLOR, a);
+    add_label(times, &gcal_font_14, DIM_COLOR, b);
+    add_label(times, &gcal_font_14, DIM_COLOR, c);
+
+    /* "Now 9.7 km/h from NNE    Max gust 16.6 at 14:26    Mostly from NE" */
+    char gt[8], line[160];
+    hhmm(t_start + (time_t)w->max_gust_i * 900 + 450, gt, sizeof(gt));
+    int n = snprintf(line, sizeof(line), "Now %.1f %s", (double)w->now_speed, unit);
+    if (w->now_dir >= 0 && n < (int)sizeof(line)) {
+        n += snprintf(line + n, sizeof(line) - n, " from %s", wind_compass16(w->now_dir));
+    }
+    if (w->max_gust > 0 && n < (int)sizeof(line)) {
+        n += snprintf(line + n, sizeof(line) - n, "    Max %s %.1f at %s", w->gust_ok ? "gust" : "speed",
+                      (double)w->max_gust, gt);
+    }
+    if (w->prevailing >= 0 && n < (int)sizeof(line)) {
+        snprintf(line + n, sizeof(line) - n, "    Mostly from %s", wind_compass16(w->prevailing));
+    }
+    lv_obj_t *sum = add_label(list, &gcal_font_14, TEXT_COLOR, line);
+    lv_obj_set_width(sum, LV_PCT(100));
+    ha_wind_release();
+}
+
 /* ---- 14-day bar graphs: daily low / high temperature, daily rainfall ---- */
 #define BAR_H 220
 #define TEMP_HI_COLOR 0xF6AD55
@@ -601,6 +807,7 @@ void ui_weather_open(void)
     }
     ha_weather_details_release();
     add_history_graph(list);
+    add_wind_section(list);
     add_week_graphs(list);
 
     /* The opening tap's release mustn't land on the panel and close it. */

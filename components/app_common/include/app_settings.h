@@ -185,6 +185,10 @@ typedef struct {
     char ha_wind_entity[64];
     char ha_gust_entity[64];
     char ha_wdir_entity[64];
+    /* The wind direction in degrees (0 = north, the way the wind comes FROM),
+     * for the arrows on the wind graph; ha_wind_entity and ha_gust_entity
+     * supply the speed and gust lines. Blank = no arrows. */
+    char ha_wdeg_entity[64];
     char ha_rain_entity[64];
     char ha_pressure_entity[64];
     char ha_bom_prefix[48];
@@ -240,6 +244,7 @@ typedef struct {
 #define APP_SETTINGS_DEFAULT_HA_FEELS_ENTITY    "sensor.rutherglen_temp_feels_like"
 #define APP_SETTINGS_DEFAULT_HA_WIND_ENTITY     "sensor.wind_speed"
 #define APP_SETTINGS_DEFAULT_HA_GUST_ENTITY     "sensor.wind_gust"
+#define APP_SETTINGS_DEFAULT_HA_WDEG_ENTITY     "sensor.wind_direction"
 #define APP_SETTINGS_DEFAULT_HA_WDIR_ENTITY     "sensor.named_wind_direction"
 #define APP_SETTINGS_DEFAULT_HA_RAIN_ENTITY     "sensor.rain_accumulation"
 #define APP_SETTINGS_DEFAULT_HA_PRESSURE_ENTITY "sensor.atmospheric_pressure_msl"

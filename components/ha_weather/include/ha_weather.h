@@ -149,6 +149,34 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg);
 const ha_week_t *ha_week_acquire(void);   /* NULL if none / over 2 hours old */
 void ha_week_release(void);
 
+/* ----- Wind graph (24 hours): speed and gust lines with hourly direction arrows -----
+ * From the speed (ha_wind_entity), gust (ha_gust_entity) and direction in
+ * degrees (ha_wdeg_entity) histories. Speed is the time-weighted mean of each
+ * 15-minute step and gust the highest in it; each hour's arrow is the
+ * speed-weighted vector mean direction, calm hours having none. See
+ * ha_history.c and ha_wind_calc.c. Refreshed every ~10 minutes. */
+#define HA_WIND_STEPS 96
+#define HA_WIND_HOURS 24
+
+typedef struct {
+    time_t end;                       /* end of the last 15-minute step */
+    float speed[HA_WIND_STEPS];       /* NAN where the sensor had no value */
+    float gust[HA_WIND_STEPS];
+    bool gust_ok, dir_ok;
+    float hr_dir[HA_WIND_HOURS];      /* degrees the wind comes FROM */
+    float hr_speed[HA_WIND_HOURS];
+    bool hr_calm[HA_WIND_HOURS];      /* no meaningful direction that hour */
+    float now_speed, now_dir;         /* the latest speed; direction of the latest hour (-1 = calm) */
+    float prevailing;                 /* over the 24 hours (-1 = none) */
+    float max_gust;
+    int max_gust_i;                   /* step of the highest gust */
+    char unit[12];
+} ha_wind_t;
+
+esp_err_t ha_wind_refresh(const app_settings_t *cfg);
+const ha_wind_t *ha_wind_acquire(void);   /* NULL if none / over an hour old */
+void ha_wind_release(void);
+
 /* True while the latest attempt at any history graph's data failed or came
  * back cut off - the weather panel shows a warning icon then. */
 bool ha_graphs_incomplete(void);
