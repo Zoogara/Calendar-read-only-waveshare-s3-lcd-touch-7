@@ -95,9 +95,28 @@ static esp_err_t http_get(const app_settings_t *cfg, const char *url, struct res
     esp_http_client_set_header(client, "Authorization", auth);
     esp_err_t err = esp_http_client_perform(client);
     *status = esp_http_client_get_status_code(client);
+    /* A reply cut short (the connection closing early, a stall past the
+     * timeout) can still come back as ESP_OK with a 200 and a partial body.
+     * A history graph built from half a reply holds the last value it saw
+     * flat across every later day, so insist on the whole body. */
+    if (err == ESP_OK && !esp_http_client_is_complete_data_received(client)) {
+        ESP_LOGW(TAG, "reply cut short after %u bytes", (unsigned)resp->len);
+        err = ESP_ERR_INVALID_RESPONSE;
+    }
     esp_http_client_cleanup(client);
     memset(auth, 0, sizeof(auth));
     return err;
+}
+
+/* A history reply is a JSON array of arrays and must end "]]" - a body that
+ * stops anywhere else was cut off, whatever the transfer claimed. */
+static bool history_reply_whole(const struct resp_buf *r)
+{
+    size_t n = r->len;
+    while (n > 0 && (r->data[n - 1] == '\n' || r->data[n - 1] == '\r' || r->data[n - 1] == ' ')) {
+        n--;
+    }
+    return n >= 2 && r->data[n - 1] == ']' && r->data[n - 2] == ']';
 }
 
 /* "2026-10-18T08:45:56.580037+11:00" / "...Z" -> UTC epoch, or -1. */
@@ -223,6 +242,13 @@ static esp_err_t fetch_series(const app_settings_t *cfg, const char *base, const
         free(resp.data);
         free(url);
         return err != ESP_OK ? err : ESP_FAIL;
+    }
+
+    if (!resp.full && !history_reply_whole(&resp)) {
+        ESP_LOGW(TAG, "%s: history reply was cut off (%u bytes) - ignored", entity, (unsigned)resp.len);
+        free(resp.data);
+        free(url);
+        return ESP_ERR_INVALID_RESPONSE;
     }
 
     memset(out, 0, sizeof(*out));
@@ -506,6 +532,11 @@ static int fetch_week_changes(const app_settings_t *cfg, const char *base, const
         free(resp.data);
         return -2;
     }
+    if (!history_reply_whole(&resp)) {
+        ESP_LOGW(TAG, "week %s: history reply was cut off (%u bytes) - ignored", entity, (unsigned)resp.len);
+        free(resp.data);
+        return -3;
+    }
     change_t *ch = heap_caps_malloc(sizeof(change_t) * WEEK_MAX_CHANGES, MALLOC_CAP_SPIRAM);
     if (ch == NULL) {
         free(resp.data);
@@ -576,6 +607,7 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg)
     /* Temperature: low / high per day, the value held across midnight. */
     change_t *ch = NULL;
     int n = t_ent[0] ? fetch_week_changes(cfg, base, t_ent, b[0] - 1, now, &ch) : -1;
+    const bool t_failed = t_ent[0] && n < 0;
     if (n >= 0) {
         float cur = NAN;
         int k = 0;
@@ -618,6 +650,7 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg)
      * the station reconnects), so each day's rain is the sum of its rises. */
     ch = NULL;
     n = r_ent[0] ? fetch_week_changes(cfg, base, r_ent, b[0] - 1, now, &ch) : -1;
+    const bool r_failed = r_ent[0] && n < 0;
     if (n > 0) {
         float prev = NAN;
         time_t first_t = ch[0].t;
@@ -641,7 +674,9 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg)
     }
     free(ch);
 
-    if (ok_parts == 0) {
+    /* A fetch that failed (or came back cut off) must not replace data we already
+     * hold with a graph missing that half - keep the old, try again soon. */
+    if (ok_parts == 0 || ((t_failed || r_failed) && s_week != NULL)) {
         free(w);
         s_week_next_us = esp_timer_get_time() + WEEK_RETRY_US;
         return ESP_FAIL;
