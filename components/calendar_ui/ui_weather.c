@@ -240,7 +240,9 @@ static void add_small_day(lv_obj_t *list, const ha_forecast_day_t *d, const char
  * label column and the chart side by side, a row of times under it, and a
  * Now / Low / High line per sensor in that sensor's colour. Left out entirely
  * when there is no history yet. */
-#define GRAPH_H        150
+#define GRAPH_H        220            /* plot height - the same as BAR_H below */
+/* The blank space above each section's heading: about half a line of the 20 px heading text. */
+#define SECTION_GAP    22
 #define GRAPH_AXIS_W   31            /* the Y numbers: up to "27.5" in 14px text */
 
 static const uint32_t SERIES_COLOR[HA_HISTORY_SERIES] = { 0x8AB4F8, 0xF6AD55 };   /* blue, orange */
@@ -458,7 +460,7 @@ static void add_history_graph(lv_obj_t *list)
     nice_scale(&lo, &hi, GRAPH_H, &step, &intervals);
 
     lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
-    lv_obj_set_height(gap, 10);
+    lv_obj_set_height(gap, SECTION_GAP);
     lv_obj_t *heading = add_label(list, &gcal_font_20, HEAD_COLOR, "Last 24 hours");
     lv_obj_set_width(heading, LV_PCT(100));
 
@@ -667,7 +669,7 @@ static void add_hourly_strip(lv_obj_t *list)
     ha_hourly_release();
 
     lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
-    lv_obj_set_height(gap, 10);
+    lv_obj_set_height(gap, SECTION_GAP);
     lv_obj_t *heading = add_label(list, &gcal_font_20, HEAD_COLOR, "Next 24 hours");
     lv_obj_set_width(heading, LV_PCT(100));
 
@@ -688,7 +690,7 @@ static void add_hourly_strip(lv_obj_t *list)
 }
 
 /* ---- Wind: 24-hour speed and gust lines with an arrow for each hour ---- */
-#define WIND_CHART_H   130
+#define WIND_CHART_H   220            /* plot height - the same as BAR_H */
 
 static void add_wind_section(lv_obj_t *list)
 {
@@ -712,7 +714,7 @@ static void add_wind_section(lv_obj_t *list)
     nice_scale(&lo, &hi, WIND_CHART_H, &step, &intervals);
 
     lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
-    lv_obj_set_height(gap, 10);
+    lv_obj_set_height(gap, SECTION_GAP);
     char title[64];
     snprintf(title, sizeof(title), "Wind \xE2\x80\x93 last 24 hours (%s)", unit);
     lv_obj_t *heading = add_label(list, &gcal_font_20, HEAD_COLOR, title);
@@ -811,7 +813,7 @@ static void bar_section(lv_obj_t *list, const char *title, const ha_week_t *w, i
                         bool temp)
 {
     lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
-    lv_obj_set_height(gap, 10);
+    lv_obj_set_height(gap, SECTION_GAP);
     lv_obj_t *heading = add_label(list, &gcal_font_20, HEAD_COLOR, title);
     lv_obj_set_width(heading, LV_PCT(100));
     lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
