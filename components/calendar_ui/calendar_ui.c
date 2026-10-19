@@ -257,6 +257,15 @@ static void settings_menu_cb(lv_event_t *e)
             lv_obj_center(info);
             return;
         }
+        if (ota_update_url_is_insecure(s_cfg->ota_url)) {
+            lv_obj_t *info = lv_msgbox_create(NULL, "Update URL isn't https",
+                "This firmware only updates from an https:// address - a plain "
+                "http:// one could be swapped for someone else's firmware. Change "
+                "the update URL (config web page or gear icon -> Setup).", NULL, true);
+            lv_obj_set_width(info, 420);
+            lv_obj_center(info);
+            return;
+        }
         lv_obj_t *confirm = lv_msgbox_create(NULL, "Check for update?",
             "Downloads and installs the firmware at the configured update "
             "URL, then restarts. There's no version check, so only do this "

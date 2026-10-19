@@ -393,11 +393,20 @@ logging and `idf.py flash` over USB keep working exactly as before.
   is up wait in a 24 KB PSRAM buffer. Costs a few KB of PSRAM and ~3 KB of
   flash, nothing measurable of internal RAM. Unencrypted - LAN only.
 - **Wireless update:** `GCAL_PASS=<config page password> tools/gcal_remote.py
-  ota --device <display IP>` serves `build/gcal_display.bin` and calls the
+  ota --device <display IP>` serves `build-dev/gcal_display.bin` and calls the
   config web server's `POST /ota`, which downloads it with `esp_https_ota` on its
-  own task and restarts. The download is plain `http://` from your own computer
-  (`CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP`): fine on a home LAN, unverified and
-  unencrypted anywhere else. `/ota` itself needs the config page password.
+  own task and restarts. `/ota` needs the config page password.
+  **This needs a development build.** The default build is https-only (the
+  download here is plain `http://` from your own computer, with no signature
+  check, so it is only safe on a network you trust). Build the development
+  variant with `tools/dev_build.sh build` - it adds `sdkconfig.dev`
+  (`CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP`) and builds into `build-dev/` with its own
+  generated sdkconfig, leaving the default build alone - and send the display a
+  dev build each time: a default build won't accept plain-http updates, so
+  one wireless update later you'd need USB (or an https:// URL) again. Even a
+  dev build accepts `http://` only from `/ota`; the on-device Update button and
+  the configured *Firmware update URL* stay https-only, and the config page
+  warns in red when that URL is plain http.
 - **Rollback:** app rollback is enabled. A new image is confirmed 60 s after
   boot (`ota_update_confirm_boot_after`); one that crashes or resets before
   then reverts to the previous image. The first build with rollback enabled
@@ -751,12 +760,14 @@ it to a different board revision or IDF version.
   "TF/SD card" below. No event cache, no logging - `sd_card_init()`'s
   mount is otherwise idle once boot finishes (and is in fact deinited
   right after boot, freeing its SPI bus/DMA resources — see below).
-- **Firmware updates are manual and unauthenticated** — gear → Update
-  downloads a `.bin` from the configured *Firmware update URL* with
-  `esp_https_ota` into the spare `ota_0`/`ota_1` slot and restarts into it
-  (`components/ota_update/`). There's no automatic checking, version
-  comparison or image signing: it installs whatever that URL serves, so
-  point it only at a host you control.
+- **Firmware updates are manual, https-only and unsigned** — gear → Update
+  downloads a `.bin` from the configured *Firmware update URL* (which must
+  be `https://`; the device refuses plain http) with `esp_https_ota` into the
+  spare `ota_0`/`ota_1` slot and restarts into it (`components/ota_update/`).
+  There's no automatic checking, version comparison or image signing: it
+  installs whatever that URL serves, so point it only at a host you control.
+  A development build (see *Wireless logging and updates*) additionally
+  accepts plain http from the authenticated `/ota` trigger.
 
 ### Bring-up troubleshooting
 
