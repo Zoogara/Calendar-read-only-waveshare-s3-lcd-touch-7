@@ -1,6 +1,7 @@
 #include "config_web.h"
 #include "provisioning.h"
 #include "ota_update.h"
+#include "auth_guard.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -8,6 +9,7 @@
 #include <ctype.h>
 #include "esp_log.h"
 #include "esp_http_server.h"
+#include "esp_timer.h"
 #include "mbedtls/base64.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -87,13 +89,38 @@ static void send_401(httpd_req_t *req)
     httpd_resp_send(req, NULL, 0);
 }
 
+/* Failed-login throttle (see auth_guard.h): in RAM only, one for the whole device. The
+ * httpd runs its handlers one at a time, so it needs no lock. */
+static auth_guard_t s_guard;
+
+static void send_429(httpd_req_t *req, uint32_t retry_after_s)
+{
+    char retry[12];
+    snprintf(retry, sizeof(retry), "%u", (unsigned)retry_after_s);
+    httpd_resp_set_status(req, "429 Too Many Requests");
+    httpd_resp_set_hdr(req, "Retry-After", retry);
+    httpd_resp_sendstr(req, "too many attempts - try again later\n");
+}
+
 /* Only the password half of "user:pass" is checked - any (or no)
  * username is accepted, since this device has exactly one shared
- * password, not real per-user accounts. */
+ * password, not real per-user accounts.
+ *
+ * Wrong passwords are throttled and compared in constant time; while locked out every
+ * request gets 429, even one with the right password. A request with no credentials at
+ * all (a browser's first try) just gets the 401 that makes it ask, and isn't counted. */
 static bool check_auth(httpd_req_t *req)
 {
     if (s_cfg->config_web_password[0] == '\0') {
         send_401(req);
+        return false;
+    }
+
+    /* Monotonic: wall-clock time may not be set yet. */
+    int64_t now_us = esp_timer_get_time();
+    uint32_t retry_after_s = 0;
+    if (auth_guard_locked(&s_guard, now_us, &retry_after_s)) {
+        send_429(req, retry_after_s);
         return false;
     }
 
@@ -109,6 +136,7 @@ static bool check_auth(httpd_req_t *req)
     const char *b64 = auth_hdr + 6;
     if (mbedtls_base64_decode(decoded, sizeof(decoded) - 1, &decoded_len,
                                (const unsigned char *)b64, strlen(b64)) != 0) {
+        auth_guard_record_failure(&s_guard, now_us);
         send_401(req);
         return false;
     }
@@ -119,11 +147,19 @@ static bool check_auth(httpd_req_t *req)
     char *colon = strchr((char *)decoded, ':');
     const char *password = colon ? colon + 1 : (char *)decoded;
 
-    if (strcmp(password, s_cfg->config_web_password) != 0) {
+    switch (auth_guard_check(&s_guard, now_us, password, s_cfg->config_web_password, &retry_after_s)) {
+    case AUTH_OK:
+        return true;
+    case AUTH_LOCKED:
+        send_429(req, retry_after_s);
+        return false;
+    default:
+        if (auth_guard_locked(&s_guard, now_us, &retry_after_s)) {
+            ESP_LOGW(TAG, "config page locked for %us after repeated failed logins", (unsigned)retry_after_s);
+        }
         send_401(req);
         return false;
     }
-    return true;
 }
 
 /* ---------------- HTML ---------------- */
