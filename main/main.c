@@ -233,7 +233,7 @@ static void wifi_bringup_task(void *arg)
     vTaskDelete(NULL);
 }
 
-/* The weather, "On this day" and news-feed panels cost 10-25KB of internal RAM
+/* The weather, "On this day" and news-feed panels cost 10-30KB of internal RAM
  * while open, and a TLS request (calendar sync, "On this day", feeds) needs
  * its own contiguous chunk - seen on hardware with the weather panel open the
  * largest free block fell to 7KB during a sync. The panels close themselves
@@ -341,6 +341,10 @@ static void net_task(void *arg)
          * calendar fetch has finished, so its few KB of internal RAM for
          * the HTTP request never overlap a calendar TLS handshake. */
         if (s_cfg.ha_base_url[0] != '\0') {
+            /* Also held while a panel is open: the fetches (history, wind,
+             * hourly) are plain HTTP but still need a few KB of internal RAM,
+             * and the open weather panel leaves ~12KB. */
+            wait_for_panels("the Home Assistant fetches");
             ha_weather_refresh(&s_cfg);
         }
         /* "On this day" history for the clock's date (components/onthisday):
