@@ -845,6 +845,48 @@ address from Step 2 works too - add it as an **ICS URL**-source calendar
 instead, no sharing required. Either way, pending tasks show up
 prefixed with ☐ (U+2610), completed ones with ☑ (U+2611).
 
+## Security notes
+
+This is a hobby appliance for a home network you trust. It is **not hardened against a hostile
+network or against someone who can touch the hardware**. What that means in practice:
+
+- **Secrets are stored in plain text.** The Wi-Fi password, the Google service account's private
+  key, the Home Assistant token (`with-HA-weather`), the config-page password, the lock PIN and any
+  secret feed URLs are in the device's flash (NVS), unencrypted - there is no flash encryption or
+  secure boot - and again in the **TF-card backup** `/sdcard/gcal/config.json`, which is the same
+  JSON, rewritten on every boot (the card is only mounted briefly at boot). Anyone with the board,
+  the flash chip or the card can read all of it. Use a *dedicated, read-only* Google service
+  account and share only the calendars you want shown; give Home Assistant its own user for the
+  token; take the card out after setup if you don't need the backup.
+- **The config web page** (runs only if you set a password) uses HTTP Basic over **plain HTTP** -
+  anyone on your network can read the password and the settings. It has no CSRF or origin checks,
+  and some saved values are put into the page without HTML escaping, so a malicious web page opened
+  in a browser that is logged in to the display could change its settings. Use a strong, unique
+  password, don't stay logged in, and keep the device on a network you control.
+- **The setup portal is an open access point.** On first boot, or after *Setup*, the device runs
+  `GCal-Display-Setup` with no Wi-Fi password and serves its setup page over plain HTTP on
+  `192.168.4.1`, so the Wi-Fi password and service-account key you type are sent unencrypted. Do
+  setup with nobody else in Wi-Fi range; it only runs until setup is finished.
+- **Firmware updates** are https-only by default (the certificate is checked against ESP-IDF's
+  bundled root certificates), but images are **not signed** and the update URL is trusted
+  completely: point it only at a host you control. A *development* build additionally accepts a
+  plain-http URL from the authenticated `/ota` trigger - never use one on a network you don't
+  trust (see *Wireless logging and updates*). Rollback protects against a build that doesn't boot,
+  not against a malicious one.
+- **The wireless log** is off unless you set a destination. It is unencrypted UDP and includes
+  calendar IDs, the Home Assistant address on errors and event counts. Passwords, tokens, the PIN
+  and secret iCal URLs are not logged, but send it only to a computer you trust.
+- **Home Assistant** is reached over plain `http://` on your LAN (an `https://` address is refused
+  to spare the memory a TLS session costs), so the token travels unencrypted. **Open-Meteo**
+  (`main`) is plain http too, but carries no secrets. Everything else - Google, Wikipedia, news
+  feeds, iCal feeds, updates - uses TLS with certificate verification and no insecure shortcuts.
+- **The screen lock** is a 4-digit PIN with a lockout after 5 wrong tries (see *Screen lock*). It
+  keeps casual passers-by off the calendar; it is not a security boundary - the PIN is stored in
+  plain text and it doesn't protect the config page, the USB port or the card.
+- **Physical access is full access:** USB and the card expose everything above.
+
+Report a problem privately - see [SECURITY.md](SECURITY.md).
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party code, fonts and
