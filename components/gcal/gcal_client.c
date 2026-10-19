@@ -1,4 +1,5 @@
 #include "gcal_client.h"
+#include "url_encode.h"
 #include "gcal.h"
 #include "jwt_auth.h"
 #include "event_store.h"
@@ -44,22 +45,6 @@ static esp_err_t http_perform_with_retry(esp_http_client_handle_t client)
 }
 
 /* ---------------- small helpers ---------------- */
-
-/* Returns false if out_sz was too small and the result was cut short. */
-static bool url_encode(const char *in, char *out, size_t out_sz)
-{
-    size_t o = 0;
-    const unsigned char *p = (const unsigned char *)in;
-    for (; *p && o + 4 < out_sz; p++) {
-        if (isalnum(*p) || *p == '-' || *p == '_' || *p == '.' || *p == '~') {
-            out[o++] = (char)*p;
-        } else {
-            o += snprintf(out + o, out_sz - o, "%%%02X", *p);
-        }
-    }
-    out[o] = '\0';
-    return *p == '\0';
-}
 
 /* Only the fields the item parser below actually reads - without this,
  * each page carries full event JSON (descriptions, reminders, attendee
@@ -274,8 +259,8 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
 
     char cal_id_enc[192];
     char fields_enc[160];
-    if (!url_encode(cal->id, cal_id_enc, sizeof(cal_id_enc)) ||
-        !url_encode(EVENT_FIELDS, fields_enc, sizeof(fields_enc))) {
+    if (!gcal_url_encode(cal->id, cal_id_enc, sizeof(cal_id_enc)) ||
+        !gcal_url_encode(EVENT_FIELDS, fields_enc, sizeof(fields_enc))) {
         ESP_LOGE(TAG, "[%s] calendar ID too long to request", cal->label);
         return false;
     }
@@ -288,8 +273,8 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
     strftime(tmax_s, sizeof(tmax_s), "%Y-%m-%dT%H:%M:%SZ", &tmv);
 
     char tmin_enc[32], tmax_enc[32];
-    url_encode(tmin_s, tmin_enc, sizeof(tmin_enc));
-    url_encode(tmax_s, tmax_enc, sizeof(tmax_enc));
+    gcal_url_encode(tmin_s, tmin_enc, sizeof(tmin_enc));
+    gcal_url_encode(tmax_s, tmax_enc, sizeof(tmax_enc));
 
     char base_url[640];
     int n = snprintf(base_url, sizeof(base_url),
@@ -318,7 +303,7 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
         char url[1200]; /* base_url (up to 640) + "&pageToken=" + token_enc (up to 512) */
         if (page_token[0] != '\0') {
             char token_enc[512];
-            if (!url_encode(page_token, token_enc, sizeof(token_enc))) {
+            if (!gcal_url_encode(page_token, token_enc, sizeof(token_enc))) {
                 ESP_LOGW(TAG, "[%s] page token too long", cal->label);
                 break;   /* incomplete - rolled back below */
             }
