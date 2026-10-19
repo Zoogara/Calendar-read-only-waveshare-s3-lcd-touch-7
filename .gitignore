@@ -6,6 +6,8 @@ sdkconfig.old
 .DS_Store
 extracted_display_touch_bsp/
 
+tests/host/run_tests
+tests/host/run_tests.dSYM/
 tools/screenshots/build/
 tools/screenshots/out/
 tools/screenshots/render
