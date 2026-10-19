@@ -37,6 +37,16 @@ static const char *TAG = "ui_weather";
 
 static lv_obj_t *s_overlay;
 
+/* TEMPORARY memory instrumentation: internal RAM after each stage of building
+ * the panel, to see where its ~30KB goes. Remove once that is understood. */
+static void memlog(const char *what)
+{
+    ESP_LOGI(TAG, "[mem] %-22s internal free %6u  largest %6u  (PSRAM free %u)", what,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+}
+
 static void delete_overlay(void)
 {
     if (s_overlay == NULL) {
@@ -316,6 +326,13 @@ static void chart_decor_cb(lv_event_t *e)
     lv_obj_get_coords(ch, &obj);
     lv_obj_get_content_coords(ch, &plot);          /* the plot area inside the padding */
     int pw = lv_area_get_width(&plot), ph = lv_area_get_height(&plot);
+    static int s_geo_logged;
+    if (s_geo_logged < 8) {      /* TEMPORARY: where each chart and its plot area really are */
+        s_geo_logged++;
+        ESP_LOGI(TAG, "[geo] chart x %d..%d (w %d)  plot x %d..%d (w %d)  y %d..%d  plot y %d..%d",
+                 (int)obj.x1, (int)obj.x2, (int)lv_area_get_width(&obj), (int)plot.x1, (int)plot.x2, pw,
+                 (int)obj.y1, (int)obj.y2, (int)plot.y1, (int)plot.y2);
+    }
 
     /* LVGL runs its gridlines right across the chart's padding, where the text
      * goes: paint the padding strips black first, then frame the plot ourselves. */
@@ -959,6 +976,7 @@ void ui_weather_open(void)
         lv_obj_align(warn, LV_ALIGN_TOP_RIGHT, -32, 20);
     }
 
+    memlog("overlay + heading");
     lv_obj_t *list = lv_obj_create(s_overlay);
     lv_obj_remove_style_all(list);
     lv_obj_set_size(list, LV_HOR_RES - 64, LV_VER_RES - 72);
@@ -997,10 +1015,15 @@ void ui_weather_open(void)
         }
     }
     ha_weather_details_release();
+    memlog("details (now/days)");
     add_hourly_strip(list);
+    memlog("hourly strip");
     add_history_graph(list);
+    memlog("24 h graph");
     add_wind_section(list);
+    memlog("wind");
     add_week_graphs(list);
+    memlog("14-day bars");
 
     /* The opening tap's release mustn't land on the panel and close it. */
     lv_indev_t *indev = lv_indev_get_act();
