@@ -448,7 +448,7 @@ static void add_wind_section(lv_obj_t *list)
         add_label(legend, &gcal_font_14, WIND_GUST_COLOR, "\xE2\x80\x94\xE2\x80\x94 gust");
     }
     if (w->dir_ok) {
-        add_label(legend, &gcal_font_14, DIM_COLOR, "arrows: the way the wind blows, hourly");
+        add_label(legend, &gcal_font_14, DIM_COLOR, "Wind direction, hourly");
     }
 
     const lv_coord_t chart_w = LV_HOR_RES - 64 - GRAPH_AXIS_W - 6;
