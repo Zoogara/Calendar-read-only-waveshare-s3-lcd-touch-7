@@ -151,12 +151,64 @@ static const char *HTML_HEAD =
 
 /* httpd_resp_sendstr_chunk() with an empty string sends a zero-length
  * chunk, which HTTP chunked encoding treats as the end of the response -
- * the page silently stops there. Use this for any value that can be blank. */
+ * the page silently stops there. Use this for any value that can be blank.
+ *
+ * The value is HTML-escaped (& < > ' "), so a stored setting can never break
+ * out of the attribute / textarea it is printed into. */
 static void send_value_chunk(httpd_req_t *req, const char *value)
 {
-    if (value[0] != '\0') {
-        httpd_resp_sendstr_chunk(req, value);
+    char buf[192];
+    size_t n = 0;
+    for (const char *p = value; *p; p++) {
+        const char *rep = NULL;
+        switch (*p) {
+        case '&':  rep = "&amp;";  break;
+        case '<':  rep = "&lt;";   break;
+        case '>':  rep = "&gt;";   break;
+        case '\'': rep = "&#39;";  break;
+        case '"':  rep = "&quot;"; break;
+        default: break;
+        }
+        size_t len = rep ? strlen(rep) : 1;
+        if (n + len >= sizeof(buf)) {
+            buf[n] = '\0';
+            httpd_resp_sendstr_chunk(req, buf);
+            n = 0;
+        }
+        if (rep) {
+            memcpy(buf + n, rep, len);
+        } else {
+            buf[n] = *p;
+        }
+        n += len;
     }
+    if (n > 0) {
+        buf[n] = '\0';
+        httpd_resp_sendstr_chunk(req, buf);
+    }
+}
+
+/* Cross-site request forgery guard for the state-changing POSTs. A browser
+ * adds an Origin header to cross-origin form posts; if one is present its
+ * host must be the one this page was served from. Requests without Origin
+ * (curl, tools/gcal_remote.py) are not browser-driven and pass - they still
+ * need the password. Returns false after sending the 403. */
+static bool check_same_origin(httpd_req_t *req)
+{
+    char origin[160], host[96];
+    if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) != ESP_OK) {
+        return true;
+    }
+    const char *o = strstr(origin, "://");
+    o = o ? o + 3 : origin;
+    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK &&
+        strcasecmp(o, host) == 0) {
+        return true;
+    }
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "cross-origin request refused\n");
+    return false;
 }
 
 static esp_err_t root_get_handler(httpd_req_t *req)
@@ -200,19 +252,25 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     for (int i = 0; i < APP_SETTINGS_MAX_CALENDARS; i++) {
         const app_calendar_cfg_t *c = (i < s_cfg->calendar_count) ? &s_cfg->calendars[i] : NULL;
         bool is_ics = c && c->source == APP_CAL_SOURCE_ICS;
-        char row[APP_SETTINGS_MAX_CAL_ID + 1100];
+        char row[900];
         snprintf(row, sizeof(row),
             "<div class='cal-row'>"
             "<select name='cal_source_%d' style='width:auto'>"
             "<option value='0' %s>Google</option><option value='1' %s>ICS URL</option></select>"
-            "<input type='text' name='cal_id_%d' placeholder='calendar id / email / ICS URL' value='%s'>"
-            "<input type='text' name='cal_label_%d' placeholder='label' style='max-width:9em' value='%s'>"
-            "<input type='color' name='cal_color_%d' value='#%06lX'>"
+            "<input type='text' name='cal_id_%d' placeholder='calendar id / email / ICS URL' value='",
+            i, is_ics ? "" : "selected", is_ics ? "selected" : "", i);
+        httpd_resp_sendstr_chunk(req, row);
+        send_value_chunk(req, c ? c->id : "");
+        snprintf(row, sizeof(row),
+            "'><input type='text' name='cal_label_%d' placeholder='label' style='max-width:9em' value='", i);
+        httpd_resp_sendstr_chunk(req, row);
+        send_value_chunk(req, c ? c->label : "");
+        snprintf(row, sizeof(row),
+            "'><input type='color' name='cal_color_%d' value='#%06lX'>"
             "<label style='margin:0;font-weight:400'><input type='checkbox' name='cal_enabled_%d' %s style='width:auto'> on</label>"
             "<label style='margin:0;font-weight:400'><input type='checkbox' name='cal_daily_%d' %s style='width:auto'> daily</label>"
-            "</div>", i, is_ics ? "" : "selected", is_ics ? "selected" : "",
-            i, c ? c->id : "", i, c ? c->label : "", i,
-            (unsigned long)(c ? c->color : 0x4285F4), i, (c == NULL || c->enabled) ? "checked" : "",
+            "</div>",
+            i, (unsigned long)(c ? c->color : 0x4285F4), i, (c == NULL || c->enabled) ? "checked" : "",
             i, (c && c->daily_only) ? "checked" : "");
         httpd_resp_sendstr_chunk(req, row);
     }
@@ -305,16 +363,24 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         : "<div class='hint'>Use an https:// address: the firmware is downloaded and installed "
           "without any signature check, so plain http:// would let anyone on the network "
           "substitute their own. The device refuses http:// addresses.</div>";
-    char other[4400];
-    snprintf(other, sizeof(other),
+    httpd_resp_sendstr_chunk(req,
         "<h2>Other</h2>"
         "<label>Timezone (POSIX TZ string)</label>"
-        "<input type='text' name='posix_tz' value='%s'>"
+        "<input type='text' name='posix_tz' value='");
+    send_value_chunk(req, s_cfg->posix_tz);
+    char other[4400];
+    snprintf(other, sizeof(other),
+        "'>"
         "<div class='hint'>Find yours by searching \"POSIX TZ string &lt;your city&gt;\".</div>"
         "<label>Refresh interval (seconds)</label>"
         "<input type='number' name='refresh_interval_s' value='%u' min='60'>"
         "<label>Firmware update URL (optional)</label>"
-        "<input type='text' name='ota_url' value='%s' placeholder='https://.../gcal_display.bin'>%s"
+        "<input type='text' name='ota_url' value='",
+        (unsigned)s_cfg->refresh_interval_s);
+    httpd_resp_sendstr_chunk(req, other);
+    send_value_chunk(req, s_cfg->ota_url);
+    snprintf(other, sizeof(other),
+        "' placeholder='https://.../gcal_display.bin'>%s"
         "<label>Screen timeout (seconds, 0 = never sleep)</label>"
         "<input type='number' name='screen_timeout_s' value='%u' min='0'>"
         "<label>Week/day view hour range (24h clock)</label>"
@@ -365,7 +431,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<a class='btn-cancel' href='/'>Cancel</a>"
         "</div>"
         "</form></body></html>",
-        s_cfg->posix_tz, (unsigned)s_cfg->refresh_interval_s, s_cfg->ota_url, ota_hint,
+        ota_hint,
         (unsigned)s_cfg->screen_timeout_s, (unsigned)s_cfg->view_start_hour, (unsigned)s_cfg->view_end_hour,
         (unsigned)s_cfg->fetch_past_days, (unsigned)s_cfg->fetch_future_days,
         (unsigned)s_cfg->brightness_min_pct_x10, (double)s_cfg->brightness_min_pct_x10 / 10.0,
@@ -404,6 +470,9 @@ static void save_task(void *arg)
 static esp_err_t save_post_handler(httpd_req_t *req)
 {
     if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    if (!check_same_origin(req)) {
         return ESP_OK;
     }
 
@@ -615,6 +684,9 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 static esp_err_t ota_post_handler(httpd_req_t *req)
 {
     if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    if (!check_same_origin(req)) {
         return ESP_OK;
     }
     char query[300], url[256] = "";
