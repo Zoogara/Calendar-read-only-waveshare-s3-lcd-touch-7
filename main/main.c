@@ -340,6 +340,7 @@ static void net_task(void *arg)
          * calendar sync it never counts towards failed_cycles or changes
          * wait_ms. A no-op until a location is set. */
         weather_refresh(&s_cfg);
+        weather_series_refresh(&s_cfg);
         /* "On this day" history for the clock's date (components/onthisday,
          * Wikipedia): a no-op except once a day. */
         wait_for_panels("\"On this day\"");

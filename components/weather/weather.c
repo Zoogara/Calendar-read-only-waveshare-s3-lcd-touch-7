@@ -92,6 +92,12 @@ static const wmo_t *wmo(int code)
     return NULL;
 }
 
+const char *weather_wmo_icon(int code)
+{
+    const wmo_t *w = wmo(code);
+    return w ? w->cond : "";
+}
+
 static const char *compass(double deg)
 {
     static const char *POINTS[16] = {
@@ -316,6 +322,44 @@ static esp_err_t fetch(const app_settings_t *cfg, int past_hours, snapshot_t *ou
              out->details.rain.value, out->details.days[0].lo, out->details.days[0].hi,
              out->details.days[0].icon);
     return ESP_OK;
+}
+
+/* GET a (short) JSON reply from Open-Meteo, for weather_series.c. NULL on any
+ * failure. The reply is held in PSRAM, as is the parsed tree. */
+cJSON *weather_get_json(const char *url)
+{
+    struct resp_buf resp = { .data = heap_caps_malloc(8192, MALLOC_CAP_SPIRAM), .cap = 8192 };
+    if (resp.data == NULL) {
+        return NULL;
+    }
+    resp.data[0] = '\0';
+    esp_http_client_config_t hc = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = HTTP_TIMEOUT_MS,
+        .event_handler = on_data,
+        .user_data = &resp,
+        .buffer_size = 1024,
+        .buffer_size_tx = 1024,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&hc);
+    if (client == NULL) {
+        free(resp.data);
+        return NULL;
+    }
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    bool whole = esp_http_client_is_complete_data_received(client);
+    esp_http_client_cleanup(client);
+    if (err != ESP_OK || status != 200 || !whole) {
+        ESP_LOGW(TAG, "series request failed: %s, HTTP %d%s %.120s", esp_err_to_name(err), status,
+                 whole ? "" : " (cut short)", resp.data);
+        free(resp.data);
+        return NULL;
+    }
+    cJSON *root = cJSON_Parse(resp.data);
+    free(resp.data);
+    return root;
 }
 
 esp_err_t weather_refresh(const app_settings_t *cfg)
