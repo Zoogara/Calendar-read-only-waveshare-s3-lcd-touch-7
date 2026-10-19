@@ -600,65 +600,6 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* TEMPORARY - a live brightness-sweep tool for finding this board's real
- * backlight-boost-driver dimming floor, reinstated (2026-09-09) after the
- * LEDC timer moved from 5kHz/10-bit to 1220Hz/14-bit (see board_bsp.c's
- * BACKLIGHT_LEDC_FREQ_HZ comment - ESPHome's recommended frequency for
- * hitting the ESP32 family's max duty resolution) to re-bisect the cutoff
- * at the new, 16x finer duty granularity. The "minimum brightness"
- * setting on the main page only applies on save, which restarts the
- * device - much too slow for this. This applies a duty directly via
- * bsp_display_set_brightness_permille(), live, with NO save and NO
- * restart - it doesn't touch s_cfg or NVS at all, so it can't leave any
- * lasting state behind and is safe to just leave running between tests.
- * `permille` (0-1000, tenths of a percent) is resolution-independent -
- * bsp_display_set_brightness_permille() does the actual duty-steps
- * conversion internally, so this endpoint's interface doesn't need to
- * change even though the underlying duty range just went from 0-1023 to
- * 0-16383. Remove this handler (and its /test_brightness registration
- * below) once brightness_min_pct_x10's real-world floor is known and set
- * for good at the new resolution - it's a debugging aid, not a
- * feature. */
-static esp_err_t test_brightness_get_handler(httpd_req_t *req)
-{
-    char query[64] = {0};
-    char val[16] = {0};
-    long permille = -1;
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
-        httpd_query_key_value(query, "permille", val, sizeof(val)) == ESP_OK) {
-        permille = strtol(val, NULL, 10);
-    }
-
-    char body[768];
-    if (permille >= 0 && permille <= 1000) {
-        esp_err_t err = bsp_display_set_brightness_permille((uint16_t)permille);
-        snprintf(body, sizeof(body),
-            "<html><body style='font-family:sans-serif'>"
-            "<p>Set to %ld/1000 (%.1f%%) - %s</p>"
-            "<p><a href='/test_brightness?permille=0'>0 (off)</a> | "
-            "<a href='/test_brightness?permille=1'>1</a> | "
-            "<a href='/test_brightness?permille=5'>5</a> | "
-            "<a href='/test_brightness?permille=10'>10</a> | "
-            "<a href='/test_brightness?permille=15'>15</a> | "
-            "<a href='/test_brightness?permille=20'>20</a> | "
-            "<a href='/test_brightness?permille=50'>50</a> | "
-            "<a href='/test_brightness?permille=100'>100</a> | "
-            "<a href='/test_brightness?permille=1000'>1000 (full)</a></p>"
-            "<form><input type='number' name='permille' min='0' max='1000' "
-            "placeholder='exact value (integer)'><button>Set</button></form>"
-            "<p><a href='/'>Back to settings</a></p></body></html>",
-            permille, (double)permille / 10.0, esp_err_to_name(err));
-    } else {
-        snprintf(body, sizeof(body),
-            "<html><body style='font-family:sans-serif'>"
-            "<p>Pass ?permille=N (0-1000, tenths of a percent).</p>"
-            "<p><a href='/test_brightness?permille=10'>Try 10 (1.0%%)</a></p>"
-            "</body></html>");
-    }
-    httpd_resp_sendstr(req, body);
-    return ESP_OK;
-}
-
 /* POST /ota?url=<firmware .bin URL> - the wireless-update trigger used by
  * tools/gcal_remote.py. Same Basic-auth password as the settings page; with
  * no url it uses the configured Firmware update URL. Returns straight away:
@@ -730,10 +671,6 @@ void config_web_start(app_settings_t *cfg)
 
     httpd_uri_t root_uri = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler};
     httpd_uri_t save_uri = {.uri = "/save", .method = HTTP_POST, .handler = save_post_handler};
-    /* TEMPORARY, see test_brightness_get_handler()'s own comment. */
-    httpd_uri_t test_brightness_uri = {.uri = "/test_brightness", .method = HTTP_GET,
-                                        .handler = test_brightness_get_handler};
-    httpd_register_uri_handler(s_server, &test_brightness_uri);
     httpd_register_uri_handler(s_server, &root_uri);
     httpd_register_uri_handler(s_server, &save_uri);
     httpd_uri_t ota_uri = {.uri = "/ota", .method = HTTP_POST, .handler = ota_post_handler};

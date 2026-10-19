@@ -360,9 +360,9 @@ on-device settings dialog / config web page:
   percent is too coarse a step at this panel's dim end): the floor the
   backlight settles at in a fully dark room, rather than going to true
   black. The range itself, like the LEDC frequency/resolution above, was
-  determined by bisecting on real hardware (via a temporary live
-  `/test_brightness?permille=N` endpoint in `config_web.c`, applying a
-  duty directly with no save/restart needed) - the panel's *visually
+  determined by bisecting on real hardware (with a temporary
+  live-test endpoint that applied a duty directly, with no save or
+  restart - since removed, as it needed no login) - the panel's *visually
   useful* floor turned out to sit noticeably higher than the raw
   duty-12/1023 driver cutoff mentioned above.
 - **Room brightness where full backlight kicks in**
