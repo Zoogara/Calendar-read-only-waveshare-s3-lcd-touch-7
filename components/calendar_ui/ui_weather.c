@@ -23,6 +23,7 @@
 #include "ha_wind_calc.h"
 #include <time.h>
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 
 #define BG_COLOR     0x000000
 #define HEAD_COLOR   0xE8EAED
@@ -241,6 +242,167 @@ static void hhmm(time_t t, char *out, size_t sz)
     strftime(out, sz, "%H:%M", &lt);
 }
 
+/* ---- Chart text drawn inside the chart, not as label objects ----
+ * Each label object costs a few hundred bytes of INTERNAL RAM, and the graphs
+ * below had ~70 of them (axis numbers, times, a label per day). With the panel
+ * open that was ~30KB of the ~40KB free. Instead each chart leaves room in its
+ * own padding (left for the Y numbers, bottom for times / day labels, top for
+ * the wind arrows) and one draw callback paints all the text from a small
+ * PSRAM table - same look, a fraction of the RAM. */
+#define CHART_PAD_B     20            /* under a line chart: the time labels */
+#define WIND_ARROWS_H   34            /* above the wind chart: the hourly arrows */
+#define WIND_GUST_COLOR 0xF6AD55
+#define WIND_STRONG     12.0f         /* an hour at or above this (km/h) is drawn in the gust colour */
+
+typedef struct {
+    int ny;
+    char ylab[12][16];                 /* Y numbers, top to bottom, on the gridlines */
+    int nx;
+    char xlab[3][8];                  /* under the plot: left, middle, right */
+    int ndays, day_lines;             /* per-day text under a bar chart */
+    char day[HA_WEEK_DAYS][4][14];
+    uint32_t day_col[4];              /* colour of each line of the day text */
+    bool arrows;                      /* draw the wind arrows in the top padding */
+} chart_decor_t;
+
+static struct {
+    float dir;                        /* degrees the wind comes FROM */
+    bool calm;
+    uint32_t color;
+} s_arrows[HA_WIND_HOURS];
+
+/* One arrow per hour, evenly spread over `a` (the same width as the plot below,
+ * so each sits over its hour). It points the way the wind is blowing, i.e.
+ * opposite to the bearing it comes from; a calm hour is a small dot. */
+static void draw_wind_arrows(lv_draw_ctx_t *ctx, const lv_area_t *a)
+{
+    int w = lv_area_get_width(a), h = lv_area_get_height(a);
+    float len = (float)(h / 2 - 3);
+    for (int i = 0; i < HA_WIND_HOURS; i++) {
+        float cx = (float)a->x1 + (float)w * (2 * i + 1) / (2.0f * HA_WIND_HOURS);
+        float cy = (float)a->y1 + (float)h / 2.0f;
+        lv_draw_line_dsc_t ln;
+        lv_draw_line_dsc_init(&ln);
+        ln.color = lv_color_hex(s_arrows[i].color);
+        ln.opa = LV_OPA_COVER;
+        ln.round_start = ln.round_end = 1;
+        if (s_arrows[i].calm) {
+            ln.width = 3;
+            lv_point_t p = { (lv_coord_t)cx, (lv_coord_t)cy };
+            lv_draw_line(ctx, &ln, &p, &p);
+            continue;
+        }
+        ln.width = 2;
+        float to = (s_arrows[i].dir + 180.0f) * (float)M_PI / 180.0f;
+        float dx = sinf(to) * len, dy = -cosf(to) * len;
+        lv_point_t tail = { (lv_coord_t)lroundf(cx - dx), (lv_coord_t)lroundf(cy - dy) };
+        lv_point_t head = { (lv_coord_t)lroundf(cx + dx), (lv_coord_t)lroundf(cy + dy) };
+        lv_draw_line(ctx, &ln, &tail, &head);
+        for (int side = -1; side <= 1; side += 2) {
+            float ang = to + (float)side * 150.0f * (float)M_PI / 180.0f;
+            lv_point_t barb = { (lv_coord_t)lroundf((float)head.x + sinf(ang) * 6.0f),
+                                (lv_coord_t)lroundf((float)head.y - cosf(ang) * 6.0f) };
+            lv_draw_line(ctx, &ln, &head, &barb);
+        }
+    }
+}
+
+static void chart_decor_cb(lv_event_t *e)
+{
+    lv_obj_t *ch = lv_event_get_target(e);
+    const chart_decor_t *d = lv_event_get_user_data(e);
+    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+    lv_area_t obj, plot;
+    lv_obj_get_coords(ch, &obj);
+    lv_obj_get_content_coords(ch, &plot);          /* the plot area inside the padding */
+    int pw = lv_area_get_width(&plot), ph = lv_area_get_height(&plot);
+
+    /* LVGL runs its gridlines right across the chart's padding, where the text
+     * goes: paint the padding strips black first, then frame the plot ourselves. */
+    lv_draw_rect_dsc_t bg;
+    lv_draw_rect_dsc_init(&bg);
+    bg.bg_color = lv_color_hex(BG_COLOR);
+    bg.bg_opa = LV_OPA_COVER;
+    bg.border_width = 0;
+    lv_area_t m = { obj.x1, obj.y1, plot.x1 - 1, obj.y2 };
+    lv_draw_rect(ctx, &bg, &m);
+    if (plot.y2 < obj.y2) {
+        m = (lv_area_t){ plot.x1, plot.y2 + 1, obj.x2, obj.y2 };
+        lv_draw_rect(ctx, &bg, &m);
+    }
+    if (plot.y1 > obj.y1) {
+        m = (lv_area_t){ plot.x1, obj.y1, obj.x2, plot.y1 - 1 };
+        lv_draw_rect(ctx, &bg, &m);
+    }
+    lv_draw_rect_dsc_t fr;
+    lv_draw_rect_dsc_init(&fr);
+    fr.bg_opa = LV_OPA_TRANSP;
+    fr.border_color = lv_color_hex(0x3C4043);
+    fr.border_width = 1;
+    fr.border_opa = LV_OPA_COVER;
+    lv_draw_rect(ctx, &fr, &plot);
+
+    lv_draw_label_dsc_t ld;
+    lv_draw_label_dsc_init(&ld);
+    ld.font = &gcal_font_14;
+    ld.color = lv_color_hex(DIM_COLOR);
+    lv_area_t r;
+
+    ld.align = LV_TEXT_ALIGN_RIGHT;                 /* Y numbers, centred on their gridlines */
+    for (int i = 0; i < d->ny; i++) {
+        lv_coord_t yc = (lv_coord_t)(plot.y1 + (d->ny > 1 ? ph * i / (d->ny - 1) : 0));
+        r = (lv_area_t){ obj.x1, yc - 9, plot.x1 - 6, yc + 9 };
+        lv_draw_label(ctx, &ld, &r, d->ylab[i], NULL);
+    }
+    for (int i = 0; i < d->nx; i++) {              /* times under the plot */
+        ld.align = i == 0 ? LV_TEXT_ALIGN_LEFT : i == d->nx - 1 ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_CENTER;
+        r = (lv_area_t){ plot.x1, plot.y2 + 3, plot.x2, plot.y2 + 21 };
+        lv_draw_label(ctx, &ld, &r, d->xlab[i], NULL);
+    }
+    if (d->ndays > 0) {                             /* a few lines of text under each bar */
+        ld.align = LV_TEXT_ALIGN_CENTER;
+        int cw = pw / d->ndays;
+        for (int i = 0; i < d->ndays; i++) {
+            for (int l = 0; l < d->day_lines; l++) {
+                if (d->day[i][l][0] == '\0') {
+                    continue;
+                }
+                ld.color = lv_color_hex(d->day_col[l]);
+                r = (lv_area_t){ plot.x1 + i * cw, plot.y2 + 4 + l * 15, plot.x1 + (i + 1) * cw - 1, plot.y2 + 4 + l * 15 + 16 };
+                lv_draw_label(ctx, &ld, &r, d->day[i][l], NULL);
+            }
+        }
+    }
+    if (d->arrows) {
+        lv_area_t top = { plot.x1, obj.y1, plot.x2, plot.y1 - 1 };
+        draw_wind_arrows(ctx, &top);
+    }
+}
+
+static void chart_decor_free_cb(lv_event_t *e)
+{
+    heap_caps_free(lv_event_get_user_data(e));
+}
+
+/* A chart the width of the list with room in its padding for the text above. */
+static lv_obj_t *new_chart(lv_obj_t *list, lv_coord_t total_h, lv_coord_t pad_top, lv_coord_t pad_bottom,
+                           chart_decor_t **decor)
+{
+    lv_obj_t *c = lv_chart_create(list);
+    lv_obj_set_size(c, LV_HOR_RES - 64, total_h);
+    lv_obj_set_style_pad_all(c, 0, 0);
+    lv_obj_set_style_pad_left(c, GRAPH_AXIS_W + 6, 0);
+    lv_obj_set_style_pad_top(c, pad_top, 0);
+    lv_obj_set_style_pad_bottom(c, pad_bottom, 0);
+    chart_decor_t *d = heap_caps_calloc(1, sizeof(*d), MALLOC_CAP_SPIRAM);
+    if (d != NULL) {
+        lv_obj_add_event_cb(c, chart_decor_cb, LV_EVENT_DRAW_MAIN_END, d);
+        lv_obj_add_event_cb(c, chart_decor_free_cb, LV_EVENT_DELETE, d);
+    }
+    *decor = d;
+    return c;
+}
+
 static void add_history_graph(lv_obj_t *list)
 {
     const ha_history_t *h = ha_history_acquire();
@@ -281,32 +443,15 @@ static void add_history_graph(lv_obj_t *list)
         add_label(legend, &gcal_font_14, SERIES_COLOR[sr->slot], key);
     }
 
-    lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_column(row, 6, 0);
-
-    /* Y-axis labels: the range top, middle and bottom, spread over the chart's height. */
-    lv_obj_t *axis = add_container(row, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_size(axis, GRAPH_AXIS_W, GRAPH_H);
-    lv_obj_set_flex_align(axis, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-    char buf[40];
-    snprintf(buf, sizeof(buf), "%.0f", (double)hi);
-    add_label(axis, &gcal_font_14, DIM_COLOR, buf);
-    snprintf(buf, sizeof(buf), "%.0f", (double)((lo + hi) / 2.0f));
-    add_label(axis, &gcal_font_14, DIM_COLOR, buf);
-    snprintf(buf, sizeof(buf), "%.0f", (double)lo);
-    add_label(axis, &gcal_font_14, DIM_COLOR, buf);
-
-    lv_obj_t *chart = lv_chart_create(row);
-    lv_obj_set_size(chart, LV_HOR_RES - 64 - GRAPH_AXIS_W - 6, GRAPH_H);
+    chart_decor_t *dec;
+    lv_obj_t *chart = new_chart(list, GRAPH_H + CHART_PAD_B, 0, CHART_PAD_B, &dec);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, HA_HISTORY_POINTS);
     lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)(lo * 10), (lv_coord_t)(hi * 10));
     lv_chart_set_div_line_count(chart, 4, 7);    /* a line every 4 hours, 3 horizontal */
     lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(chart, 1, 0);
+    lv_obj_set_style_border_width(chart, 0, 0);
     lv_obj_set_style_border_color(chart, lv_color_hex(0x3C4043), 0);
-    lv_obj_set_style_pad_all(chart, 0, 0);
     lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2C2E), LV_PART_MAIN);
     lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
     lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);   /* plain lines, no dots */
@@ -323,19 +468,18 @@ static void add_history_graph(lv_obj_t *list)
     }
     lv_chart_refresh(chart);
 
-    /* Times under the chart: start, middle, end. */
     time_t t_end = h->end;
     time_t t_start = t_end - (time_t)(HA_HISTORY_POINTS - 1) * h->step_s;
-    lv_obj_t *times = add_container(list, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(times, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_left(times, GRAPH_AXIS_W + 6, 0);
-    char a[8], b[8], c[8];
-    hhmm(t_start, a, sizeof(a));
-    hhmm((t_start + t_end) / 2, b, sizeof(b));
-    hhmm(t_end, c, sizeof(c));
-    add_label(times, &gcal_font_14, DIM_COLOR, a);
-    add_label(times, &gcal_font_14, DIM_COLOR, b);
-    add_label(times, &gcal_font_14, DIM_COLOR, c);
+    if (dec != NULL) {
+        snprintf(dec->ylab[0], sizeof(dec->ylab[0]), "%.0f", (double)hi);
+        snprintf(dec->ylab[1], sizeof(dec->ylab[1]), "%.0f", (double)((lo + hi) / 2.0f));
+        snprintf(dec->ylab[2], sizeof(dec->ylab[2]), "%.0f", (double)lo);
+        dec->ny = 3;
+        hhmm(t_start, dec->xlab[0], sizeof(dec->xlab[0]));
+        hhmm((t_start + t_end) / 2, dec->xlab[1], sizeof(dec->xlab[1]));
+        hhmm(t_end, dec->xlab[2], sizeof(dec->xlab[2]));
+        dec->nx = 3;
+    }
 
     /* "Now 16.1 °C    Low 10.5 at 04:43    High 23.6 at 13:47" per line, in its colour. */
     for (int k = 0; k < h->count; k++) {
@@ -511,56 +655,6 @@ static void add_hourly_strip(lv_obj_t *list)
 
 /* ---- Wind: 24-hour speed and gust lines with an arrow for each hour ---- */
 #define WIND_CHART_H   130
-#define WIND_ARROWS_H  34
-#define WIND_GUST_COLOR 0xF6AD55
-#define WIND_STRONG     12.0f     /* an hour at or above this (km/h) is drawn in the gust colour */
-
-static struct {
-    float dir;        /* degrees the wind comes FROM */
-    bool calm;
-    uint32_t color;
-} s_arrows[HA_WIND_HOURS];
-
-/* One arrow per hour, evenly spread over the object's width (the same width
- * as the chart below it, so each sits over its hour). The arrow points the
- * way the wind is blowing, i.e. opposite to the bearing it comes from; a calm
- * hour is a small dot. */
-static void arrows_draw_cb(lv_event_t *e)
-{
-    lv_obj_t *obj = lv_event_get_target(e);
-    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
-    lv_area_t a;
-    lv_obj_get_coords(obj, &a);
-    int w = lv_area_get_width(&a), h = lv_area_get_height(&a);
-    float len = (float)(h / 2 - 3);
-    for (int i = 0; i < HA_WIND_HOURS; i++) {
-        float cx = (float)a.x1 + (float)w * (2 * i + 1) / (2.0f * HA_WIND_HOURS);
-        float cy = (float)a.y1 + (float)h / 2.0f;
-        lv_draw_line_dsc_t ln;
-        lv_draw_line_dsc_init(&ln);
-        ln.color = lv_color_hex(s_arrows[i].color);
-        ln.opa = LV_OPA_COVER;
-        ln.round_start = ln.round_end = 1;
-        if (s_arrows[i].calm) {
-            ln.width = 3;
-            lv_point_t p = { (lv_coord_t)cx, (lv_coord_t)cy };
-            lv_draw_line(ctx, &ln, &p, &p);
-            continue;
-        }
-        ln.width = 2;
-        float to = (s_arrows[i].dir + 180.0f) * (float)M_PI / 180.0f;
-        float dx = sinf(to) * len, dy = -cosf(to) * len;
-        lv_point_t tail = { (lv_coord_t)lroundf(cx - dx), (lv_coord_t)lroundf(cy - dy) };
-        lv_point_t head = { (lv_coord_t)lroundf(cx + dx), (lv_coord_t)lroundf(cy + dy) };
-        lv_draw_line(ctx, &ln, &tail, &head);
-        for (int side = -1; side <= 1; side += 2) {
-            float ang = to + (float)side * 150.0f * (float)M_PI / 180.0f;
-            lv_point_t barb = { (lv_coord_t)lroundf((float)head.x + sinf(ang) * 6.0f),
-                                (lv_coord_t)lroundf((float)head.y - cosf(ang) * 6.0f) };
-            lv_draw_line(ctx, &ln, &head, &barb);
-        }
-    }
-}
 
 static void add_wind_section(lv_obj_t *list)
 {
@@ -608,60 +702,23 @@ static void add_wind_section(lv_obj_t *list)
         add_label(legend, &gcal_font_14, DIM_COLOR, "Wind direction, hourly");
     }
 
-    const lv_coord_t chart_w = LV_HOR_RES - 64 - GRAPH_AXIS_W - 6;
     const lv_coord_t arrows_h = w->dir_ok ? WIND_ARROWS_H : 0;
-    lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_column(row, 6, 0);
-
-    /* Y labels, one per gridline, centred on the chart's lines (below the arrows). */
-    lv_obj_t *axis = lv_obj_create(row);
-    lv_obj_remove_style_all(axis);
-    lv_obj_set_size(axis, GRAPH_AXIS_W, arrows_h + WIND_CHART_H);
-    lv_obj_clear_flag(axis, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(axis, LV_OBJ_FLAG_EVENT_BUBBLE);
-    for (int t = 0; t <= intervals; t++) {
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%g", (double)(hi - t * step));
-        lv_obj_t *l = add_label(axis, &gcal_font_14, DIM_COLOR, buf);
-        lv_obj_set_width(l, GRAPH_AXIS_W);
-        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);
-        lv_coord_t y = arrows_h + (lv_coord_t)((WIND_CHART_H - 1) * t / intervals) - 9;
-        if (y < arrows_h) {
-            y = arrows_h;
-        }
-        if (y > arrows_h + WIND_CHART_H - 18) {
-            y = arrows_h + WIND_CHART_H - 18;
-        }
-        lv_obj_set_pos(l, 0, y);
-    }
-
-    lv_obj_t *col = add_container(row, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_width(col, chart_w);
-    lv_obj_set_style_pad_row(col, 0, 0);
+    chart_decor_t *dec;
+    lv_obj_t *chart = new_chart(list, arrows_h + WIND_CHART_H + CHART_PAD_B, arrows_h, CHART_PAD_B, &dec);
     if (w->dir_ok) {
         for (int i = 0; i < HA_WIND_HOURS; i++) {
             s_arrows[i].dir = w->hr_dir[i];
             s_arrows[i].calm = w->hr_calm[i];
             s_arrows[i].color = (!isnan(w->hr_speed[i]) && w->hr_speed[i] >= WIND_STRONG) ? WIND_GUST_COLOR : ICON_COLOR;
         }
-        lv_obj_t *arrows = lv_obj_create(col);
-        lv_obj_remove_style_all(arrows);
-        lv_obj_set_size(arrows, chart_w, WIND_ARROWS_H);
-        lv_obj_clear_flag(arrows, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_flag(arrows, LV_OBJ_FLAG_EVENT_BUBBLE);
-        lv_obj_add_event_cb(arrows, arrows_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
     }
-    lv_obj_t *chart = lv_chart_create(col);
-    lv_obj_set_size(chart, chart_w, WIND_CHART_H);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, HA_WIND_STEPS);
     lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, (lv_coord_t)(hi * 10));
     lv_chart_set_div_line_count(chart, intervals - 1, 5);       /* a line per label; one every 4 hours */
     lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(chart, 1, 0);
+    lv_obj_set_style_border_width(chart, 0, 0);
     lv_obj_set_style_border_color(chart, lv_color_hex(0x3C4043), 0);
-    lv_obj_set_style_pad_all(chart, 0, 0);
     lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2C2E), LV_PART_MAIN);
     lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
     lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);
@@ -682,18 +739,18 @@ static void add_wind_section(lv_obj_t *list)
     }
     lv_chart_refresh(chart);
 
-    /* Times under the chart: start, middle, end. */
     time_t t_end = w->end, t_start = t_end - (time_t)HA_WIND_STEPS * 900;
-    lv_obj_t *times = add_container(list, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(times, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_left(times, GRAPH_AXIS_W + 6, 0);
-    char a[8], b[8], c[8];
-    hhmm(t_start, a, sizeof(a));
-    hhmm((t_start + t_end) / 2, b, sizeof(b));
-    hhmm(t_end, c, sizeof(c));
-    add_label(times, &gcal_font_14, DIM_COLOR, a);
-    add_label(times, &gcal_font_14, DIM_COLOR, b);
-    add_label(times, &gcal_font_14, DIM_COLOR, c);
+    if (dec != NULL) {
+        for (int t = 0; t <= intervals && t < 12; t++) {
+            snprintf(dec->ylab[t], sizeof(dec->ylab[t]), "%g", (double)(hi - t * step));
+        }
+        dec->ny = intervals + 1 > 12 ? 12 : intervals + 1;
+        hhmm(t_start, dec->xlab[0], sizeof(dec->xlab[0]));
+        hhmm((t_start + t_end) / 2, dec->xlab[1], sizeof(dec->xlab[1]));
+        hhmm(t_end, dec->xlab[2], sizeof(dec->xlab[2]));
+        dec->nx = 3;
+        dec->arrows = w->dir_ok;
+    }
 
     /* "Now 9.7 km/h from NNE    Max gust 16.6 at 14:26    Mostly from NE" */
     char gt[8], line[160];
@@ -751,43 +808,16 @@ static void bar_section(lv_obj_t *list, const char *title, const ha_week_t *w, i
     }
     int intervals = (int)lroundf((hi - lo) / step);
 
-    const lv_coord_t chart_w = LV_HOR_RES - 64 - GRAPH_AXIS_W - 6;
-    lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_column(row, 6, 0);
-
-    /* Y scale: a label at every gridline, each centred on its line. */
-    lv_obj_t *axis = lv_obj_create(row);
-    lv_obj_remove_style_all(axis);
-    lv_obj_set_size(axis, GRAPH_AXIS_W, BAR_H);
-    lv_obj_clear_flag(axis, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(axis, LV_OBJ_FLAG_EVENT_BUBBLE);
-    for (int t = 0; t <= intervals; t++) {
-        char buf[24];
-        snprintf(buf, sizeof(buf), "%g", (double)(hi - t * step));
-        lv_obj_t *l = add_label(axis, &gcal_font_14, DIM_COLOR, buf);
-        lv_obj_set_width(l, GRAPH_AXIS_W);
-        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);
-        lv_coord_t y = (lv_coord_t)((BAR_H - 1) * t / intervals) - 9;     /* 18 px label, centred */
-        if (y < 0) {
-            y = 0;
-        }
-        if (y > BAR_H - 18) {
-            y = BAR_H - 18;
-        }
-        lv_obj_set_pos(l, 0, y);
-    }
-
-    lv_obj_t *chart = lv_chart_create(row);
-    lv_obj_set_size(chart, chart_w, BAR_H);
+    const int lines = temp ? 4 : 3;
+    chart_decor_t *dec;
+    lv_obj_t *chart = new_chart(list, BAR_H + lines * 15 + 8, 0, lines * 15 + 8, &dec);
     lv_chart_set_type(chart, LV_CHART_TYPE_BAR);
     lv_chart_set_point_count(chart, HA_WEEK_DAYS);
     lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)(lo * 10), (lv_coord_t)(hi * 10));
     lv_chart_set_div_line_count(chart, intervals - 1, 0);      /* a line at every labelled step */
     lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(chart, 1, 0);
+    lv_obj_set_style_border_width(chart, 0, 0);
     lv_obj_set_style_border_color(chart, lv_color_hex(0x3C4043), 0);
-    lv_obj_set_style_pad_all(chart, 0, 0);
     lv_obj_set_style_pad_column(chart, 5, LV_PART_MAIN);      /* gap between days */
     lv_obj_set_style_pad_column(chart, 2, LV_PART_ITEMS);     /* gap between a day's bars */
     lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2C2E), LV_PART_MAIN);
@@ -804,39 +834,43 @@ static void bar_section(lv_obj_t *list, const char *title, const ha_week_t *w, i
     }
     lv_chart_refresh(chart);
 
-    /* Weekday and value labels, one slot per day, lined up under the bars. */
-    lv_obj_t *days = add_container(list, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_left(days, GRAPH_AXIS_W + 6, 0);
-    lv_obj_set_style_pad_column(days, 0, 0);
-    lv_obj_set_flex_align(days, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    for (int i = 0; i < HA_WEEK_DAYS; i++) {
-        char name[16], text[112];
-        if (i == HA_WEEK_DAYS - 1) {
-            snprintf(name, sizeof(name), "Now");
-        } else {
-            struct tm lt;
-            localtime_r(&w->day[i], &lt);
-            char wd[8];
-            strftime(wd, sizeof(wd), "%a", &lt);
-            /* 14 days repeat the weekday names, so the date goes under them. */
-            snprintf(name, sizeof(name), "%.1s\n%d", wd, lt.tm_mday);
+    /* The Y numbers and the text under each day, painted by chart_decor_cb(). */
+    if (dec != NULL) {
+        for (int t = 0; t <= intervals && t < 12; t++) {
+            snprintf(dec->ylab[t], sizeof(dec->ylab[t]), "%g", (double)(hi - t * step));
         }
-        if (temp) {
-            if (w->t_ok[i]) {
-                snprintf(text, sizeof(text), "%s\n#%06X %.1f#\n#%06X %.1f#", name, TEMP_HI_COLOR,
-                         (double)w->tmax[i], TEMP_LO_COLOR, (double)w->tmin[i]);
+        dec->ny = intervals + 1 > 12 ? 12 : intervals + 1;
+        dec->ndays = HA_WEEK_DAYS;
+        dec->day_lines = lines;
+        dec->day_col[0] = DIM_COLOR;
+        dec->day_col[1] = DIM_COLOR;
+        dec->day_col[2] = temp ? TEMP_HI_COLOR : RAIN_COLOR;
+        dec->day_col[3] = TEMP_LO_COLOR;
+        for (int i = 0; i < HA_WEEK_DAYS; i++) {
+            if (i == HA_WEEK_DAYS - 1) {
+                snprintf(dec->day[i][0], sizeof(dec->day[i][0]), "Now");
             } else {
-                snprintf(text, sizeof(text), "%s\n-", name);
+                struct tm lt;
+                localtime_r(&w->day[i], &lt);
+                char wd[8];
+                strftime(wd, sizeof(wd), "%a", &lt);
+                /* 14 days repeat the weekday names, so the date goes under them. */
+                snprintf(dec->day[i][0], sizeof(dec->day[i][0]), "%.1s", wd);
+                snprintf(dec->day[i][1], sizeof(dec->day[i][1]), "%d", lt.tm_mday);
             }
-        } else if (w->r_day_ok[i]) {
-            snprintf(text, sizeof(text), "%s\n#%06X %.1f#", name, RAIN_COLOR, (double)w->rain[i]);
-        } else {
-            snprintf(text, sizeof(text), "%s\n-", name);
+            if (temp) {
+                if (w->t_ok[i]) {
+                    snprintf(dec->day[i][2], sizeof(dec->day[i][2]), "%.1f", (double)w->tmax[i]);
+                    snprintf(dec->day[i][3], sizeof(dec->day[i][3]), "%.1f", (double)w->tmin[i]);
+                } else {
+                    snprintf(dec->day[i][2], sizeof(dec->day[i][2]), "-");
+                }
+            } else if (w->r_day_ok[i]) {
+                snprintf(dec->day[i][2], sizeof(dec->day[i][2]), "%.1f", (double)w->rain[i]);
+            } else {
+                snprintf(dec->day[i][2], sizeof(dec->day[i][2]), "-");
+            }
         }
-        lv_obj_t *l = add_label(days, &gcal_font_14, DIM_COLOR, text);
-        lv_label_set_recolor(l, true);
-        lv_obj_set_width(l, chart_w / HA_WEEK_DAYS);
-        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     }
 }
 
