@@ -5,3 +5,7 @@ sdkconfig.old
 *.d
 .DS_Store
 extracted_display_touch_bsp/
+
+# development (plain-http OTA) build
+build-dev/
+sdkconfig.dev.out*

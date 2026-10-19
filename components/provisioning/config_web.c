@@ -297,7 +297,15 @@ static esp_err_t root_get_handler(httpd_req_t *req)
              (unsigned)s_cfg->lock_after_min);
     httpd_resp_sendstr_chunk(req, lock_after);
 
-    char other[3600];
+    /* The update URL must be https://: a plain-http one is refused by the device, and
+     * says so here in red rather than failing quietly when Update is tapped. */
+    const char *ota_hint = ota_update_url_is_insecure(s_cfg->ota_url) && s_cfg->ota_url[0]
+        ? "<div class='hint' style='color:#d93025'><b>This address is plain http://.</b> The device "
+          "will refuse to update from it - use an https:// address.</div>"
+        : "<div class='hint'>Use an https:// address: the firmware is downloaded and installed "
+          "without any signature check, so plain http:// would let anyone on the network "
+          "substitute their own. The device refuses http:// addresses.</div>";
+    char other[4400];
     snprintf(other, sizeof(other),
         "<h2>Other</h2>"
         "<label>Timezone (POSIX TZ string)</label>"
@@ -306,7 +314,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<label>Refresh interval (seconds)</label>"
         "<input type='number' name='refresh_interval_s' value='%u' min='60'>"
         "<label>Firmware update URL (optional)</label>"
-        "<input type='text' name='ota_url' value='%s' placeholder='https://.../gcal_display.bin'>"
+        "<input type='text' name='ota_url' value='%s' placeholder='https://.../gcal_display.bin'>%s"
         "<label>Screen timeout (seconds, 0 = never sleep)</label>"
         "<input type='number' name='screen_timeout_s' value='%u' min='0'>"
         "<label>Week/day view hour range (24h clock)</label>"
@@ -357,7 +365,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<a class='btn-cancel' href='/'>Cancel</a>"
         "</div>"
         "</form></body></html>",
-        s_cfg->posix_tz, (unsigned)s_cfg->refresh_interval_s, s_cfg->ota_url,
+        s_cfg->posix_tz, (unsigned)s_cfg->refresh_interval_s, s_cfg->ota_url, ota_hint,
         (unsigned)s_cfg->screen_timeout_s, (unsigned)s_cfg->view_start_hour, (unsigned)s_cfg->view_end_hour,
         (unsigned)s_cfg->fetch_past_days, (unsigned)s_cfg->fetch_future_days,
         (unsigned)s_cfg->brightness_min_pct_x10, (double)s_cfg->brightness_min_pct_x10 / 10.0,
@@ -627,7 +635,19 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
     }
     decoded[n] = '\0';
     const char *use = decoded[0] ? decoded : s_cfg->ota_url;
-    if (ota_update_start_background(use) != ESP_OK) {
+    esp_err_t started = ota_update_start_background(use);
+    if (started == ESP_ERR_NOT_SUPPORTED) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "refused: plain-http firmware URLs are only accepted by a development build "
+                                "(tools/dev_build.sh); use an https:// URL\n");
+        return ESP_OK;
+    }
+    if (started == ESP_ERR_NO_MEM) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_sendstr(req, "not enough free memory just now - try again in a few seconds\n");
+        return ESP_OK;
+    }
+    if (started != ESP_OK) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_sendstr(req, "no firmware URL given and none configured\n");
         return ESP_OK;

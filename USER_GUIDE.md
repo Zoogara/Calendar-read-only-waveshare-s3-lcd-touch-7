@@ -38,7 +38,9 @@ Left to right:
 - **Setup** - erases the saved Wi-Fi and calendar settings and restarts into
   the setup portal. Asks first.
 - **Update** - downloads and installs new firmware from the *Firmware update
-  URL*, then restarts. Asks first; tells you if no URL is set.
+  URL*, then restarts. Asks first; tells you if no URL is set, or if it isn't
+  an `https://` address (plain http is refused - anyone on the network could
+  swap in their own firmware).
 
 ## When nobody's using it
 
@@ -154,7 +156,7 @@ touch (0 = padlock only).
 |---|---|
 | Timezone | A POSIX TZ string, e.g. `AEST-10AEDT,M10.1.0,M4.1.0/3` for Melbourne |
 | Refresh interval | Seconds between syncs |
-| Firmware update URL | Where gear → Update fetches firmware from (optional) |
+| Firmware update URL | Where gear → Update fetches firmware from (optional). Must be `https://` |
 | Screen timeout | Seconds without a touch before the clock or screensaver; 0 = never |
 | Week/day view hours | First and last hour shown in Week and Day view; also when the clock counts as daytime |
 | Calendar cache window | Days back (up to 90) and ahead (up to 365) to fetch |

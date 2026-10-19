@@ -1,0 +1,5 @@
+# Development overlay - NOT the default. Allows plain-http firmware URLs, but only for the
+# authenticated /ota trigger (see components/ota_update); the on-device Update button and the
+# configured update URL stay https-only. Use tools/dev_build.sh, which builds into build-dev/
+# with its own generated sdkconfig so the default build is never affected.
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y

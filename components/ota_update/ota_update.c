@@ -1,6 +1,7 @@
 #include "ota_update.h"
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include "esp_log.h"
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
@@ -13,10 +14,30 @@
 
 static const char *TAG = "ota_update";
 
-esp_err_t ota_update_check_and_apply(const char *url)
+bool ota_update_url_is_insecure(const char *url)
+{
+    return url != NULL && strncasecmp(url, "https://", 8) != 0;
+}
+
+bool ota_update_http_allowed_in_build(void)
+{
+#ifdef CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP
+    return true;
+#else
+    return false;
+#endif
+}
+
+/* The shared download. `allow_http` is only ever true for the authenticated /ota trigger. */
+static esp_err_t apply(const char *url, bool allow_http)
 {
     if (url == NULL || url[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (ota_update_url_is_insecure(url) && !(allow_http && ota_update_http_allowed_in_build())) {
+        ESP_LOGW(TAG, "refusing a plain-http update URL (%s): firmware updates need https://%s", url,
+                 allow_http ? " - this is not a development build" : "");
+        return ESP_ERR_NOT_SUPPORTED;
     }
 
     /* With app rollback on, esp_ota_begin() refuses (ESP_ERR_OTA_ROLLBACK_INVALID_STATE)
@@ -56,10 +77,15 @@ esp_err_t ota_update_check_and_apply(const char *url)
     return ESP_OK;
 }
 
+esp_err_t ota_update_check_and_apply(const char *url)
+{
+    return apply(url, false);
+}
+
 static void background_task(void *arg)
 {
     char *url = (char *)arg;
-    esp_err_t err = ota_update_check_and_apply(url);
+    esp_err_t err = apply(url, true);
     free(url);
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "OTA update applied, restarting");
@@ -74,6 +100,10 @@ esp_err_t ota_update_start_background(const char *url)
 {
     if (url == NULL || url[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (ota_update_url_is_insecure(url) && !ota_update_http_allowed_in_build()) {
+        ESP_LOGW(TAG, "refusing a plain-http update URL: this build is https-only");
+        return ESP_ERR_NOT_SUPPORTED;
     }
     char *copy = strdup(url);
     if (copy == NULL) {
