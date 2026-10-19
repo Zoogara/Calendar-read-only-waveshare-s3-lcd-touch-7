@@ -2,6 +2,7 @@
 #include "provisioning.h"
 #include "ota_update.h"
 #include "auth_guard.h"
+#include "url_decode.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -804,17 +805,11 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
     }
     /* The query value arrives percent-encoded. */
     char decoded[256];
-    size_t n = 0;
-    for (const char *p = url; *p && n < sizeof(decoded) - 1; p++) {
-        if (*p == '%' && p[1] && p[2]) {
-            char hex[3] = {p[1], p[2], 0};
-            decoded[n++] = (char)strtol(hex, NULL, 16);
-            p += 2;
-        } else {
-            decoded[n++] = *p;
-        }
+    if (!url_percent_decode(url, decoded, sizeof(decoded))) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "bad url: invalid percent-encoding, or too long\n");
+        return ESP_OK;
     }
-    decoded[n] = '\0';
     const char *use = decoded[0] ? decoded : s_cfg->ota_url;
     esp_err_t started = ota_update_start_background(use);
     if (started == ESP_ERR_NOT_SUPPORTED) {

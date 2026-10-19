@@ -12,8 +12,8 @@ CFLAGS := -std=gnu11 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-sign-compar
           -I$(ROOT)/components/ha_weather/include \
           -I$(ROOT)/components/provisioning/include
 
-SRC := test_main.c test_rss.c test_ics.c test_wind.c test_auth.c fake_http.c \
-       $(ROOT)/components/provisioning/auth_guard.c \
+SRC := test_main.c test_rss.c test_ics.c test_wind.c test_auth.c test_urldecode.c fake_http.c \
+       $(ROOT)/components/provisioning/auth_guard.c $(ROOT)/components/provisioning/url_decode.c \
        $(ROOT)/components/ha_weather/ha_wind_calc.c \
        $(ROOT)/components/rss_feed/rss_parse.c $(ROOT)/components/gcal/ics_client.c
 
