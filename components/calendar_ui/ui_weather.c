@@ -241,7 +241,7 @@ static void add_small_day(lv_obj_t *list, const ha_forecast_day_t *d, const char
  * Now / Low / High line per sensor in that sensor's colour. Left out entirely
  * when there is no history yet. */
 #define GRAPH_H        150
-#define GRAPH_AXIS_W   56
+#define GRAPH_AXIS_W   36            /* the Y numbers: up to "27.5" in 14px text */
 
 static const uint32_t SERIES_COLOR[HA_HISTORY_SERIES] = { 0x8AB4F8, 0xF6AD55 };   /* blue, orange */
 
@@ -326,13 +326,6 @@ static void chart_decor_cb(lv_event_t *e)
     lv_obj_get_coords(ch, &obj);
     lv_obj_get_content_coords(ch, &plot);          /* the plot area inside the padding */
     int pw = lv_area_get_width(&plot), ph = lv_area_get_height(&plot);
-    static int s_geo_logged;
-    if (s_geo_logged < 8) {      /* TEMPORARY: where each chart and its plot area really are */
-        s_geo_logged++;
-        ESP_LOGI(TAG, "[geo] chart x %d..%d (w %d)  plot x %d..%d (w %d)  y %d..%d  plot y %d..%d",
-                 (int)obj.x1, (int)obj.x2, (int)lv_area_get_width(&obj), (int)plot.x1, (int)plot.x2, pw,
-                 (int)obj.y1, (int)obj.y2, (int)plot.y1, (int)plot.y2);
-    }
 
     /* LVGL runs its gridlines right across the chart's padding, where the text
      * goes: paint the padding strips black first, then frame the plot ourselves. */
