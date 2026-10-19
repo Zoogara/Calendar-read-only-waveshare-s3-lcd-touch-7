@@ -151,15 +151,22 @@ components/
   light_sensor/           reads a BH1750 ambient light sensor over I2C
                            (see "Backlight auto-dimming" below); drives
                            the physical backlight brightness
-  weather/                 fetches current conditions and a 7-day forecast
-                           from Open-Meteo for the ambient clock and its
-                           weather panel (see "Weather" below)
+  weather/                 fetches current conditions, a 7-day forecast and
+                           the hourly / 14-day graph data from Open-Meteo
+                           for the ambient clock and its weather panel
+                           (see "Weather" below)
   onthisday/               fetches today's "on this day" history from
                            Wikipedia for the clock (see "On this day" below)
   esp_lcd/                 vendored + patched copy of ESP-IDF's own
                            esp_lcd component (overrides $IDF_PATH's) -
                            fixes a real bug in the RGB panel driver, see
                            "Ambient clock digit tearing (fixed)" below
+tools/
+  gcal_remote.py           wireless log viewer and firmware pusher (see
+                           "Wireless logging and updates" below)
+  dev_build.sh             builds the development variant of the firmware
+  screenshots/             renders the real UI with fictional data on a
+                           computer, for the images in docs/
 ```
 
 ## Building
@@ -477,14 +484,28 @@ weather opens a panel (`components/calendar_ui/ui_weather.c`) headed
   and a short summary.
 - **The next five days**: a 32px icon, a short description, min / max,
   rain chance and amount.
+- **Next 24 hours**: a strip that scrolls sideways, one cell per hour -
+  time, icon, temperature, chance of rain and (when there is some) the
+  amount. The current hour is highlighted and a line marks midnight.
+- **Last 24 hours**: the temperature as a line graph, with the low and
+  high and when they happened.
+- **Wind, last 24 hours**: speed and gust lines, with an arrow for each
+  hour showing where the wind came from (calm hours have none), and the
+  latest speed, the highest gust and the prevailing direction underneath.
+- **Last 14 days**: daily highs and lows as bars, and daily rainfall.
 
-A tap, or a minute untouched, closes it and returns to the clock.
+A small warning triangle at the top right means the last attempt to load
+the hourly or 14-day data failed; what's shown is then older data or
+missing a graph. A tap, or a minute untouched, closes the panel and
+returns to the clock. The screenshots are under "More screens" above.
 
 The data comes from [Open-Meteo](https://open-meteo.com) - free for
-non-commercial use, no account or key - in one plain-`http` request of
-~1.8KB every 15 minutes (`components/weather/`), kept in PSRAM. A few things
-follow from it being a weather *model* rather than a station or a weather
-service:
+non-commercial use, no account or key - over plain `http` (`components/weather/`),
+kept in PSRAM: one request of ~2KB every 15 minutes for the current
+conditions and the 7-day forecast, and two more of ~2.5KB for the graphs -
+the hourly data (the last 24 hours and the next 24) every 15 minutes, the
+14-day daily data every hour. A few things follow from it being a weather
+*model* rather than a station or a weather service:
 
 - **Readings are model values for the location**, not measurements -
   close to a nearby station's, but not the same.
@@ -496,10 +517,14 @@ service:
 - **Conditions are WMO weather codes**, mapped onto the icon set and a
   short phrase ("Mainly clear", "Slight rain") in `weather.c`.
 - **Rain is a single amount** per day, not a range.
+- **The graphs show model values too.** The past 24 hours and 14 days are
+  Open-Meteo's analysis of what happened, not readings from a sensor at
+  your house; the two line graphs are interpolated between its hourly
+  values.
 
-(The `with-HA-weather` branch has the same display fed from a Home
+(The `with-HA-weather` branch has the same panels fed from a Home
 Assistant installation's local station and Bureau of Meteorology sensors
-instead.)
+instead, with a second temperature line from the official station.)
 
 ## On this day
 

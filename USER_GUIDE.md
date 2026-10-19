@@ -59,7 +59,12 @@ Left to right:
   and date: the temperature now and what it feels like, wind (direction,
   speed, gusts), rain so far today and air pressure; Today and Tomorrow
   with an icon, min / max, the chance and amount of rain and a short
-  summary; and a line each for the five days after.
+  summary; and a line each for the five days after. Scroll down for the
+  next 24 hours (a strip you can swipe sideways), the temperature over
+  the last 24 hours, the wind (speed, gusts and an arrow per hour) and
+  daily highs, lows and rainfall for the last 14 days. A small warning
+  triangle at the top right means some of that couldn't be loaded last
+  time.
 - **News feeds:** with a feed address set on the config web page (*News
   feeds*), an RSS icon and its short label sit in the bottom-left corner
   (feed 1) and bottom-right (feed 2). Tap one to read that feed: a
