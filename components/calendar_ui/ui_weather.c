@@ -241,7 +241,7 @@ static void add_small_day(lv_obj_t *list, const ha_forecast_day_t *d, const char
  * Now / Low / High line per sensor in that sensor's colour. Left out entirely
  * when there is no history yet. */
 #define GRAPH_H        150
-#define GRAPH_AXIS_W   36            /* the Y numbers: up to "27.5" in 14px text */
+#define GRAPH_AXIS_W   31            /* the Y numbers: up to "27.5" in 14px text */
 
 static const uint32_t SERIES_COLOR[HA_HISTORY_SERIES] = { 0x8AB4F8, 0xF6AD55 };   /* blue, orange */
 
