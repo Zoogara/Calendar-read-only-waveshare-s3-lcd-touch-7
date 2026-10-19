@@ -73,6 +73,31 @@ static void small_buffers_never_overrun(void)
     }
 }
 
+/* A result that exactly fills the buffer (with its NUL) is complete, not cut short. */
+static void exact_fit_is_not_reported_as_truncated(void)
+{
+    const char *cases[] = {"abcdefg", "a b", "%", "x y/z", "caf\xC3\xA9", "", "-_.~"};
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char full[64];
+        CHECK(gcal_url_encode(cases[i], full, sizeof(full)));
+        size_t need = strlen(full) + 1;
+        char mem[80];
+        memset(mem, 0x5A, sizeof(mem));
+        CHECK(gcal_url_encode(cases[i], mem + 8, need));
+        CHECK_STR(mem + 8, full);
+        CHECK(mem[8 + need] == 0x5A);
+        CHECK(!gcal_url_encode(cases[i], mem + 8, need - 1) || need == 1);
+    }
+}
+
+static void zero_size_buffer(void)
+{
+    char mem[4] = {0x5A, 0x5A, 0x5A, 0x5A};
+    CHECK(!gcal_url_encode("a", mem, 0));
+    CHECK(!gcal_url_encode("", mem, 0));
+    CHECK(mem[0] == 0x5A);                               /* not even a NUL is written */
+}
+
 void test_urlenc(void)
 {
     RUN(unreserved_pass_through);
@@ -80,4 +105,6 @@ void test_urlenc(void)
     RUN(utf8_and_high_bytes);
     RUN(the_firmwares_own_values);
     RUN(small_buffers_never_overrun);
+    RUN(exact_fit_is_not_reported_as_truncated);
+    RUN(zero_size_buffer);
 }
