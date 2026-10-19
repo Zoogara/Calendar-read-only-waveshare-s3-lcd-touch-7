@@ -720,6 +720,12 @@ address from Step 2 works too - add it as an **ICS URL**-source calendar
 instead, no sharing required. Either way, pending tasks show up
 prefixed with ☐ (U+2610), completed ones with ☑ (U+2611).
 
+## License
+
+Apache License 2.0 - see [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party code, fonts and
+data (including the licences and attributions you must keep if you redistribute firmware) are
+listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Known issues and history
 
 The project is stable in daily use; nothing below affects normal
