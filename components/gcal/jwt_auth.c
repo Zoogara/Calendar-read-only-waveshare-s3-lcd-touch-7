@@ -1,4 +1,5 @@
 #include "jwt_auth.h"
+#include "jwt_build.h"
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
@@ -11,18 +12,14 @@
 #include "mbedtls/md.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
-#include "mbedtls/base64.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
 static const char *TAG = "jwt_auth";
 
-#define TOKEN_URL "https://oauth2.googleapis.com/token"
-#define CALENDAR_SCOPE "https://www.googleapis.com/auth/calendar.readonly"
-
-/* base64url({"alg":"RS256","typ":"JWT"}) - constant for every request. */
-static const char *JWT_HEADER_B64 = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9";
+#define TOKEN_URL JWT_TOKEN_URL
+#define CALENDAR_SCOPE JWT_CALENDAR_SCOPE
 
 static char s_cached_token[1024];
 static time_t s_cached_expiry;
@@ -44,31 +41,6 @@ static esp_err_t http_perform_with_retry(esp_http_client_handle_t client)
         vTaskDelay(pdMS_TO_TICKS(200));
     }
     return err;
-}
-
-static esp_err_t b64url_encode(const uint8_t *in, size_t in_len, char *out, size_t out_sz)
-{
-    size_t olen = 0;
-    /* mbedtls_base64_encode returns MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL and
-     * sets olen to the required size (which can exceed out_sz) rather than
-     * writing anything - must check the return value before touching
-     * out[olen], or an undersized out buffer becomes a stack overflow. */
-    int ret = mbedtls_base64_encode((unsigned char *)out, out_sz, &olen, in, in_len);
-    if (ret != 0) {
-        ESP_LOGE(TAG, "base64 encode failed (needed %d bytes, have %d): mbedtls -0x%04x",
-                 (int)olen, (int)out_sz, (unsigned int)-ret);
-        return ESP_ERR_INVALID_SIZE;
-    }
-    out[olen] = '\0';
-    for (size_t i = 0; i < olen; i++) {
-        if (out[i] == '+') out[i] = '-';
-        else if (out[i] == '/') out[i] = '_';
-    }
-    /* strip padding */
-    while (olen > 0 && out[olen - 1] == '=') {
-        out[--olen] = '\0';
-    }
-    return ESP_OK;
 }
 
 /* Response buffer for the HTTP client's event-based fetch. */
@@ -118,31 +90,24 @@ static esp_err_t build_signed_jwt(const app_settings_t *cfg, char *jwt_out, size
     time(&now);
 
     char claims_json[384];
-    int claims_n = snprintf(claims_json, sizeof(claims_json),
-             "{\"iss\":\"%s\",\"scope\":\"%s\",\"aud\":\"%s\",\"iat\":%lld,\"exp\":%lld}",
-             cfg->sa_client_email, CALENDAR_SCOPE, TOKEN_URL,
-             (long long)now, (long long)(now + 3600));
-    if (claims_n < 0 || (size_t)claims_n >= sizeof(claims_json)) {
-        ESP_LOGE(TAG, "claims_json buffer too small (needed %d, have %d) - "
+    int claims_n = jwt_build_claims(claims_json, sizeof(claims_json), cfg->sa_client_email,
+                                    CALENDAR_SCOPE, TOKEN_URL, (int64_t)now);
+    if (claims_n < 0) {
+        ESP_LOGE(TAG, "claims_json buffer too small (have %d) - "
                       "is the service account email unusually long?",
-                 claims_n, (int)sizeof(claims_json));
-        return ESP_ERR_INVALID_SIZE;
-    }
-
-    char claims_b64[512];
-    if (b64url_encode((const uint8_t *)claims_json, strlen(claims_json), claims_b64, sizeof(claims_b64)) != ESP_OK) {
+                 (int)sizeof(claims_json));
         return ESP_ERR_INVALID_SIZE;
     }
 
     char signing_input[600];
-    int n = snprintf(signing_input, sizeof(signing_input), "%s.%s", JWT_HEADER_B64, claims_b64);
-    if (n < 0 || (size_t)n >= sizeof(signing_input)) {
-        ESP_LOGE(TAG, "signing_input buffer too small (needed %d, have %d) - "
+    if (!jwt_signing_input(signing_input, sizeof(signing_input), claims_json)) {
+        ESP_LOGE(TAG, "signing_input buffer too small (have %d) - "
                       "is the service account email unusually long?",
-                 n, (int)sizeof(signing_input));
+                 (int)sizeof(signing_input));
         return ESP_ERR_INVALID_SIZE;
     }
 
+    int n;
     uint8_t digest[32];
     mbedtls_md(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
                (const uint8_t *)signing_input, strlen(signing_input), digest);
@@ -184,7 +149,8 @@ static esp_err_t build_signed_jwt(const app_settings_t *cfg, char *jwt_out, size
     char sig_b64[700]; /* fits signatures up to a 4096-bit RSA key
                            (512-byte sig -> ~683 base64 chars); Google's
                            default 2048-bit keys only need ~344 */
-    if (b64url_encode(sig, sig_len, sig_b64, sizeof(sig_b64)) != ESP_OK) {
+    if (!jwt_b64url_encode(sig, sig_len, sig_b64, sizeof(sig_b64))) {
+        ESP_LOGE(TAG, "signature too long for its base64 buffer");
         goto out;
     }
 
