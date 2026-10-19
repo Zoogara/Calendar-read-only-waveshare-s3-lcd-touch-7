@@ -416,6 +416,13 @@ static void nice_scale(float *lo, float *hi, int plot_h, float *step, int *inter
 static lv_obj_t *new_chart(lv_obj_t *list, lv_coord_t total_h, lv_coord_t pad_top, lv_coord_t pad_bottom,
                            chart_decor_t **decor)
 {
+    /* The top Y label is centred on the plot's top edge, so half of it sits above the
+     * plot: leave it room (found by the host renderer, tools/screenshots - it was being
+     * clipped at the chart's top edge). The wind chart's arrow band already provides it. */
+    if (pad_top < 10) {
+        total_h += 10 - pad_top;
+        pad_top = 10;
+    }
     lv_obj_t *c = lv_chart_create(list);
     lv_obj_set_size(c, LV_HOR_RES - 64, total_h);
     lv_obj_set_style_pad_all(c, 0, 0);
