@@ -401,6 +401,32 @@ static void chart_decor_free_cb(lv_event_t *e)
     heap_caps_free(lv_event_get_user_data(e));
 }
 
+/* A round tick step (0.5, 1, 2, 5, 10 ...) giving no more intervals than leave
+ * the Y labels at least 24 px apart on a plot `plot_h` tall, and the range
+ * widened to whole steps so every gridline has a label and every label a line. */
+static void nice_scale(float *lo, float *hi, int plot_h, float *step, int *intervals)
+{
+    int max_intervals = plot_h / 24;
+    if (max_intervals < 2) {
+        max_intervals = 2;
+    }
+    static const float steps[] = { 0.5f, 1, 2, 5, 10, 20, 50, 100 };
+    float st = steps[0];
+    for (size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); i++) {
+        st = steps[i];
+        if ((*hi - *lo) / st <= (float)max_intervals) {
+            break;
+        }
+    }
+    *lo = floorf(*lo / st) * st;
+    *hi = ceilf(*hi / st) * st;
+    if (*hi <= *lo) {
+        *hi = *lo + st;
+    }
+    *step = st;
+    *intervals = (int)lroundf((*hi - *lo) / st);
+}
+
 /* A chart the width of the list with room in its padding for the text above. */
 static lv_obj_t *new_chart(lv_obj_t *list, lv_coord_t total_h, lv_coord_t pad_top, lv_coord_t pad_bottom,
                            chart_decor_t **decor)
@@ -434,11 +460,9 @@ static void add_history_graph(lv_obj_t *list)
         mn = fminf(mn, h->s[k].min);
         mx = fmaxf(mx, h->s[k].max);
     }
-    float lo = floorf(mn), hi = ceilf(mx);
-    if (hi - lo < 2.0f) {
-        lo -= 1.0f;
-        hi += 1.0f;
-    }
+    float lo = mn, hi = mx, step;
+    int intervals;
+    nice_scale(&lo, &hi, GRAPH_H, &step, &intervals);
 
     lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
     lv_obj_set_height(gap, 10);
@@ -465,7 +489,7 @@ static void add_history_graph(lv_obj_t *list)
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, HA_HISTORY_POINTS);
     lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)(lo * 10), (lv_coord_t)(hi * 10));
-    lv_chart_set_div_line_count(chart, 4, 7);    /* a line every 4 hours, 3 horizontal */
+    lv_chart_set_div_line_count(chart, intervals - 1, 7);    /* a line per labelled step; one every 4 hours */
     lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(chart, 0, 0);
     lv_obj_set_style_border_color(chart, lv_color_hex(0x3C4043), 0);
@@ -488,10 +512,10 @@ static void add_history_graph(lv_obj_t *list)
     time_t t_end = h->end;
     time_t t_start = t_end - (time_t)(HA_HISTORY_POINTS - 1) * h->step_s;
     if (dec != NULL) {
-        snprintf(dec->ylab[0], sizeof(dec->ylab[0]), "%.0f", (double)hi);
-        snprintf(dec->ylab[1], sizeof(dec->ylab[1]), "%.0f", (double)((lo + hi) / 2.0f));
-        snprintf(dec->ylab[2], sizeof(dec->ylab[2]), "%.0f", (double)lo);
-        dec->ny = 3;
+        for (int t = 0; t <= intervals && t < 12; t++) {
+            snprintf(dec->ylab[t], sizeof(dec->ylab[t]), "%g", (double)(hi - t * step));
+        }
+        dec->ny = intervals + 1 > 12 ? 12 : intervals + 1;
         hhmm(t_start, dec->xlab[0], sizeof(dec->xlab[0]));
         hhmm((t_start + t_end) / 2, dec->xlab[1], sizeof(dec->xlab[1]));
         hhmm(t_end, dec->xlab[2], sizeof(dec->xlab[2]));
@@ -690,16 +714,9 @@ static void add_wind_section(lv_obj_t *list)
             top = v;
         }
     }
-    float step = 1.0f;
-    static const float steps[] = { 1, 2, 5, 10, 20, 50 };
-    for (size_t s = 0; s < sizeof(steps) / sizeof(steps[0]); s++) {
-        step = steps[s];
-        if (top / step <= 8.0f) {
-            break;
-        }
-    }
-    float hi = ceilf(top / step) * step;
-    int intervals = (int)lroundf(hi / step);
+    float lo = 0.0f, hi = top, step;
+    int intervals;
+    nice_scale(&lo, &hi, WIND_CHART_H, &step, &intervals);
 
     lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
     lv_obj_set_height(gap, 10);
@@ -806,24 +823,9 @@ static void bar_section(lv_obj_t *list, const char *title, const ha_week_t *w, i
     lv_obj_set_width(heading, LV_PCT(100));
     lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
 
-    /* A "nice" tick step (1, 2, 5, 10 ...) that gives about 5-10 intervals, then
-     * the range widened to whole steps so every gridline has a label. */
-    float step = 1.0f;
-    {
-        static const float steps[] = { 1, 2, 5, 10, 20, 50, 100 };
-        for (size_t s = 0; s < sizeof(steps) / sizeof(steps[0]); s++) {
-            step = steps[s];
-            if ((hi - lo) / step <= 10.0f) {
-                break;
-            }
-        }
-        lo = floorf(lo / step) * step;
-        hi = ceilf(hi / step) * step;
-        if (hi <= lo) {
-            hi = lo + step;
-        }
-    }
-    int intervals = (int)lroundf((hi - lo) / step);
+    float step;
+    int intervals;
+    nice_scale(&lo, &hi, BAR_H, &step, &intervals);
 
     const int lines = temp ? 4 : 3;
     chart_decor_t *dec;
