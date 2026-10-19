@@ -5,11 +5,14 @@
       Listens for the UDP log the device sends to its "Log destination"
       (config page -> Developer). Prints each line, colour codes stripped.
 
-  gcal_remote.py ota --device 192.168.1.50 [--build build/gcal_display.bin]
+  gcal_remote.py ota --device 192.168.1.50 [--build build-dev/gcal_display.bin]
       Serves the built .bin from this machine and tells the device to fetch
       it (POST /ota on its config web server, same password as the settings
       page - set GCAL_PASS). The device restarts into the new image; one that
       doesn't survive its first minute rolls back by itself.
+      The download is plain http, which only a DEVELOPMENT build accepts:
+      build with tools/dev_build.sh (-> build-dev/), and send the display a dev
+      build every time - a default build is https-only and would end this.
 
 Serial logging and `idf.py flash` over USB are unaffected and still work.
 """
@@ -98,16 +101,18 @@ def cmd_ota(a):
     req.add_header("Authorization", "Basic " + base64.b64encode(f"x:{password}".encode()).decode())
     # The display needs a free 8KB chunk of internal RAM to start the update
     # task; right after a sync or with a panel open there can briefly be none
-    # (it answers 400 / 503). Retry a few times before giving up.
+    # (it answers 503). Retry a few times. Any other refusal (400) is final and
+    # its explanation is printed.
     for attempt in range(1, 7):
         try:
             with urllib.request.urlopen(req, timeout=15) as r:
                 print(r.status, r.read().decode().strip())
             break
         except urllib.error.HTTPError as e:
-            if e.code not in (400, 503) or attempt == 6:
-                raise
-            print(f"  display not ready ({e.code}) - retrying in 5s ({attempt}/6)")
+            if e.code != 503 or attempt == 6:
+                print(f"  the display refused ({e.code}): {e.read().decode().strip()}")
+                sys.exit(1)
+            print(f"  display not ready (503) - retrying in 5s ({attempt}/6)")
             threading.Event().wait(5)
     print(f"serving {fw_url} - waiting for the device to download it (up to {a.wait}s, Ctrl-C to stop)")
     try:
@@ -128,7 +133,7 @@ l.add_argument("--from", dest="sender", help="only accept packets from this IP (
 l.set_defaults(fn=cmd_logs)
 o = sub.add_parser("ota")
 o.add_argument("--device", required=True, help="the display's IP or hostname")
-o.add_argument("--build", default="build/gcal_display.bin")
+o.add_argument("--build", default="build-dev/gcal_display.bin", help="a development build (tools/dev_build.sh)")
 o.add_argument("--serve-port", type=int, default=8070)
 o.add_argument("--wait", type=int, default=300, help="max seconds to keep serving")
 o.set_defaults(fn=cmd_ota)

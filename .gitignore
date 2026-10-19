@@ -10,3 +10,7 @@ extracted_display_touch_bsp/
 tools/screenshots/build/
 tools/screenshots/out/
 tools/screenshots/render
+
+# development (plain-http OTA) build
+build-dev/
+sdkconfig.dev.out*

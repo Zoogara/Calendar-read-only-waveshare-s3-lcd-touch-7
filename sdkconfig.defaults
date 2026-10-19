@@ -203,6 +203,7 @@ CONFIG_LWIP_SNTP_STARTUP_DELAY=n
 # valid (see ota_update_confirm_boot_after)
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
-# Wireless updates are served over plain http from a machine on the LAN
-# (tools/gcal_remote.py ota) - the owner chose this, local network only
-CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
+# Firmware updates are https-only by default. Plain-http updates (for the wireless
+# development workflow, tools/gcal_remote.py ota) are enabled only by sdkconfig.dev -
+# build with tools/dev_build.sh.
+# CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP is not set
