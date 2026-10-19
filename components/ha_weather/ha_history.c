@@ -35,6 +35,15 @@ static const char *TAG = "ha_history";
 #define STALE_AFTER_US   (60LL * 60 * 1000000)
 
 static SemaphoreHandle_t s_lock;
+/* Set when the latest attempt at a graph's data failed or came back cut off
+ * (cleared by the next good one), for the warning icon on the weather panel. */
+static bool s_bad_hist, s_bad_week;
+
+bool ha_graphs_incomplete(void)
+{
+    return s_bad_hist || s_bad_week;
+}
+
 static ha_history_t *s_cur;             /* PSRAM; NULL until the first success */
 static int64_t s_ok_us = -1;
 static int64_t s_next_try_us;
@@ -398,6 +407,7 @@ esp_err_t ha_history_refresh(const app_settings_t *cfg)
     }
     if (fresh->count == 0) {
         free(fresh);
+        s_bad_hist = true;
         s_next_try_us = esp_timer_get_time() + RETRY_US;
         return first_err != ESP_OK ? first_err : ESP_ERR_NOT_FOUND;
     }
@@ -410,6 +420,7 @@ esp_err_t ha_history_refresh(const app_settings_t *cfg)
     }
     xSemaphoreGive(s_lock);
     free(old);
+    s_bad_hist = first_err != ESP_OK;
     /* A line that failed while the other worked is retried sooner. */
     s_next_try_us = esp_timer_get_time() + (first_err == ESP_OK ? REFRESH_US : RETRY_US);
     return ESP_OK;
@@ -676,6 +687,7 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg)
 
     /* A fetch that failed (or came back cut off) must not replace data we already
      * hold with a graph missing that half - keep the old, try again soon. */
+    s_bad_week = t_failed || r_failed;
     if (ok_parts == 0 || ((t_failed || r_failed) && s_week != NULL)) {
         free(w);
         s_week_next_us = esp_timer_get_time() + WEEK_RETRY_US;

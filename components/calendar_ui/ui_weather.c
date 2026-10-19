@@ -555,6 +555,13 @@ void ui_weather_open(void)
     lv_obj_t *head = add_label(s_overlay, &gcal_font_20, HEAD_COLOR, heading);
     lv_obj_align(head, LV_ALIGN_TOP_LEFT, 32, 20);
 
+    /* The history graphs below couldn't be fully loaded last time (a failed or
+     * cut-off reply) - what's shown is older data or missing a graph. */
+    if (ha_graphs_incomplete()) {
+        lv_obj_t *warn = add_label(s_overlay, &gcal_font_20, 0xF9AB00, LV_SYMBOL_WARNING);
+        lv_obj_align(warn, LV_ALIGN_TOP_RIGHT, -32, 20);
+    }
+
     lv_obj_t *list = lv_obj_create(s_overlay);
     lv_obj_remove_style_all(list);
     lv_obj_set_size(list, LV_HOR_RES - 64, LV_VER_RES - 72);

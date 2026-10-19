@@ -149,6 +149,10 @@ esp_err_t ha_week_refresh(const app_settings_t *cfg);
 const ha_week_t *ha_week_acquire(void);   /* NULL if none / over 2 hours old */
 void ha_week_release(void);
 
+/* True while the latest attempt at any history graph's data failed or came
+ * back cut off - the weather panel shows a warning icon then. */
+bool ha_graphs_incomplete(void);
+
 /* Internal: called from ha_weather_refresh(). */
 esp_err_t ha_weather_details_refresh(const app_settings_t *cfg);
 
