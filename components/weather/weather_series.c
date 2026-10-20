@@ -147,7 +147,7 @@ static void build_hourly(cJSON *hourly, snap_t *out)
     w->end = tm_[i0];
     snprintf(w->unit, sizeof(w->unit), "km/h");
     w->now_dir = -1;
-    w->prevailing = -1;
+    w->trend = -1;
     w->max_gust_i = -1;
     float sx = 0, sy = 0;
     for (int j = 0; j < WEATHER_WIND_STEPS; j++) {
@@ -170,15 +170,17 @@ static void build_hourly(cJSON *hourly, snap_t *out)
         w->hr_calm[k] = !ok || speed[idx] < CALM_BELOW;
         if (!w->hr_calm[k]) {
             w->dir_ok = true;
-            float rad = dir[idx] * (float)M_PI / 180.0f;
-            sx += speed[idx] * sinf(rad);
-            sy += speed[idx] * cosf(rad);
+            if (k >= WEATHER_WIND_HOURS - WEATHER_WIND_TREND_HOURS) {
+                float rad = dir[idx] * (float)M_PI / 180.0f;
+                sx += speed[idx] * sinf(rad);
+                sy += speed[idx] * cosf(rad);
+            }
         }
     }
     w->now_speed = speed[i0];
     w->now_dir = w->hr_calm[WEATHER_WIND_HOURS - 1] ? -1 : w->hr_dir[WEATHER_WIND_HOURS - 1];
     if (sx != 0 || sy != 0) {
-        w->prevailing = fmodf(atan2f(sx, sy) * 180.0f / (float)M_PI + 360.0f, 360.0f);
+        w->trend = fmodf(atan2f(sx, sy) * 180.0f / (float)M_PI + 360.0f, 360.0f);
     }
 
     /* The forecast strip: this hour and the 23 after. */

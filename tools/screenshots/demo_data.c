@@ -301,7 +301,7 @@ void demo_build_data(int night)
     }
     s_wind.now_speed = s_wind.speed[WEATHER_WIND_STEPS - 1];
     s_wind.now_dir = 52.0f;
-    s_wind.prevailing = 48.0f;
+    s_wind.trend = 48.0f;
     snprintf(s_wind.unit, sizeof(s_wind.unit), "km/h");
 
     /* ---- hourly strip ---- */
