@@ -486,7 +486,8 @@ weather opens a panel (`components/calendar_ui/ui_weather.c`) headed
   high and when they happened.
 - **Wind, last 24 hours**: speed and gust lines, with an arrow for each
   hour showing where the wind came from (calm hours have none), and the
-  latest speed, the highest gust and the prevailing direction underneath.
+  latest speed, the highest gust and the direction over the last four hours
+  ("Trending ENE (4h)") underneath.
 - **Last 14 days**: daily highs and lows as bars, and daily rainfall.
 
 A small warning triangle at the top right means the last attempt to load

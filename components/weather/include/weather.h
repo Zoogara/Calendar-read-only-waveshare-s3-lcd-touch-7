@@ -111,6 +111,7 @@ typedef struct {
 /* Wind over the last 24 hours: speed and gust lines, an arrow per hour. */
 #define WEATHER_WIND_STEPS 96
 #define WEATHER_WIND_HOURS 24
+#define WEATHER_WIND_TREND_HOURS 4            /* the recent hours the "Trending" direction covers */
 typedef struct {
     time_t end;
     float speed[WEATHER_WIND_STEPS];
@@ -120,7 +121,7 @@ typedef struct {
     float hr_speed[WEATHER_WIND_HOURS];
     bool hr_calm[WEATHER_WIND_HOURS];
     float now_speed, now_dir;             /* now_dir -1 = calm */
-    float prevailing;                     /* -1 = none */
+    float trend;                          /* over the last WEATHER_WIND_TREND_HOURS hours; -1 = none */
     float max_gust;
     int max_gust_i;
     char unit[12];
