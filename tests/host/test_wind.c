@@ -146,6 +146,14 @@ static void overall_direction(void)
     wind_hour_t weighted[2] = {{true, false, 0, 30}, {true, false, 90, 10}};
     CHECK_NEAR(wind_overall_dir(weighted, 2), 18.435, 0.01);
 
+    /* a window at the end of a longer day: only those hours count, as for the "Trending" text */
+    wind_hour_t day[6] = {
+        {true, false, 270, 40}, {true, false, 270, 40},      /* earlier westerly... */
+        {true, false, 90, 10}, {true, false, 90, 10}, {true, false, 90, 10}, {true, false, 90, 10},
+    };
+    CHECK_NEAR(wind_overall_dir(day + 2, 4), 90.0, 0.01);    /* ...ignored when only the last 4 are asked for */
+    CHECK_NEAR(wind_overall_dir(day, 6), 270.0, 0.01);       /* the whole day is westerly overall */
+
     wind_hour_t none[2] = {{true, true, 0, 0}, {false, false, 0, 0}};
     CHECK_NEAR(wind_overall_dir(none, 2), -1.0, 1e-6);
 }

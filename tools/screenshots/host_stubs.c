@@ -25,3 +25,6 @@ esp_err_t light_sensor_init(void *bus) { (void)bus; return ESP_FAIL; }
 esp_err_t light_sensor_read_lux(float *lux) { (void)lux; return ESP_FAIL; }
 bool presence_sensor_is_detected(void) { return true; }
 void ui_settings_dialog_show(void) {}
+
+/* calendar_ui.c asks this when the Update item is tapped; the renderer never gets there. */
+bool ota_update_url_is_insecure(const char *url) { return url && strncmp(url, "https://", 8) != 0; }

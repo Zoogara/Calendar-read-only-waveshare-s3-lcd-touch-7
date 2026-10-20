@@ -778,7 +778,7 @@ static void add_wind_section(lv_obj_t *list)
         dec->arrows = w->dir_ok;
     }
 
-    /* "Now 9.7 km/h from NNE    Max gust 16.6 at 14:26    Mostly from NE" */
+    /* "Now 9.7 km/h from NNE    Max gust 16.6 at 14:26    Trending NE (4h)" */
     char gt[8], line[160];
     hhmm(t_start + (time_t)w->max_gust_i * 900 + 450, gt, sizeof(gt));
     int n = snprintf(line, sizeof(line), "Now %.1f %s", (double)w->now_speed, unit);
@@ -789,8 +789,8 @@ static void add_wind_section(lv_obj_t *list)
         n += snprintf(line + n, sizeof(line) - n, "    Max %s %.1f at %s", w->gust_ok ? "gust" : "speed",
                       (double)w->max_gust, gt);
     }
-    if (w->prevailing >= 0 && n < (int)sizeof(line)) {
-        snprintf(line + n, sizeof(line) - n, "    Mostly from %s", wind_compass16(w->prevailing));
+    if (w->trend >= 0 && n < (int)sizeof(line)) {
+        snprintf(line + n, sizeof(line) - n, "    Trending %s (%dh)", wind_compass16(w->trend), HA_WIND_TREND_HOURS);
     }
     lv_obj_t *sum = add_label(list, &gcal_font_14, TEXT_COLOR, line);
     lv_obj_set_width(sum, LV_PCT(100));

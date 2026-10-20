@@ -829,7 +829,7 @@ esp_err_t ha_wind_refresh(const app_settings_t *cfg)
     }
     w->now_speed = spd[ns - 1].v;
     w->now_dir = -1.0f;
-    w->prevailing = -1.0f;
+    w->trend = -1.0f;
     if (nd > 0) {
         wind_hour_t hr[HA_WIND_HOURS];
         wind_hourly(dir, nd, spd, ns, start, HA_WIND_HOURS, WIND_CALM_BELOW, hr);
@@ -839,7 +839,7 @@ esp_err_t ha_wind_refresh(const app_settings_t *cfg)
             w->hr_calm[i] = hr[i].calm;
         }
         w->dir_ok = true;
-        w->prevailing = wind_overall_dir(hr, HA_WIND_HOURS);
+        w->trend = wind_overall_dir(hr + (HA_WIND_HOURS - HA_WIND_TREND_HOURS), HA_WIND_TREND_HOURS);
         if (!hr[HA_WIND_HOURS - 1].calm) {
             w->now_dir = hr[HA_WIND_HOURS - 1].dir;
         }
@@ -858,9 +858,9 @@ esp_err_t ha_wind_refresh(const app_settings_t *cfg)
     free(gst);
     free(dir);
 
-    ESP_LOGI(TAG, "wind: %d speed, %d gust, %d direction readings; now %.1f %s, max gust %.1f, prevailing %s",
+    ESP_LOGI(TAG, "wind: %d speed, %d gust, %d direction readings; now %.1f %s, max gust %.1f, trend %s",
              ns, ng, nd, (double)w->now_speed, w->unit, (double)w->max_gust,
-             w->prevailing >= 0 ? wind_compass16(w->prevailing) : "-");
+             w->trend >= 0 ? wind_compass16(w->trend) : "-");
     xSemaphoreTake(s_lock, portMAX_DELAY);
     ha_wind_t *old = s_wind;
     s_wind = w;

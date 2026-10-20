@@ -38,7 +38,7 @@ typedef struct {
 void wind_hourly(const change_t *dir, int nd, const change_t *spd, int ns, time_t start, int hours,
                  float calm_below, wind_hour_t *out);
 
-/* Speed-weighted vector mean of the hourly values (the prevailing direction);
+/* Speed-weighted vector mean of the hourly values (over however many hours the caller passes - the last four for the "Trending" text);
  * returns -1 if every hour is calm or empty. */
 float wind_overall_dir(const wind_hour_t *h, int n);
 

@@ -157,6 +157,7 @@ void ha_week_release(void);
  * ha_history.c and ha_wind_calc.c. Refreshed every ~10 minutes. */
 #define HA_WIND_STEPS 96
 #define HA_WIND_HOURS 24
+#define HA_WIND_TREND_HOURS 4             /* the recent hours the "Trending" direction covers */
 
 typedef struct {
     time_t end;                       /* end of the last 15-minute step */
@@ -167,7 +168,7 @@ typedef struct {
     float hr_speed[HA_WIND_HOURS];
     bool hr_calm[HA_WIND_HOURS];      /* no meaningful direction that hour */
     float now_speed, now_dir;         /* the latest speed; direction of the latest hour (-1 = calm) */
-    float prevailing;                 /* over the 24 hours (-1 = none) */
+    float trend;                      /* direction over the last HA_WIND_TREND_HOURS hours (-1 = none) */
     float max_gust;
     int max_gust_i;                   /* step of the highest gust */
     char unit[12];
