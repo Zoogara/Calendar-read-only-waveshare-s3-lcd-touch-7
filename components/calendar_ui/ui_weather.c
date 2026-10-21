@@ -244,6 +244,22 @@ static void hhmm(time_t t, char *out, size_t sz)
     strftime(out, sz, "%H:%M", &lt);
 }
 
+/* "HH:MM", plus " (yesterday)" when t is before today's local midnight - the
+ * 24-hour graphs reach back into the previous day, so a bare time could be
+ * either. */
+static void hhmm_day(time_t t, char *out, size_t sz)
+{
+    hhmm(t, out, sz);
+    time_t now = time(NULL);
+    struct tm lt, today;
+    localtime_r(&t, &lt);
+    localtime_r(&now, &today);
+    if (lt.tm_year != today.tm_year || lt.tm_yday != today.tm_yday) {
+        size_t n = strlen(out);
+        snprintf(out + n, sz - n, " (yesterday)");
+    }
+}
+
 /* ---- Chart text drawn inside the chart, not as label objects ----
  * Each label object costs a few hundred bytes of INTERNAL RAM, and the graphs
  * below had ~70 of them (axis numbers, times, a label per day). With the panel
@@ -517,9 +533,9 @@ static void add_history_graph(lv_obj_t *list)
     /* "Now 16.1 °C    Low 10.5 at 04:43    High 23.6 at 13:47" per line, in its colour. */
     for (int k = 0; k < h->count; k++) {
         const ha_series_t *sr = &h->s[k];
-        char lo_t[8], hi_t[8], line[160];
-        hhmm(t_end - (time_t)(HA_HISTORY_POINTS - 1 - sr->min_i) * h->step_s, lo_t, sizeof(lo_t));
-        hhmm(t_end - (time_t)(HA_HISTORY_POINTS - 1 - sr->max_i) * h->step_s, hi_t, sizeof(hi_t));
+        char lo_t[24], hi_t[24], line[160];
+        hhmm_day(t_end - (time_t)(HA_HISTORY_POINTS - 1 - sr->min_i) * h->step_s, lo_t, sizeof(lo_t));
+        hhmm_day(t_end - (time_t)(HA_HISTORY_POINTS - 1 - sr->max_i) * h->step_s, hi_t, sizeof(hi_t));
         snprintf(line, sizeof(line), "Now %.1f%s%s    Low %.1f at %s    High %.1f at %s",
                  (double)sr->v[HA_HISTORY_POINTS - 1], sr->unit[0] ? " " : "", sr->unit,
                  (double)sr->min, lo_t, (double)sr->max, hi_t);
@@ -779,8 +795,8 @@ static void add_wind_section(lv_obj_t *list)
     }
 
     /* "Now 9.7 km/h from NNE    Max gust 16.6 at 14:26    Trending NE (4h)" */
-    char gt[8], line[160];
-    hhmm(t_start + (time_t)w->max_gust_i * 900 + 450, gt, sizeof(gt));
+    char gt[24], line[160];
+    hhmm_day(t_start + (time_t)w->max_gust_i * 900 + 450, gt, sizeof(gt));
     int n = snprintf(line, sizeof(line), "Now %.1f %s", (double)w->now_speed, unit);
     if (w->now_dir >= 0 && n < (int)sizeof(line)) {
         n += snprintf(line + n, sizeof(line) - n, " from %s", wind_compass16(w->now_dir));
