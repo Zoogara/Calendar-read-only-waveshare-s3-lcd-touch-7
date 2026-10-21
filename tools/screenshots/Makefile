@@ -8,7 +8,7 @@ ROOT    := $(abspath ../..)
 LVGL    ?= $(ROOT)/managed_components/lvgl__lvgl
 BUILD   := build
 CC      ?= cc
-CFLAGS  := -O1 -g -w -std=gnu11 -DLV_CONF_KCONFIG_EXTERNAL_INCLUDE=\"sdkconfig.h\" -DHOST_RENDER \
+CFLAGS  := -O1 -g -w -std=gnu11 -MMD -MP -DLV_CONF_KCONFIG_EXTERNAL_INCLUDE=\"sdkconfig.h\" -DHOST_RENDER \
            -Ishim -I$(LVGL) -I$(LVGL)/src \
            -I$(ROOT)/components/calendar_ui/include -I$(ROOT)/components/app_common/include \
            -I$(ROOT)/components/gcal/include \
@@ -40,9 +40,10 @@ $(BUILD)/root/%.o: $(ROOT)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# These two include the firmware's own .c files to reach their statics, so they must rebuild when those change.
-$(BUILD)/host_calendar_ui.o: $(ROOT)/components/calendar_ui/calendar_ui.c
-$(BUILD)/host_screensaver.o: $(ROOT)/components/calendar_ui/ui_screensaver.c
+# -MMD writes a .d file per object listing every header (and the firmware .c files that
+# host_calendar_ui.c / host_screensaver.c include), so a change to any of them rebuilds
+# what depends on it - including after switching git branches, whose headers differ.
+-include $(OBJS:.o=.d)
 
 render: $(OBJS)
 	$(CC) $(OBJS) -lm -o $@
