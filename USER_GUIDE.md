@@ -90,18 +90,15 @@ Left to right:
   bottom-left icon when feed 1 is set.
 - These all close with a tap, or after a minute untouched, and go back to
   the clock - not the calendar. They also work while the screen is locked.
-- **Screensaver** - the dark screen with the backlight off, used instead of
-  the clock when nobody's in front of the display: straight away at the
-  *Screen timeout* if nobody's there, or after 5 minutes if they walk away
-  while the clock is showing. It's also what you get at the timeout when the
-  clock is switched off (top-bar clock icon). Someone returning brings the
-  clock back, never the calendar. All of this needs the optional presence
-  sensor; without one the display never sees anyone, so it always goes to
-  the screensaver.
+- **Screensaver** - the dark screen with the backlight off. This build has
+  no presence sensor, so the display always assumes someone is there: the
+  clock never gives way to the screensaver on its own. You get it at the
+  *Screen timeout* only when the clock is switched off (top-bar clock icon).
+  Touch brings the calendar back.
 - **Touch** anywhere else to get back to the calendar. If it was away for 15
   minutes or more, it comes back on today in Month view.
-- **Brightness** follows the room light automatically (with the optional
-  light sensor fitted), fading smoothly rather than jumping.
+- **Brightness** - this build has no light sensor or backlight dimming wire,
+  so the backlight is simply on (full) or off.
 
 ## Reminders
 
@@ -195,9 +192,6 @@ touch (0 = padlock only).
 | Screen timeout | Seconds without a touch before the clock or screensaver; 0 = never |
 | Week/day view hours | First and last hour shown in Week and Day view; also when the clock counts as daytime |
 | Calendar cache window | Days back (up to 90) and ahead (up to 365) to fetch |
-
-**Display brightness** - **Minimum brightness in the dark** (10.5% - 30%)
-and **Room brightness where full backlight kicks in** (lux).
 
 ## First-time setup
 
