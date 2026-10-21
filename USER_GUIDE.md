@@ -56,18 +56,31 @@ Left to right:
 - **Tap the date** on the clock for *On this day* - notable events in
   history for today's date, from Wikipedia: the year and headline of
   each, with a sentence underneath. Drag to scroll.
-- **Tap the weather** on the clock for the weather details: the
-  temperature now and what it feels like, wind (direction, speed, gusts),
-  rain and air pressure; Today and Tomorrow with an icon, min / max, the
-  chance and amount of rain and the full forecast; and a line each for the
-  five days after. Scroll to the end for graphs: the last 24 hours of the
-  temperature (blue) and the BOM temperature (orange) as lines, then the
-  last 14 days as bars - each day's high and low, and each day's rainfall.
-  Above the 24-hour graph a strip you can swipe sideways shows the next 24
-  hours: the time, an icon, the temperature and the chance of rain. A wind
-  graph shows speed and gusts for the last 24 hours with an arrow for each
-  hour (the arrow points the way the wind is blowing). A small amber warning
-  triangle at the top right means a graph couldn't be loaded fully.
+- **Tap the weather** on the clock for the weather panel, headed with the
+  place and date. From the top: the temperature now and what it feels like,
+  wind (direction, speed, gusts), rain and air pressure; **Today** and
+  **Tomorrow** with an icon, min / max, the chance and amount of rain and the
+  full forecast (late in the day, once the day's minimum has passed, Today
+  becomes **Remainder of today**); and a line each for the five days after.
+  Scroll on for:
+  - **Next 24 hours** - a strip you swipe sideways, one cell per hour: the
+    time, an icon, the temperature, the chance of rain and, when some is
+    forecast, the amount. The current hour is highlighted and a line marks
+    midnight.
+  - **Last 24 hours** - the temperature as a line (blue is your sensor,
+    orange the BOM's), with the low and high and when they happened.
+  - **Wind, last 24 hours** - speed (blue) and gust (orange) lines, with an
+    arrow for each hour pointing the way the wind is blowing (orange when the
+    hour averages 12 km/h or more, a dot when it was calm). Underneath: the
+    latest speed and direction, the highest gust and when, and
+    **Trending ENE (4h)** - the direction over the last four hours, so a
+    recent shift shows up.
+  - **Last 14 days** - each day's high and low as bars, then each day's
+    rainfall.
+
+  A small amber warning triangle at the top right means the hourly strip or a
+  graph couldn't be loaded fully last time. A tap, or a minute untouched,
+  closes the panel.
 - **News feeds:** with a feed address set on the config web page (*News
   feeds*), an RSS icon and its short label sit in the bottom-left corner
   (feed 1) and bottom-right (feed 2). Tap one to read that feed: a
@@ -130,7 +143,10 @@ something else.
 
 Browse to the device's IP address from any device on the same network and
 log in with the config web password (any user name). With no password set,
-the page is turned off. **Save & restart** applies changes. Reload the page
+the page is turned off. Five wrong passwords in a row lock the page out for
+30 seconds (longer if you keep guessing, up to 15 minutes) - even the right
+password is refused until the time is up, and a restart clears it.
+**Save & restart** applies changes. Reload the page
 before changing anything - a page left open from earlier saves its old
 values back.
 
@@ -155,11 +171,18 @@ sensor** (e.g. a local weather station or a feels-like reading) with
 sensor** whose condition picks the icon.
 
 **Weather details** (under the Home Assistant section) - the sensors for
-**feels-like**, **wind speed**, **wind gust**, **wind direction**,
-**rainfall** and **air pressure**, and the **BOM forecast entity prefix**
-(e.g. `sensor.rutherglen_`) the 7-day forecast is read from - the page lists
-the forecast sensors that prefix stands for, just below it, as you type.
-Leave one blank to leave that line out of the panel.
+**feels-like**, **wind speed**, **wind gust**, **wind direction** (e.g. NNW),
+**wind direction in degrees** (for the arrows on the wind graph - blank means
+no arrows), **rainfall** and **air pressure**, and the **BOM forecast entity
+prefix** (e.g. `sensor.rutherglen_`) the 7-day forecast is read from - the
+page lists the forecast sensors that prefix stands for, just below it, as you
+type. Leave one blank to leave that line out of the panel.
+
+**Graphs and the hourly strip** (also under Home Assistant) - **graph line 1**
+(blank means the temperature sensor) and **graph line 2** (blank means the BOM
+temperature) for the 24-hour graph, with a **legend name** for each (blank
+uses the sensor's own name), and the **hourly forecast sensor** that feeds
+the next-24-hours strip (blank means no strip).
 
 **Screen lock** - **PIN** (exactly 4 digits; blank keeps the current one),
 **Remove the PIN** (turns the lock off), **Lock after** minutes without a

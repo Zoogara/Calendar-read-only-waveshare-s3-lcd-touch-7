@@ -588,7 +588,9 @@ Three graphs below the forecast, all from Home Assistant's REST history API
   `ha_wdeg_entity` (wind direction in degrees, default `sensor.wind_direction`):
   each is the speed-weighted vector-mean direction for the hour, pointing the
   way the wind blows, orange when the hour averages 12 km/h or more, a dot when
-  calm. The arithmetic is `ha_wind_calc.c`, pure C and host-tested. About 3,400
+  calm. Under the graph, "Trending ENE (4h)" is the direction over only the last
+  four hours (`HA_WIND_TREND_HOURS`), speed-weighted with calm hours left out.
+  The arithmetic is `ha_wind_calc.c`, pure C and host-tested. About 3,400
   speed readings a day, so three fetches of ~200 KB every ~10 minutes.
 - **Warning icon** - an amber triangle at the top right of the panel while the
   latest attempt at any history graph or the hourly strip failed or came back
