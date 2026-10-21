@@ -478,7 +478,7 @@ The ambient clock then shows the date top left and, top right, an icon for
 the current conditions (a night version after dark) and the temperature,
 all in the colon's colour so they dim with it at night. Tapping the
 weather opens a panel (`components/calendar_ui/ui_weather.c`) headed
-"Weather for <place> - <date>":
+"Weather for <place> - <date>", with the current time at the right:
 
 - **Now**: temperature, feels-like, wind direction, speed and gusts, rain
   so far today, and pressure.
