@@ -34,14 +34,21 @@
 static const char *TAG = "ui_weather";
 
 static lv_obj_t *s_overlay;
+static lv_obj_t *s_time_label;      /* the time, right-justified on the heading line */
+static lv_timer_t *s_time_timer;
 
 static void delete_overlay(void)
 {
     if (s_overlay == NULL) {
         return;
     }
+    if (s_time_timer != NULL) {
+        lv_timer_del(s_time_timer);
+        s_time_timer = NULL;
+    }
     lv_obj_del(s_overlay);
     s_overlay = NULL;
+    s_time_label = NULL;
     /* See ui_lock.c: a full-screen lv_layer_top() object
      * needs both framebuffers redrawn after it goes. */
     lv_obj_invalidate(lv_scr_act());
@@ -56,6 +63,24 @@ static void close_async(void *arg)
     delete_overlay();
     ui_screensaver_keypad_dismissed();   /* the closing tap isn't a new touch on the clock */
     ESP_LOGI(TAG, "closed");
+}
+
+/* Keeps the heading line's time right: "HH:MM" like the top bar and clock, redrawn
+ * only when the minute changes. */
+static void time_tick_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_time_label == NULL) {
+        return;
+    }
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    char buf[8];
+    strftime(buf, sizeof(buf), "%H:%M", &lt);
+    if (strcmp(lv_label_get_text(s_time_label), buf) != 0) {
+        lv_label_set_text(s_time_label, buf);
+    }
 }
 
 static void tap_cb(lv_event_t *e)
@@ -966,13 +991,22 @@ void ui_weather_open(void)
         snprintf(heading, sizeof(heading), "Weather \xE2\x80\x93 %s, %d %s", wday, today.tm_mday, month);
     }
     lv_obj_t *head = add_label(s_overlay, &gcal_font_20, HEAD_COLOR, heading);
+    /* Leave room on the right for the time (and the warning icon): a long place name is
+     * cut with an ellipsis rather than running into them. */
+    lv_obj_set_width(head, 620);
+    lv_label_set_long_mode(head, LV_LABEL_LONG_DOT);
     lv_obj_align(head, LV_ALIGN_TOP_LEFT, 32, 20);
+
+    s_time_label = add_label(s_overlay, &gcal_font_20, HEAD_COLOR, "00:00");
+    lv_obj_align(s_time_label, LV_ALIGN_TOP_RIGHT, -32, 20);
+    s_time_timer = lv_timer_create(time_tick_cb, 1000, NULL);
+    time_tick_cb(NULL);
 
     /* The graphs below couldn't be fully loaded last time (a failed or cut-off
      * reply) - what's shown is older data or missing a graph. */
     if (weather_graphs_incomplete()) {
         lv_obj_t *warn = add_label(s_overlay, &gcal_font_20, 0xF9AB00, LV_SYMBOL_WARNING);
-        lv_obj_align(warn, LV_ALIGN_TOP_RIGHT, -32, 20);
+        lv_obj_align(warn, LV_ALIGN_TOP_RIGHT, -100, 20);
     }
 
     lv_obj_t *list = lv_obj_create(s_overlay);
