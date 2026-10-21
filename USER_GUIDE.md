@@ -92,11 +92,14 @@ Left to right:
   bottom-left icon when feed 1 is set.
 - These all close with a tap, or after a minute untouched, and go back to
   the clock - not the calendar. They also work while the screen is locked.
-- **Screensaver** - if nobody's in front of it (with the optional presence
-  sensor fitted; without one it always does this), it goes
-  to a dark screensaver with the backlight off instead, and drops from the
-  clock to the screensaver after 5 minutes with nobody there. Someone
-  returning brings the clock back, never the calendar.
+- **Screensaver** - the dark screen with the backlight off, used instead of
+  the clock when nobody's in front of the display: straight away at the
+  *Screen timeout* if nobody's there, or after 5 minutes if they walk away
+  while the clock is showing. It's also what you get at the timeout when the
+  clock is switched off (top-bar clock icon). Someone returning brings the
+  clock back, never the calendar. All of this needs the optional presence
+  sensor; without one the display never sees anyone, so it always goes to
+  the screensaver.
 - **Touch** anywhere else to get back to the calendar. If it was away for 15
   minutes or more, it comes back on today in Month view.
 - **Brightness** follows the room light automatically (with the optional
@@ -183,6 +186,18 @@ type. Leave one blank to leave that line out of the panel.
 temperature) for the 24-hour graph, with a **legend name** for each (blank
 uses the sensor's own name), and the **hourly forecast sensor** that feeds
 the next-24-hours strip (blank means no strip).
+
+**Location name** - an optional place name for the weather panel's heading.
+
+**News feeds** - a **label** (up to 13 characters, shown beside the icon) and
+an **address** for each of two RSS or Atom feeds: feed 1 at the bottom left
+of the clock, feed 2 at the bottom right. A blank address hides that icon.
+
+**Developer** - **Log destination** (`host:port`, e.g. `192.168.1.20:9999`):
+sends the device log over Wi-Fi to a computer running
+`tools/gcal_remote.py logs`. Blank turns it off. The log isn't encrypted.
+The same script can push firmware to the display wirelessly, using this
+page's password (see the README, *Wireless logging and updates*).
 
 **Screen lock** - **PIN** (exactly 4 digits; blank keeps the current one),
 **Remove the PIN** (turns the lock off), **Lock after** minutes without a
