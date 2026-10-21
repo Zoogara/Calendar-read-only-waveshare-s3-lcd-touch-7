@@ -471,7 +471,10 @@ The ambient clock then shows the date top left and, top right, an icon for
 the current conditions (a night version after dark) and the temperature,
 all in the colon's colour so they dim with it at night. Tapping the
 weather opens a panel (`components/calendar_ui/ui_weather.c`) headed
-"Weather for <place> - <date>", with the current time at the right:
+"Weather for <place> - <date>", with the current time at the right. The
+calendar's top bar has the same conditions as a small grey icon (at the left of
+the padlock / clock / gear group, hidden while there's no weather): tapping it
+opens the panel without waiting for the clock.
 
 - **Now**: temperature, feels-like, wind direction, speed and gusts, rain
   so far today, and pressure.
@@ -483,7 +486,8 @@ weather opens a panel (`components/calendar_ui/ui_weather.c`) headed
   time, icon, temperature, chance of rain and (when there is some) the
   amount. The current hour is highlighted and a line marks midnight.
 - **Last 24 hours**: the temperature as a line graph, with the low and
-  high and when they happened.
+  high and when they happened (a time from before today's midnight is
+  marked "(yesterday)", as is the wind graph's highest gust).
 - **Wind, last 24 hours**: speed and gust lines, with an arrow for each
   hour pointing the way the wind is blowing (a dot when it was calm), and the
   latest speed, the highest gust and the direction over the last four hours
