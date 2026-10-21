@@ -58,7 +58,7 @@ Left to right:
   history for today's date, from Wikipedia: the year and headline of
   each, with a sentence underneath. Drag to scroll.
 - **Tap the weather** on the clock for the weather panel, headed with the
-  place and date. From the top: the temperature now and what it feels like,
+  place and date, and the current time at the right. From the top: the temperature now and what it feels like,
   wind (direction, speed, gusts), rain and air pressure; **Today** and
   **Tomorrow** with an icon, min / max, the chance and amount of rain and the
   full forecast (late in the day, once the day's minimum has passed, Today
