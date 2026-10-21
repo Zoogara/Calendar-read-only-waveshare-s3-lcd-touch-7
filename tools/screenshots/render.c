@@ -123,6 +123,10 @@ int main(int argc, char **argv)
     snprintf(s_cfg.lock_pin, sizeof(s_cfg.lock_pin), "1234");
     calendar_ui_init(&s_cfg);
     settle(500);
+    /* With a PIN set the screen starts locked, which shows only the clock: unlock it so the
+     * calendar views are what gets rendered. */
+    ui_screensaver_unlock();
+    settle(500);
 
     host_select_view(UI_VIEW_MONTH);
     snap("month");
