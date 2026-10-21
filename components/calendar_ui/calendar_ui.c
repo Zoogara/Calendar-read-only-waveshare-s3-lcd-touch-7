@@ -48,6 +48,7 @@ static lv_obj_t *s_screen;
 static lv_obj_t *s_title_label;
 static lv_obj_t *s_clock_label;
 static lv_obj_t *s_updated_label;
+static lv_obj_t *s_weather_btn;     /* top-bar weather icon: current conditions, tap for the panel */
 static lv_obj_t *s_legend_row;
 static lv_obj_t *s_nav_btns[4];
 
@@ -292,6 +293,30 @@ static void lock_btn_cb(lv_event_t *e)
     ui_screensaver_lock_now();
 }
 
+static void weather_btn_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_weather_open();
+}
+
+/* Shows the current-conditions icon in the top bar, or hides the button while
+ * there's no weather (no location set yet, or the data has gone stale). */
+static void update_weather_btn(void)
+{
+    static char s_last[8] = "?";
+    const char *glyph = ui_weather_now_glyph();
+    if (strcmp(glyph, s_last) == 0) {
+        return;
+    }
+    snprintf(s_last, sizeof(s_last), "%s", glyph);
+    if (glyph[0] == '\0') {
+        lv_obj_add_flag(s_weather_btn, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_label_set_text(s_weather_btn, glyph);
+        lv_obj_clear_flag(s_weather_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static void clock_toggle_btn_cb(lv_event_t *e)
 {
     ui_screensaver_toggle_clock_enabled();
@@ -437,7 +462,7 @@ static void build_top_bar(lv_obj_t *parent)
      * synced" label without ever overlapping it. Narrowed from 400 to 340
      * to make room for the screen-lock padlock; the longest title
      * ("Wednesday, Sep 30") is ~190px. */
-    lv_obj_set_width(s_title_label, 340);
+    lv_obj_set_width(s_title_label, 300);
     lv_label_set_long_mode(s_title_label, LV_LABEL_LONG_CLIP);
     lv_obj_align(s_title_label, LV_ALIGN_LEFT_MID, 90, 0);
 
@@ -506,6 +531,19 @@ static void build_top_bar(lv_obj_t *parent)
         lv_obj_set_ext_click_area(lock, 16);
         lv_obj_add_event_cb(lock, lock_btn_cb, LV_EVENT_CLICKED, NULL);
     }
+
+    /* Weather: the current conditions as an icon (the clock's own glyph set), left
+     * of the others at the same 40px rhythm, tapped to open the weather panel
+     * without waiting for the clock. Hidden until there's weather to show - see
+     * update_weather_btn(). */
+    s_weather_btn = lv_label_create(bar);
+    lv_obj_set_style_text_font(s_weather_btn, &gcal_font_weather, 0);
+    lv_obj_set_style_text_color(s_weather_btn, ui_color(UI_COLOR_ACCENT), 0);
+    lv_obj_align(s_weather_btn, LV_ALIGN_RIGHT_MID, ui_screensaver_lock_available() ? -290 : -250, 0);
+    lv_obj_add_flag(s_weather_btn, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_ext_click_area(s_weather_btn, 12);
+    lv_obj_add_event_cb(s_weather_btn, weather_btn_cb, LV_EVENT_CLICKED, NULL);
+    update_weather_btn();
 }
 
 /* Refreshes s_clock_label from the wall clock - see its creation comment
@@ -533,6 +571,7 @@ static void clock_tick_cb(lv_timer_t *timer)
     if (strcmp(buf, s_last) != 0) {
         strcpy(s_last, buf);
         lv_label_set_text(s_clock_label, buf);
+        update_weather_btn();   /* the weather only changes every few minutes; once a minute is plenty */
     }
 }
 
