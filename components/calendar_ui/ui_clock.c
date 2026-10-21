@@ -145,6 +145,12 @@ const char *ui_weather_glyph(const char *cond, bool night)
     return "";
 }
 
+const char *ui_weather_now_glyph(void)
+{
+    weather_now_t wx;
+    return weather_get(&wx) ? ui_weather_glyph(wx.cond, wx.night) : "";
+}
+
 /* Weather, top right (see components/weather - Open-Meteo). Base
  * offset from the corner; the same s_jitter nudge as the clock is added
  * on top so it doesn't sit pixel-static for hours. */

@@ -27,6 +27,7 @@ Left to right:
 |---|---|
 | **‹ ›** | Step back / forward a month, week or day, depending on the view |
 | Title | What's showing: the month, the week's dates or the day |
+| Weather icon | The current conditions. Tap it to open the weather panel without waiting for the clock. Only there while there is weather to show (a location set, and data less than 90 minutes old) |
 | Padlock | Locks the screen now. Only there when a PIN is set - see *Screen lock* |
 | Clock icon | Turns the ambient clock on or off until the next restart. Dimmed = off: the display goes straight to the screensaver when idle instead |
 | Gear | Opens the menu: **Display** (settings dialog), **Setup**, **Update** - see below |
