@@ -55,16 +55,30 @@ Left to right:
 - **Tap the date** on the clock for *On this day* - notable events in
   history for today's date, from Wikipedia: the year and headline of
   each, with a sentence underneath. Drag to scroll.
-- **Tap the weather** on the clock for the details, headed with the place
-  and date: the temperature now and what it feels like, wind (direction,
-  speed, gusts), rain so far today and air pressure; Today and Tomorrow
-  with an icon, min / max, the chance and amount of rain and a short
-  summary; and a line each for the five days after. Scroll down for the
-  next 24 hours (a strip you can swipe sideways), the temperature over
-  the last 24 hours, the wind (speed, gusts and an arrow per hour) and
-  daily highs, lows and rainfall for the last 14 days. A small warning
-  triangle at the top right means some of that couldn't be loaded last
-  time.
+- **Tap the weather** on the clock for the weather panel, headed with the
+  place and date. From the top: the temperature now and what it feels like,
+  wind (direction, speed, gusts), rain so far today and air pressure;
+  **Today** and **Tomorrow** with an icon, min / max, the chance and amount
+  of rain and a short summary; and a line each for the five days after.
+  Scroll on for:
+  - **Next 24 hours** - a strip you swipe sideways, one cell per hour: the
+    time, an icon, the temperature, the chance of rain and, when some is
+    forecast, the amount. The current hour is highlighted and a line marks
+    midnight.
+  - **Last 24 hours** - the temperature as a line, with the low and high and
+    when they happened.
+  - **Wind, last 24 hours** - speed (blue) and gust (orange) lines, with an
+    arrow for each hour pointing the way the wind is blowing (orange when the
+    hour averages 12 km/h or more, a dot when it was calm). Underneath: the
+    latest speed and direction, the highest gust and when, and
+    **Trending ENE (4h)** - the direction over the last four hours, so a
+    recent shift shows up.
+  - **Last 14 days** - each day's high and low as bars, then each day's
+    rainfall.
+
+  A small amber warning triangle at the top right means the hourly strip or a
+  graph couldn't be loaded fully last time. A tap, or a minute untouched,
+  closes the panel.
 - **News feeds:** with a feed address set on the config web page (*News
   feeds*), an RSS icon and its short label sit in the bottom-left corner
   (feed 1) and bottom-right (feed 2). Tap one to read that feed: a
@@ -76,11 +90,14 @@ Left to right:
   bottom-left icon when feed 1 is set.
 - These all close with a tap, or after a minute untouched, and go back to
   the clock - not the calendar. They also work while the screen is locked.
-- **Screensaver** - if nobody's in front of it (with the optional presence
-  sensor fitted; without one it always does this), it goes
-  to a dark screensaver with the backlight off instead, and drops from the
-  clock to the screensaver after 5 minutes with nobody there. Someone
-  returning brings the clock back, never the calendar.
+- **Screensaver** - the dark screen with the backlight off, used instead of
+  the clock when nobody's in front of the display: straight away at the
+  *Screen timeout* if nobody's there, or after 5 minutes if they walk away
+  while the clock is showing. It's also what you get at the timeout when the
+  clock is switched off (top-bar clock icon). Someone returning brings the
+  clock back, never the calendar. All of this needs the optional presence
+  sensor; without one the display never sees anyone, so it always goes to
+  the screensaver.
 - **Touch** anywhere else to get back to the calendar. If it was away for 15
   minutes or more, it comes back on today in Month view.
 - **Brightness** follows the room light automatically (with the optional
@@ -127,7 +144,10 @@ something else.
 
 Browse to the device's IP address from any device on the same network and
 log in with the config web password (any user name). With no password set,
-the page is turned off. **Save & restart** applies changes. Reload the page
+the page is turned off. Five wrong passwords in a row lock the page out for
+30 seconds (longer if you keep guessing, up to 15 minutes) - even the right
+password is refused until the time is up, and a restart clears it.
+**Save & restart** applies changes. Reload the page
 before changing anything - a page left open from earlier saves its old
 values back.
 
@@ -150,6 +170,16 @@ for, in decimal degrees (south and west are negative, e.g. `-36.05` and
 to turn the weather off. The weather comes from Open-Meteo, a free forecast
 service; it's a forecast model's estimate for that spot rather than a
 weather station's readings.
+
+**News feeds** - a **label** (up to 13 characters, shown beside the icon) and
+an **address** for each of two RSS or Atom feeds: feed 1 at the bottom left
+of the clock, feed 2 at the bottom right. A blank address hides that icon.
+
+**Developer** - **Log destination** (`host:port`, e.g. `192.168.1.20:9999`):
+sends the device log over Wi-Fi to a computer running
+`tools/gcal_remote.py logs`. Blank turns it off. The log isn't encrypted.
+The same script can push firmware to the display wirelessly, using this
+page's password (see the README, *Wireless logging and updates*).
 
 **Screen lock** - **PIN** (exactly 4 digits; blank keeps the current one),
 **Remove the PIN** (turns the lock off), **Lock after** minutes without a
