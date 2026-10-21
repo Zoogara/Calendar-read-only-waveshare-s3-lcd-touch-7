@@ -40,6 +40,10 @@ $(BUILD)/root/%.o: $(ROOT)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# These two include the firmware's own .c files to reach their statics, so they must rebuild when those change.
+$(BUILD)/host_calendar_ui.o: $(ROOT)/components/calendar_ui/calendar_ui.c
+$(BUILD)/host_screensaver.o: $(ROOT)/components/calendar_ui/ui_screensaver.c
+
 render: $(OBJS)
 	$(CC) $(OBJS) -lm -o $@
 
