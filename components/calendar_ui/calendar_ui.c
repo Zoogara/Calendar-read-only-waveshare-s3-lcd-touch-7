@@ -532,14 +532,15 @@ static void build_top_bar(lv_obj_t *parent)
         lv_obj_add_event_cb(lock, lock_btn_cb, LV_EVENT_CLICKED, NULL);
     }
 
-    /* Weather: the current conditions as an icon (the clock's own glyph set), left
+    /* Weather: the current conditions as an icon (the clock's own glyph set, 24px, grey like its neighbours), left
      * of the others at the same 40px rhythm, tapped to open the weather panel
      * without waiting for the clock. Hidden until there's weather to show - see
      * update_weather_btn(). */
     s_weather_btn = lv_label_create(bar);
-    lv_obj_set_style_text_font(s_weather_btn, &gcal_font_weather, 0);
-    lv_obj_set_style_text_color(s_weather_btn, ui_color(UI_COLOR_ACCENT), 0);
-    lv_obj_align(s_weather_btn, LV_ALIGN_RIGHT_MID, ui_screensaver_lock_available() ? -290 : -250, 0);
+    lv_obj_set_style_text_font(s_weather_btn, &gcal_font_weather_24, 0);
+    lv_obj_set_style_text_color(s_weather_btn, ui_color(UI_COLOR_TEXT_MUTED), 0);
+    /* +3: the weather glyphs sit a little high in their line box. */
+    lv_obj_align(s_weather_btn, LV_ALIGN_RIGHT_MID, ui_screensaver_lock_available() ? -290 : -250, 3);
     lv_obj_add_flag(s_weather_btn, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_ext_click_area(s_weather_btn, 12);
     lv_obj_add_event_cb(s_weather_btn, weather_btn_cb, LV_EVENT_CLICKED, NULL);
