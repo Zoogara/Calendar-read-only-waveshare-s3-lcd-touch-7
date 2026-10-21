@@ -33,6 +33,7 @@ extern const lv_font_t gcal_font_14;
 extern const lv_font_t gcal_font_20;
 extern const lv_font_t gcal_font_weather;
 extern const lv_font_t gcal_font_weather_48;
+extern const lv_font_t gcal_font_weather_24;
 
 /* Digits + colon only, at a size meant to be read from across a room -
  * see gcal_font_clock.c's header comment. Used only by ui_clock.c. */
