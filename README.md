@@ -96,7 +96,7 @@ a real calendar, sensor or place.*
 | ![Ambient clock at night](docs/clock_night.png) **Ambient clock, after dark** | ![Lock keypad](docs/lock_keypad.png) **Screen lock** |
 | ![On this day](docs/on_this_day.png) **On this day** (tap the date) | ![News feed](docs/news_feed.png) **News feed** (corner icon) |
 
-The weather panel (tap the weather on the clock; `with-HA-weather` branch) scrolls through its sections:
+The weather panel (tap the weather on the clock, or the small grey weather icon in the calendar's top bar; `with-HA-weather` branch) scrolls through its sections:
 
 | | |
 |---|---|
@@ -561,7 +561,9 @@ Three graphs below the forecast, all from Home Assistant's REST history API
 (`components/ha_weather/ha_history.c`, plain http on the LAN like the rest):
 
 - **Last 24 hours** - up to two sensors as lines on shared axes, in different
-  colours with a legend (blue / orange) and a Now / Low / High line each.
+  colours with a legend (blue / orange) and a Now / Low / High line each (a
+  low or high from before today's midnight is marked "(yesterday)", as is the
+  wind graph's highest gust).
   Line 1 is `ha_graph_entity` (blank = the temperature sensor the clock
   shows); line 2 is `ha_graph2_entity` (blank = the BOM observation,
   `<ha_bom_prefix>temp`). Legend names are the `ha_graph_label` /

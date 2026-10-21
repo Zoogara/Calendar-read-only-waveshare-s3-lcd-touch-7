@@ -69,11 +69,13 @@ Left to right:
     forecast, the amount. The current hour is highlighted and a line marks
     midnight.
   - **Last 24 hours** - the temperature as a line (blue is your sensor,
-    orange the BOM's), with the low and high and when they happened.
+    orange the BOM's), with the low and high and when they happened (a time
+    from before midnight is marked "(yesterday)").
   - **Wind, last 24 hours** - speed (blue) and gust (orange) lines, with an
     arrow for each hour pointing the way the wind is blowing (orange when the
     hour averages 12 km/h or more, a dot when it was calm). Underneath: the
-    latest speed and direction, the highest gust and when, and
+    latest speed and direction, the highest gust and when (also marked
+    "(yesterday)" if it was before midnight), and
     **Trending ENE (4h)** - the direction over the last four hours, so a
     recent shift shows up.
   - **Last 14 days** - each day's high and low as bars, then each day's
