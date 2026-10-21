@@ -119,6 +119,8 @@ int main(int argc, char **argv)
 
     demo_fill_events();
     demo_build_data(0);
+    /* A (fictional) PIN, so the top bar has its padlock - and the weather icon its real position. */
+    snprintf(s_cfg.lock_pin, sizeof(s_cfg.lock_pin), "1234");
     calendar_ui_init(&s_cfg);
     settle(500);
 
@@ -144,11 +146,9 @@ int main(int argc, char **argv)
     ui_feed_close();
     settle(300);
 
-    snprintf(s_cfg.lock_pin, sizeof(s_cfg.lock_pin), "1234");
     ui_lock_keypad_open();
     snap("lock");
     ui_lock_keypad_close();
-    s_cfg.lock_pin[0] = '\0';
     settle(300);
 
     host_go_ambient();
