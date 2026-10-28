@@ -161,5 +161,10 @@ int main(int argc, char **argv)
     demo_build_data(1);
     ui_clock_update();
     snap("clock_night");
+
+    /* The weather panel after dark: Today's icon must be the night variant (not copied to docs/). */
+    ui_weather_open();
+    snap("weather_night");
+    ui_weather_close();
     return 0;
 }

@@ -132,6 +132,10 @@ const char *ui_weather_glyph(const char *cond, bool night);
  * when there is no (current enough) weather to show. */
 const char *ui_weather_now_glyph(void);
 
+/* True when it's dark where the weather is: from the weather data's own day/night flag, else
+ * the clock's configured day hours. For picking the night variant of an icon. */
+bool ui_weather_is_night(void);
+
 /* "On this day" list (ui_history.c), opened by tapping the date on the
  * ambient clock; closed by a tap or by ui_screensaver.c after a minute. */
 void ui_history_open(void);
