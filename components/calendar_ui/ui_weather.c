@@ -1072,7 +1072,7 @@ void ui_weather_open(void)
     if (indev != NULL) {
         lv_indev_wait_release(indev);
     }
-    ESP_LOGI(TAG, "open");
+    ESP_LOGI(TAG, "open (night %d)", (int)night_now);
 }
 
 void ui_weather_close(void)
