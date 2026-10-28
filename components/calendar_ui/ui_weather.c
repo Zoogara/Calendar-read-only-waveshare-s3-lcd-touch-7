@@ -128,9 +128,9 @@ static lv_obj_t *add_container(lv_obj_t *parent, lv_flex_flow_t flow)
     return c;
 }
 
-static lv_obj_t *add_icon(lv_obj_t *parent, const lv_font_t *font, const char *cond, int width)
+static lv_obj_t *add_icon(lv_obj_t *parent, const lv_font_t *font, const char *cond, int width, bool night)
 {
-    lv_obj_t *l = add_label(parent, font, ICON_COLOR, ui_weather_glyph(cond, false));
+    lv_obj_t *l = add_label(parent, font, ICON_COLOR, ui_weather_glyph(cond, night));
     lv_obj_set_width(l, width);
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     return l;
@@ -205,12 +205,14 @@ static void add_now(lv_obj_t *list, const ha_weather_details_t *d)
 }
 
 /* Today / Tomorrow: big icon, then a summary line and the long forecast. */
-static void add_big_day(lv_obj_t *list, const ha_forecast_day_t *d, const char *name)
+/* `night`: draw the icon's night variant (only meaningful for today - a later day's forecast is
+ * always the daytime one). */
+static void add_big_day(lv_obj_t *list, const ha_forecast_day_t *d, const char *name, bool night)
 {
     lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_top(row, 14, 0);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    add_icon(row, &gcal_font_weather_48, d->icon, 72);
+    add_icon(row, &gcal_font_weather_48, d->icon, 72, night);
 
     lv_obj_t *col = add_container(row, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_width(col, 1);
@@ -230,7 +232,7 @@ static void add_small_day(lv_obj_t *list, const ha_forecast_day_t *d, const char
     lv_obj_t *row = add_container(list, LV_FLEX_FLOW_ROW);
     lv_obj_t *day = add_label(row, &gcal_font_20, HEAD_COLOR, name);
     lv_obj_set_width(day, 52);
-    add_icon(row, &gcal_font_weather, d->icon, 72);
+    add_icon(row, &gcal_font_weather, d->icon, 72, false);
 
     lv_obj_t *text = add_label(row, &gcal_font_20, TEXT_COLOR, d->short_text);
     lv_obj_set_width(text, 1);
@@ -1030,6 +1032,8 @@ void ui_weather_open(void)
     lv_obj_add_flag(list, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(list, tap_cb, LV_EVENT_CLICKED, NULL);
 
+    /* Before the details are acquired: this takes the same lock, which isn't recursive. */
+    bool night_now = ui_weather_is_night();
     const ha_weather_details_t *d = ha_weather_details_acquire();
     if (d == NULL) {
         add_wrapping_label(list, &gcal_font_20, TEXT_COLOR,
@@ -1040,8 +1044,8 @@ void ui_weather_open(void)
         /* Once today's minimum has passed (usually by the afternoon) the BOM
          * stops publishing it - the forecast is then only for what's left of
          * the day. */
-        add_big_day(list, &d->days[0], d->days[0].lo[0] ? "Today" : "Remainder of today");
-        add_big_day(list, &d->days[1], "Tomorrow");
+        add_big_day(list, &d->days[0], d->days[0].lo[0] ? "Today" : "Remainder of today", night_now);
+        add_big_day(list, &d->days[1], "Tomorrow", false);
         lv_obj_t *gap = add_container(list, LV_FLEX_FLOW_ROW);
         lv_obj_set_height(gap, 8);
         time_t now = time(NULL);

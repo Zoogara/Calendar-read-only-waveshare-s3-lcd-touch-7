@@ -164,6 +164,19 @@ const char *ui_weather_now_glyph(void)
     return ui_weather_glyph(wx.cond, night);
 }
 
+bool ui_weather_is_night(void)
+{
+    ha_weather_t wx;
+    if (ha_weather_get(&wx) && wx.night >= 0) {
+        return wx.night == 1;          /* Home Assistant's sun.sun */
+    }
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    const app_settings_t *cfg = ui_get_cfg();
+    return !(lt.tm_hour >= cfg->view_start_hour && lt.tm_hour < cfg->view_end_hour);
+}
+
 /* Home Assistant weather, top right (see components/ha_weather). Base
  * offset from the corner; the same s_jitter nudge as the clock is added
  * on top so it doesn't sit pixel-static for hours. */
