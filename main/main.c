@@ -27,6 +27,8 @@
 #include <unistd.h>
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_app_desc.h"
+#include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "esp_netif_sntp.h"
@@ -565,5 +567,10 @@ void app_main(void)
      * short-lived internal-RAM-stack task instead. */
     xTaskCreateWithCaps(net_task, "net_task", 16384, NULL, 5, NULL, MALLOC_CAP_SPIRAM);
 
+    {
+        /* Which image is this? (git describe at build time, and the slot it runs from.) */
+        const esp_partition_t *rp = esp_ota_get_running_partition();
+        ESP_LOGI(TAG, "firmware %s, running from %s", esp_app_get_description()->version, rp ? rp->label : "?");
+    }
     ESP_LOGI(TAG, "app_main done, UI + net_task running");
 }
