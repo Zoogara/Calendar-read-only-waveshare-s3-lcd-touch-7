@@ -181,7 +181,10 @@ of the clock, feed 2 at the bottom right. A blank address hides that icon.
 sends the device log over Wi-Fi to a computer running
 `tools/gcal_remote.py logs`. Blank turns it off. The log isn't encrypted.
 The same script can push firmware to the display wirelessly, using this
-page's password (see the README, *Wireless logging and updates*).
+page's password (see the README, *Wireless logging and updates*). If it
+reports "not enough free memory", the display has been running for a week or
+more and its memory has fragmented: restart it (unplug and replug the power -
+not gear -> Setup, which erases your settings) and send the update again.
 
 **Screen lock** - **PIN** (exactly 4 digits; blank keeps the current one),
 **Remove the PIN** (turns the lock off), **Lock after** minutes without a
