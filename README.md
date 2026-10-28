@@ -432,6 +432,13 @@ logging and `idf.py flash` over USB keep working exactly as before.
   dev build accepts `http://` only from `/ota`; the on-device Update button and
   the configured *Firmware update URL* stay https-only, and the config page
   warns in red when that URL is plain http.
+  **"Not enough free memory just now":** the update task needs a contiguous 8 KB
+  block of internal RAM, and after a week or so of uptime the heap can fragment
+  until the largest free block is smaller than that (seen at 7.4 days: ~44 KB
+  free in total, but a 7 KB largest block). The script retries for 30 s, then
+  gives up with that message. Calendar syncs are unaffected; the heap can't be
+  defragmented, so **restart the display (unplug and replug its power - not gear
+  -> Setup, which erases your settings) and send the update again**.
 - **Rollback:** app rollback is enabled. A new image is confirmed 60 s after
   boot (`ota_update_confirm_boot_after`); one that crashes or resets before
   then reverts to the previous image. The first build with rollback enabled
