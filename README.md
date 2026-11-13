@@ -426,6 +426,13 @@ logging and `idf.py flash` over USB keep working exactly as before.
   dev build accepts `http://` only from `/ota`; the on-device Update button and
   the configured *Firmware update URL* stay https-only, and the config page
   warns in red when that URL is plain http.
+  **Did it take?** The script reads `GET /version` (same password; plain text:
+  `version`, `slot`, `uptime_s`) before sending, and after the download waits for
+  the display to come back and checks it reports the version it was sent
+  (`project_version` from `build-dev/`), printing `OK: ...` or `FAILED: display is
+  running <old version>, not <new>` (exit status 2). A new image that dies early is
+  rolled back by the bootloader with no other sign, which used to look like a
+  successful flash. The same version and slot are in the gear menu and the boot log.
   **"Not enough free memory just now":** the update task needs a contiguous 8 KB
   block of internal RAM, and after a week or so of uptime the heap can fragment
   until the largest free block is smaller than that (seen at 7.4 days: ~44 KB
