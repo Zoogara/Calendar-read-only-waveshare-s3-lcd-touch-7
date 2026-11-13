@@ -801,18 +801,19 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 }
 
 /* GET /version: which image is running, as plain text - "version v1.0-141-ga4ef516", "slot ota_1",
- * "uptime_s 37". Same password as everything else here. tools/gcal_remote.py ota reads it before and
- * after an update to tell whether the display really came back on the new image (a new image that
- * dies early is rolled back by the bootloader without any other sign). */
+ * "uptime_s 37", "reset <why the chip last restarted>". Same password as everything else here.
+ * tools/gcal_remote.py ota reads it before and after an update to tell whether the display really
+ * came back on the new image (a new image that dies early is rolled back by the bootloader without
+ * any other sign - the reset line says why it restarted). */
 static esp_err_t version_get_handler(httpd_req_t *req)
 {
     if (!check_auth(req)) {
         return ESP_OK;
     }
     const esp_partition_t *rp = esp_ota_get_running_partition();
-    char body[160];
-    snprintf(body, sizeof(body), "version %s\nslot %s\nuptime_s %lld\n", esp_app_get_description()->version,
-             rp ? rp->label : "?", (long long)(esp_timer_get_time() / 1000000));
+    char body[200];
+    snprintf(body, sizeof(body), "version %s\nslot %s\nuptime_s %lld\nreset %s\n", esp_app_get_description()->version,
+             rp ? rp->label : "?", (long long)(esp_timer_get_time() / 1000000), ota_update_reset_reason());
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_sendstr(req, body);
     return ESP_OK;

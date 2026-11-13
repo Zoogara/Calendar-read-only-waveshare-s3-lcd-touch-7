@@ -577,7 +577,8 @@ void app_main(void)
     {
         /* Which image is this? (git describe at build time, and the slot it runs from.) */
         const esp_partition_t *rp = esp_ota_get_running_partition();
-        ESP_LOGI(TAG, "firmware %s, running from %s", esp_app_get_description()->version, rp ? rp->label : "?");
+        ESP_LOGI(TAG, "firmware %s, running from %s; last restart: %s", esp_app_get_description()->version,
+                 rp ? rp->label : "?", ota_update_reset_reason());
     }
     ESP_LOGI(TAG, "app_main done, UI + net_task running");
 }
