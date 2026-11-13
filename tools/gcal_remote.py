@@ -14,10 +14,15 @@
       build with tools/dev_build.sh (-> build-dev/), and send the display a dev
       build every time - a default build is https-only and would end this.
 
+      Before sending it reads GET /version (which image the display runs), and afterwards waits
+      for the display to come back and checks it is running the build it was sent - a new image
+      that dies early is rolled back by the bootloader with no other sign. Exit status 2 if the
+      display came back on a different image (or didn't answer).
+
 Serial logging and `idf.py flash` over USB are unaffected and still work.
 """
-import argparse, base64, functools, http.server, os, re, socket, socketserver
-import sys, threading, urllib.error, urllib.parse, urllib.request
+import argparse, base64, functools, http.server, json, os, re, socket, socketserver
+import sys, threading, time, urllib.error, urllib.parse, urllib.request
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -55,6 +60,30 @@ def local_ip(device):
     ip = s.getsockname()[0]
     s.close()
     return ip
+
+
+def device_version(device, auth, timeout=6):
+    """GET /version -> {"version", "slot", "uptime_s"}, or None if the display doesn't answer or has
+    no /version (a firmware older than the endpoint)."""
+    req = urllib.request.Request(f"http://{device}/version")
+    req.add_header("Authorization", auth)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            fields = dict(line.split(" ", 1) for line in r.read().decode().splitlines() if " " in line)
+        return {"version": fields.get("version", "?"), "slot": fields.get("slot", "?"),
+                "uptime_s": int(fields.get("uptime_s", "0"))}
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def build_version(build):
+    """The version string baked into this build (what the display will report), from the build
+    folder's project_description.json; None if it can't be read."""
+    try:
+        with open(os.path.join(os.path.dirname(build), "project_description.json")) as f:
+            return json.load(f).get("project_version")
+    except (OSError, ValueError):
+        return None
 
 
 def cmd_ota(a):
@@ -96,9 +125,18 @@ def cmd_ota(a):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
     fw_url = f"http://{ip}:{a.serve_port}/{os.path.basename(build)}"
+    auth = "Basic " + base64.b64encode(f"x:{password}".encode()).decode()
     req = urllib.request.Request(
         f"http://{a.device}/ota?url={urllib.parse.quote(fw_url, safe='')}", method="POST", data=b"")
-    req.add_header("Authorization", "Basic " + base64.b64encode(f"x:{password}".encode()).decode())
+    req.add_header("Authorization", auth)
+    expected = build_version(build)
+    before = device_version(a.device, auth)
+    if before:
+        print(f"display is running {before['version']} from {before['slot']} (up {before['uptime_s']} s)")
+    else:
+        print("display gave no /version (an older firmware, or not answering)")
+    if expected:
+        print(f"sending {expected}")
     # The display needs a free 8KB chunk of internal RAM to start the update
     # task; right after a sync or with a panel open there can briefly be none
     # (it answers 503). Retry a few times. Any other refusal (400) is final and
@@ -116,12 +154,36 @@ def cmd_ota(a):
             threading.Event().wait(5)
     print(f"serving {fw_url} - waiting for the device to download it (up to {a.wait}s, Ctrl-C to stop)")
     try:
-        if done.wait(a.wait):
-            threading.Event().wait(5)    # let it finish writing and restart
-        else:
+        if not done.wait(a.wait):
             print("timed out waiting for the download")
+            return
+        threading.Event().wait(5)        # let it finish writing and restart
     except KeyboardInterrupt:
-        pass
+        return
+
+    # Did it come back on the new image? A new image that dies early is rolled back by the bootloader.
+    if not expected:
+        print("no project_description.json next to the build - can't check which image came back")
+        return
+    t_done = time.monotonic()
+    last = None
+    while time.monotonic() - t_done < a.verify_wait:
+        v = device_version(a.device, auth)
+        if v:
+            last = v
+            # same version AND restarted since the download finished (it could be a re-send of the same build)
+            if v["version"] == expected and v["uptime_s"] <= (time.monotonic() - t_done) + 15:
+                print(f"OK: display is running {v['version']} from {v['slot']} (up {v['uptime_s']} s)")
+                return
+        threading.Event().wait(4)
+    if last is None:
+        print(f"NO ANSWER: the display did not answer /version within {a.verify_wait} s")
+    elif last["version"] != expected:
+        print(f"FAILED: display is running {last['version']} from {last['slot']} (up {last['uptime_s']} s), not {expected} - "
+              "the new image did not start, or was rolled back")
+    else:
+        print(f"FAILED: display reports {expected} but has not restarted (up {last['uptime_s']} s)")
+    sys.exit(2)
 
 
 p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -136,6 +198,7 @@ o.add_argument("--device", required=True, help="the display's IP or hostname")
 o.add_argument("--build", default="build-dev/gcal_display.bin", help="a development build (tools/dev_build.sh)")
 o.add_argument("--serve-port", type=int, default=8070)
 o.add_argument("--wait", type=int, default=300, help="max seconds to keep serving")
+o.add_argument("--verify-wait", type=int, default=150, help="max seconds to wait for the display to come back on the new image")
 o.set_defaults(fn=cmd_ota)
 a = p.parse_args()
 a.fn(a)
