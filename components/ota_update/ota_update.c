@@ -133,3 +133,20 @@ void ota_update_confirm_boot_after(uint32_t seconds)
         esp_timer_start_once(s_timer, (uint64_t)seconds * 1000000ULL);
     }
 }
+
+const char *ota_update_reset_reason(void)
+{
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "power-on";
+    case ESP_RST_EXT:       return "external reset";
+    case ESP_RST_SW:        return "software restart";
+    case ESP_RST_PANIC:     return "panic (crash)";
+    case ESP_RST_INT_WDT:   return "interrupt watchdog";
+    case ESP_RST_TASK_WDT:  return "task watchdog";
+    case ESP_RST_WDT:       return "other watchdog";
+    case ESP_RST_DEEPSLEEP: return "deep sleep wake";
+    case ESP_RST_BROWNOUT:  return "brownout (supply dipped)";
+    case ESP_RST_SDIO:      return "SDIO";
+    default:                return "unknown";
+    }
+}

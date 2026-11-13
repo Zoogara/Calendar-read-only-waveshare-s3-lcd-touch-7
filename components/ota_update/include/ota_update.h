@@ -44,6 +44,11 @@ esp_err_t ota_update_start_background(const char *url);
  * rolls itself back, while a power cycle later with Wi-Fi down doesn't. */
 void ota_update_confirm_boot_after(uint32_t seconds);
 
+/* Why the chip last restarted, in words: "power-on", "software restart", "panic (crash)",
+ * "interrupt watchdog", "task watchdog", "brownout (supply dipped)", ... For the boot log and /version:
+ * a new image that dies shortly after boot is rolled back with no other trace. */
+const char *ota_update_reset_reason(void);
+
 #ifdef __cplusplus
 }
 #endif

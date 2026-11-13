@@ -71,7 +71,7 @@ def device_version(device, auth, timeout=6):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             fields = dict(line.split(" ", 1) for line in r.read().decode().splitlines() if " " in line)
         return {"version": fields.get("version", "?"), "slot": fields.get("slot", "?"),
-                "uptime_s": int(fields.get("uptime_s", "0"))}
+                "uptime_s": int(fields.get("uptime_s", "0")), "reset": fields.get("reset", "?")}
     except (urllib.error.URLError, OSError, ValueError):
         return None
 
@@ -132,7 +132,8 @@ def cmd_ota(a):
     expected = build_version(build)
     before = device_version(a.device, auth)
     if before:
-        print(f"display is running {before['version']} from {before['slot']} (up {before['uptime_s']} s)")
+        print(f"display is running {before['version']} from {before['slot']} (up {before['uptime_s']} s, "
+              f"last restart: {before['reset']})")
     else:
         print("display gave no /version (an older firmware, or not answering)")
     if expected:
@@ -151,6 +152,13 @@ def cmd_ota(a):
                 print(f"  the display refused ({e.code}): {e.read().decode().strip()}")
                 sys.exit(1)
             print(f"  display not ready (503) - retrying in 5s ({attempt}/6)")
+            threading.Event().wait(5)
+        except (urllib.error.URLError, OSError) as e:
+            # a dropped connection or a timeout - e.g. the display restarting. Try again.
+            if attempt == 6:
+                print(f"  no answer from the display: {e}")
+                sys.exit(1)
+            print(f"  connection problem ({e.__class__.__name__}) - retrying in 5s ({attempt}/6)")
             threading.Event().wait(5)
     print(f"serving {fw_url} - waiting for the device to download it (up to {a.wait}s, Ctrl-C to stop)")
     try:
@@ -173,14 +181,15 @@ def cmd_ota(a):
             last = v
             # same version AND restarted since the download finished (it could be a re-send of the same build)
             if v["version"] == expected and v["uptime_s"] <= (time.monotonic() - t_done) + 15:
-                print(f"OK: display is running {v['version']} from {v['slot']} (up {v['uptime_s']} s)")
+                print(f"OK: display is running {v['version']} from {v['slot']} (up {v['uptime_s']} s, "
+                      f"last restart: {v['reset']})")
                 return
         threading.Event().wait(4)
     if last is None:
         print(f"NO ANSWER: the display did not answer /version within {a.verify_wait} s")
     elif last["version"] != expected:
         print(f"FAILED: display is running {last['version']} from {last['slot']} (up {last['uptime_s']} s), not {expected} - "
-              "the new image did not start, or was rolled back")
+              f"the new image did not start, or was rolled back. Its last restart: {last['reset']}")
     else:
         print(f"FAILED: display reports {expected} but has not restarted (up {last['uptime_s']} s)")
     sys.exit(2)
