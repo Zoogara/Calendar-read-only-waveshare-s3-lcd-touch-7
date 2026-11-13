@@ -33,6 +33,17 @@ void wifi_sta_force_reconnect(void);
  * Call from the background network task, e.g. before each sync. */
 bool wifi_sta_check_link(void);
 
+/* What the settings menu shows about the connection. */
+typedef struct {
+    bool connected;
+    char ip[16];         /* "192.168.0.119", or "" */
+    char ssid[33];
+    int rssi;            /* dBm, 0 if unknown */
+} wifi_sta_status_t;
+
+/* Fills `out` from the driver and netif; cheap, any task. Returns out->connected. */
+bool wifi_sta_get_status(wifi_sta_status_t *out);
+
 #ifdef __cplusplus
 }
 #endif

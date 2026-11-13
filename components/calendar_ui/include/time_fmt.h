@@ -32,6 +32,10 @@ const char *tfmt_ampm(bool h24, int hour);
  * digits, no leading zero, 12 for midnight and noon). */
 void tfmt_clock_hour(bool h24, int hour, char *out, size_t sz);
 
+/* A length of time, for uptime: "42 s", "5 min", "3 h 05 min", "2 d 4 h 12 min" (once there is a
+ * day, hours and minutes always follow it). */
+void tfmt_duration(unsigned long secs, char *out, size_t sz);
+
 #ifdef __cplusplus
 }
 #endif

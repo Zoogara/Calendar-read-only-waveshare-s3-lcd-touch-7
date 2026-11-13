@@ -33,7 +33,19 @@ Left to right:
 | Gear | Opens the menu: **Display** (settings dialog), **Setup**, **Update** - see below |
 | Time / "updated HH:MM" | The current time, and when the calendar last synced underneath. **Tap "updated" (or the time just above it) to sync now.** A **⚠** before "updated" means the last sync missed a calendar; it retries within 20 seconds |
 
-**Gear menu:**
+**Gear menu:** above its buttons it shows a status block:
+
+- **IP address** - where to point a browser at the config page, or the update script.
+- **Wi-Fi** - the network and its signal strength (closer to 0 dBm is stronger; -30 is
+  excellent, -70 is poor).
+- **Uptime** - how long since the last restart.
+- **Firmware** - the version running (a git describe, e.g. `v1.0-141-g1a2b3c4`).
+- **Internal memory** - free, and the largest single free block. After a week or so the
+  largest block can shrink until a wireless update is refused (see the README, *Wireless
+  logging and updates*).
+- **Last sync** - when the calendar last synced, and whether a calendar failed.
+
+Then the buttons:
 
 - **Display** - the settings dialog (see below).
 - **Setup** - erases the saved Wi-Fi and calendar settings and restarts into

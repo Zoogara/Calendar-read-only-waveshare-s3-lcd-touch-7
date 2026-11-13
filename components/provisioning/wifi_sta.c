@@ -1,4 +1,5 @@
 #include "wifi_sta.h"
+#include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_wifi.h"
@@ -340,6 +341,26 @@ static bool switch_node(void)
     }
     free(aps);
     return switched;
+}
+
+bool wifi_sta_get_status(wifi_sta_status_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (!s_wifi_started || s_events == NULL || !(xEventGroupGetBits(s_events) & WIFI_CONNECTED_BIT)) {
+        return false;
+    }
+    out->connected = true;
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip;
+    if (netif != NULL && esp_netif_get_ip_info(netif, &ip) == ESP_OK) {
+        snprintf(out->ip, sizeof(out->ip), IPSTR, IP2STR(&ip.ip));
+    }
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        snprintf(out->ssid, sizeof(out->ssid), "%s", (const char *)ap.ssid);
+        out->rssi = ap.rssi;
+    }
+    return true;
 }
 
 bool wifi_sta_check_link(void)

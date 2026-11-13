@@ -101,8 +101,24 @@ static void out_of_range_hours_wrap(void)
     tfmt_hm(false, -1, 0, out, sizeof(out));  CHECK_STR(out, "11:00 PM");
 }
 
+static void durations(void)
+{
+    tfmt_duration(0, out, sizeof(out));         CHECK_STR(out, "0 s");
+    tfmt_duration(42, out, sizeof(out));        CHECK_STR(out, "42 s");
+    tfmt_duration(59, out, sizeof(out));        CHECK_STR(out, "59 s");
+    tfmt_duration(60, out, sizeof(out));        CHECK_STR(out, "1 min");
+    tfmt_duration(299, out, sizeof(out));       CHECK_STR(out, "4 min");
+    tfmt_duration(3600, out, sizeof(out));      CHECK_STR(out, "1 h 00 min");
+    tfmt_duration(3 * 3600 + 5 * 60 + 9, out, sizeof(out));  CHECK_STR(out, "3 h 05 min");
+    tfmt_duration(86399, out, sizeof(out));     CHECK_STR(out, "23 h 59 min");
+    tfmt_duration(86400, out, sizeof(out));     CHECK_STR(out, "1 d 0 h 00 min");
+    tfmt_duration(2 * 86400 + 4 * 3600 + 12 * 60, out, sizeof(out));  CHECK_STR(out, "2 d 4 h 12 min");
+    tfmt_duration(400UL * 86400, out, sizeof(out));  CHECK_STR(out, "400 d 0 h 00 min");
+}
+
 void test_timefmt(void)
 {
+    RUN(durations);
     RUN(hm_24h);
     RUN(hm_12h);
     RUN(hour_labels);

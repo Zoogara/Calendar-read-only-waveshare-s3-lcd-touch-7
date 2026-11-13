@@ -28,3 +28,15 @@ void ui_settings_dialog_show(void) {}
 
 /* calendar_ui.c asks this when the Update item is tapped; the renderer never gets there. */
 bool ota_update_url_is_insecure(const char *url) { return url && strncmp(url, "https://", 8) != 0; }
+
+/* The settings menu lists the connection; fictional values. */
+#include <stdio.h>
+#include "wifi_sta.h"
+bool wifi_sta_get_status(wifi_sta_status_t *out)
+{
+    out->connected = true;
+    snprintf(out->ip, sizeof(out->ip), "192.168.1.23");
+    snprintf(out->ssid, sizeof(out->ssid), "HomeNet");
+    out->rssi = -52;
+    return true;
+}
