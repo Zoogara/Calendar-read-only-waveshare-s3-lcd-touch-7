@@ -1,4 +1,5 @@
 #include "calendar_ui_internal.h"
+#include "time_fmt.h"
 #include "ui_theme.h"
 #include "event_store.h"
 
@@ -90,13 +91,12 @@ static void format_day(time_t start, time_t now, char *out, size_t out_sz)
     }
 }
 
-static void format_time12(time_t t, char *out, size_t out_sz)
+/* "2:35 PM" or "14:35", per the config page's Time format. */
+static void format_time(time_t t, char *out, size_t out_sz)
 {
     struct tm tmv;
     localtime_r(&t, &tmv);
-    int h12 = tmv.tm_hour % 12;
-    if (h12 == 0) h12 = 12;
-    snprintf(out, out_sz, "%d:%02d %s", h12, tmv.tm_min, tmv.tm_hour < 12 ? "AM" : "PM");
+    tfmt_hm(ui_get_cfg()->clock_24h, tmv.tm_hour, tmv.tm_min, out, out_sz);
 }
 
 /* One item box per event, filled with that calendar's color (the legend
@@ -122,8 +122,8 @@ static void add_item(lv_obj_t *items_col, const gcal_event_t *ev)
         snprintf(text, sizeof(text), "%.159s", ev->summary);
     } else {
         char start_s[16], end_s[16];
-        format_time12(ev->start, start_s, sizeof(start_s));
-        format_time12(ev->end, end_s, sizeof(end_s));
+        format_time(ev->start, start_s, sizeof(start_s));
+        format_time(ev->end, end_s, sizeof(end_s));
         snprintf(text, sizeof(text), "%.120s    %s - %s", ev->summary, start_s, end_s);
     }
 

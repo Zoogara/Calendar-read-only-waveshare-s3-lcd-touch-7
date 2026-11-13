@@ -1,4 +1,5 @@
 #include "calendar_ui_internal.h"
+#include "time_fmt.h"
 #include "ui_theme.h"
 #include "event_store.h"
 
@@ -142,7 +143,7 @@ lv_obj_t *ui_day_create(lv_obj_t *parent)
 
         lv_obj_t *lbl = lv_label_create(body);
         char buf[8];
-        snprintf(buf, sizeof(buf), "%d:00", s_hour_start + h);
+        tfmt_hour(ui_get_cfg()->clock_24h, s_hour_start + h, buf, sizeof(buf));
         lv_label_set_text(lbl, buf);
         lv_obj_set_style_text_font(lbl, &gcal_font_14, 0);
         lv_obj_set_style_text_color(lbl, ui_color(UI_COLOR_TEXT_MUTED), 0);
@@ -340,9 +341,9 @@ static void add_block(const gcal_event_t *ev, time_t day, time_t now, bool *out_
     lv_obj_set_style_bg_color(blk, ui_color(is_past ? ui_lighten(ev->color) : ev->color), 0);
     lv_obj_clear_flag(blk, LV_OBJ_FLAG_SCROLLABLE);
 
-    char time_buf[24];
-    snprintf(time_buf, sizeof(time_buf), "%02d:%02d - %02d:%02d",
-             start_tm.tm_hour, start_tm.tm_min, end_tm.tm_hour, end_tm.tm_min);
+    char time_buf[40];   /* "12:30 PM - 12:45 PM" is 19 characters */
+    tfmt_range(ui_get_cfg()->clock_24h, start_tm.tm_hour, start_tm.tm_min, end_tm.tm_hour, end_tm.tm_min,
+               " - ", time_buf, sizeof(time_buf));
 
     lv_obj_t *title = lv_label_create(blk);
     lv_label_set_long_mode(title, LV_LABEL_LONG_CLIP);

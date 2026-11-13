@@ -41,11 +41,13 @@ static void settle(int ms)
     lv_refr_now(NULL);
 }
 
+static const char *s_suffix = "";     /* "_24h" on the second (24-hour clock style) run */
+
 static void snap(const char *name)
 {
     settle(300);
     char path[256];
-    snprintf(path, sizeof(path), "%s/%s.ppm", s_out, name);
+    snprintf(path, sizeof(path), "%s/%s%s.ppm", s_out, name, s_suffix);
     FILE *f = fopen(path, "wb");
     if (f == NULL) {
         fprintf(stderr, "cannot write %s\n", path);
@@ -96,6 +98,10 @@ int main(int argc, char **argv)
     if (argc > 1) {
         s_out = argv[1];
     }
+    bool clock_24h = argc > 2 && strcmp(argv[2], "24h") == 0;   /* ./render out 24h */
+    if (clock_24h) {
+        s_suffix = "_24h";
+    }
     mkdir(s_out, 0755);
     setenv("TZ", "AEST-10AEDT,M10.1.0,M4.1.0/3", 1);
     tzset();
@@ -121,6 +127,7 @@ int main(int argc, char **argv)
     demo_build_data(0);
     /* A (fictional) PIN, so the top bar has its padlock - and the weather icon its real position. */
     snprintf(s_cfg.lock_pin, sizeof(s_cfg.lock_pin), "1234");
+    s_cfg.clock_24h = clock_24h;      /* set before the UI is built, as on the device (a change restarts it) */
     calendar_ui_init(&s_cfg);
     settle(500);
     /* With a PIN set the screen starts locked, which shows only the clock: unlock it so the

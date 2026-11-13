@@ -17,6 +17,7 @@
  * shows a small bell indicator (see ui_reminder_has_pending()) rather
  * than interrupting either of those. */
 #include "calendar_ui_internal.h"
+#include "time_fmt.h"
 #include "ui_theme.h"
 #include "event_store.h"
 
@@ -265,10 +266,12 @@ void ui_reminder_tick(bool calendar_visible)
      * was generated with 0x2022 in its glyph range (see its own header
      * comment's Opts line) but not 0xB7, so a middle dot would render as a
      * missing/blank glyph on real hardware. */
-    char meta[96];
-    snprintf(meta, sizeof(meta), "in %d min \xE2\x80\xA2 %02d:%02d-%02d:%02d \xE2\x80\xA2 %s",
-             mins_left, start_tm.tm_hour, start_tm.tm_min, end_tm.tm_hour, end_tm.tm_min,
-             candidate.calendar_label);
+    char span[40];
+    tfmt_range(ui_get_cfg()->clock_24h, start_tm.tm_hour, start_tm.tm_min, end_tm.tm_hour, end_tm.tm_min,
+               "-", span, sizeof(span));
+    char meta[128];
+    snprintf(meta, sizeof(meta), "in %d min \xE2\x80\xA2 %s \xE2\x80\xA2 %s",
+             mins_left, span, candidate.calendar_label);
     lv_label_set_text(s_meta_label, meta);
 
     lv_obj_clear_flag(s_card, LV_OBJ_FLAG_HIDDEN);

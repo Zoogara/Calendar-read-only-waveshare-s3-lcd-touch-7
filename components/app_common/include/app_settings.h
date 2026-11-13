@@ -103,6 +103,10 @@ typedef struct {
     uint8_t view_start_hour;
     uint8_t view_end_hour;
 
+    /* Clock style for every time the display shows (config page -> Time format): false = 12-hour
+     * with AM/PM (the default), true = 24-hour. See time_fmt.h. */
+    bool clock_24h;
+
     /* How many days around "now" to keep fetched/cached (see
      * gcal_refresh_all()'s window_past_days/window_future_days) - wide
      * enough that paging around in month/week view doesn't need a fresh

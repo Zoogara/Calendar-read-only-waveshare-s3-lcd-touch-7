@@ -9,6 +9,7 @@ void test_auth(void);
 void test_urldecode(void);
 void test_jwt(void);
 void test_urlenc(void);
+void test_timefmt(void);
 
 int main(void)
 {
@@ -19,6 +20,7 @@ int main(void)
     test_urldecode();
     test_jwt();
     test_urlenc();
+    test_timefmt();
     printf("\n%d checks, %d failed\n", t_checks, t_failed);
     return t_failed ? 1 : 0;
 }

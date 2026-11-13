@@ -672,6 +672,13 @@ anything sensitive - the config web page (its own password) is unaffected.
 - **Refresh interval / fetch window**: `main/main.c` (`FETCH_PAST_DAYS`,
   `FETCH_FUTURE_DAYS`) and the "Refresh interval" field in the setup
   portal.
+- **Time format**: `clock_24h` in `app_settings_t`, set on the config page
+  (*Other* -> Time format; 12-hour with AM/PM by default). Every time the UI
+  shows goes through `tfmt_*()` in `time_fmt.c` (pure C, unit-tested in
+  `tests/host`), so there is one place to change a time's look. The ambient
+  clock's font (`gcal_font_clock`) only has digits and ":", so in 12-hour style
+  its AM/PM is a separate small label in the 20px font. A change restarts the
+  device, so nothing re-formats live.
 - **Week/Day hour range**: `view_start_hour`/`view_end_hour` in the setup
   portal or settings dialog (default 6am-10pm). The same two hours also
   decide the ambient clock's day/night colour boundary (see "Idle

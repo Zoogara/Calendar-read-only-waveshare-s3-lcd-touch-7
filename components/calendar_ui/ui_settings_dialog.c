@@ -10,6 +10,7 @@
  * restart to apply" pattern as reconfigure/OTA. */
 #include "calendar_ui_internal.h"
 #include "ui_theme.h"
+#include "time_fmt.h"
 #include "provisioning.h"
 
 #include <stdio.h>
@@ -58,14 +59,24 @@ static bool s_pending_password_set;
 static lv_obj_t *s_pw_dialog;
 static lv_obj_t *s_pw_textarea;
 
-static void build_option_string(const option_t *opts, int n, char *out, size_t out_sz)
+typedef enum { VALUE_SECONDS, VALUE_HOUR } value_kind_t;
+
+/* The dropdown's option text. Hour choices ignore the table's fixed labels and are written in the
+ * configured clock style ("4 AM" or "4:00"), so a change of Time format shows here too. */
+static void build_option_string(const option_t *opts, int n, value_kind_t kind, char *out, size_t out_sz)
 {
     out[0] = '\0';
     for (int i = 0; i < n; i++) {
         if (i > 0) {
             strncat(out, "\n", out_sz - strlen(out) - 1);
         }
-        strncat(out, opts[i].label, out_sz - strlen(out) - 1);
+        if (kind == VALUE_HOUR) {
+            char h[12];
+            tfmt_hour(ui_get_cfg()->clock_24h, (int)opts[i].value, h, sizeof(h));
+            strncat(out, h, out_sz - strlen(out) - 1);
+        } else {
+            strncat(out, opts[i].label, out_sz - strlen(out) - 1);
+        }
     }
 }
 
@@ -79,14 +90,11 @@ static int index_for_value(const option_t *opts, int n, uint32_t value)
     return -1;
 }
 
-typedef enum { VALUE_SECONDS, VALUE_HOUR } value_kind_t;
-
 /* Label for a value that isn't one of the preset options - see add_row(). */
 static void format_custom(value_kind_t kind, uint32_t v, char *out, size_t out_sz)
 {
     if (kind == VALUE_HOUR) {
-        unsigned h = v % 24;
-        snprintf(out, out_sz, "%u %s", h == 0 ? 12 : (h > 12 ? h - 12 : h), h < 12 ? "AM" : "PM");
+        tfmt_hour(ui_get_cfg()->clock_24h, (int)(v > 24 ? v % 24 : v), out, out_sz);
     } else if (v == 0) {
         snprintf(out, out_sz, "Never");
     } else if (v % 60 == 0) {
@@ -120,7 +128,7 @@ static lv_obj_t *add_row(lv_obj_t *parent, int y, const char *label_text,
 
     lv_obj_t *dd = lv_dropdown_create(parent);
     char opt_str[180];
-    build_option_string(opts, n_opts, opt_str, sizeof(opt_str));
+    build_option_string(opts, n_opts, kind, opt_str, sizeof(opt_str));
     int idx = index_for_value(opts, n_opts, current_value);
     if (idx < 0) {
         char custom[24];

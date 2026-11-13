@@ -27,6 +27,7 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddNumberToObject(root, "screen_timeout_s", cfg->screen_timeout_s);
     cJSON_AddNumberToObject(root, "view_start_hour", cfg->view_start_hour);
     cJSON_AddNumberToObject(root, "view_end_hour", cfg->view_end_hour);
+    cJSON_AddNumberToObject(root, "clock_24h", cfg->clock_24h ? 1 : 0);
     cJSON_AddNumberToObject(root, "fetch_past_days", cfg->fetch_past_days);
     cJSON_AddNumberToObject(root, "fetch_future_days", cfg->fetch_future_days);
     cJSON_AddStringToObject(root, "config_web_password", cfg->config_web_password);
@@ -134,6 +135,9 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
     out->view_end_hour = (cJSON_IsNumber(j) && j->valuedouble >= 1 && j->valuedouble <= 24)
                               ? (uint8_t)j->valuedouble
                               : APP_SETTINGS_DEFAULT_VIEW_END_HOUR;
+
+    j = cJSON_GetObjectItemCaseSensitive(root, "clock_24h");
+    out->clock_24h = cJSON_IsNumber(j) && j->valuedouble != 0;     /* absent (older settings): 12-hour */
 
     j = cJSON_GetObjectItemCaseSensitive(root, "fetch_past_days");
     out->fetch_past_days = (cJSON_IsNumber(j) && j->valuedouble >= 0 && j->valuedouble <= 90)
