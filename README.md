@@ -88,6 +88,7 @@ For a quick tour of using it - every feature, option and setting - see
 | ![Week view](docs/week_view.png) **Week** | ![Day view](docs/day_view.png) **Day** |
 | ![Ambient clock at night](docs/clock_night.png) **Ambient clock, after dark** | ![Lock keypad](docs/lock_keypad.png) **Screen lock** |
 | ![On this day](docs/on_this_day.png) **On this day** (tap the date) | ![News feed](docs/news_feed.png) **News feed** (corner icon) |
+| ![Gear menu](docs/settings_menu.png) **Gear menu** (with its status block) | |
 
 The weather panel (tap the weather on the clock) scrolls through its sections:
 

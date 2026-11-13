@@ -58,3 +58,17 @@ void tfmt_clock_hour(bool h24, int hour, char *out, size_t sz)
         snprintf(out, sz, "%d", to12(hour));
     }
 }
+
+void tfmt_duration(unsigned long secs, char *out, size_t sz)
+{
+    unsigned long d = secs / 86400, h = (secs / 3600) % 24, m = (secs / 60) % 60;
+    if (d > 0) {
+        snprintf(out, sz, "%lu d %lu h %02lu min", d, h, m);
+    } else if (h > 0) {
+        snprintf(out, sz, "%lu h %02lu min", h, m);
+    } else if (m > 0) {
+        snprintf(out, sz, "%lu min", m);
+    } else {
+        snprintf(out, sz, "%lu s", secs);
+    }
+}

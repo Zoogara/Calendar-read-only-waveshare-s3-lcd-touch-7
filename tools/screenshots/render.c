@@ -16,6 +16,8 @@
 void host_select_view(int v);
 void host_set_cursor(time_t t);
 void host_go_ambient(void);
+void host_open_settings_menu(void);
+void host_close_top(void);
 void host_go_calendar(void);
 
 static lv_color_t s_draw[W * H];
@@ -144,6 +146,12 @@ int main(int argc, char **argv)
     snap("day");
     host_select_view(UI_VIEW_UPNEXT);
     snap("upnext");
+
+    host_select_view(UI_VIEW_MONTH);
+    host_open_settings_menu();
+    snap("settings_menu");
+    host_close_top();
+    settle(300);
 
     weather_shots();
 

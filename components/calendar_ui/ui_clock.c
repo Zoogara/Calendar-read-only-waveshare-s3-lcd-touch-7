@@ -261,14 +261,15 @@ lv_obj_t *ui_clock_create(lv_obj_t *parent)
     lv_obj_set_style_text_font(s_mm_label, &gcal_font_clock, 0);
 
     /* 12-hour style: "AM"/"PM" inline after the minutes. gcal_font_clock only has the digits and
-     * ":" (see its header), so this is a separate label in the 20px font. The big top padding
-     * drops its text into the lower part of the row, level with the foot of the digits; it is
-     * hidden (and out of the row's layout) when the clock is in 24-hour style. */
+     * ":" (see its header), so this is a separate label in gcal_font_ampm (22px, just A/M/P). The
+     * big top padding drops its text into the lower part of the row, level with the foot of the
+     * digits (each 2px of padding moves it about 1px, as the row centres the box); it is hidden
+     * (and out of the row's layout) when the clock is in 24-hour style. */
     s_ampm_label = lv_label_create(s_row);
-    lv_obj_set_style_text_font(s_ampm_label, &gcal_font_20, 0);
+    lv_obj_set_style_text_font(s_ampm_label, &gcal_font_ampm, 0);
     lv_obj_set_style_text_color(s_ampm_label, ui_color(UI_COLOR_TEXT_MUTED), 0);
     lv_obj_set_style_pad_left(s_ampm_label, 10, 0);
-    lv_obj_set_style_pad_top(s_ampm_label, 90, 0);
+    lv_obj_set_style_pad_top(s_ampm_label, 100, 0);
     lv_obj_add_flag(s_ampm_label, LV_OBJ_FLAG_HIDDEN);
 
     /* Small "a reminder's pending" indicator (see ui_reminder.c) - a
