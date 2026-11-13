@@ -15,6 +15,7 @@
 #include "calendar_ui_internal.h"
 #include "ui_theme.h"
 #include "weather.h"
+#include "time_fmt.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -65,8 +66,8 @@ static void close_async(void *arg)
     ESP_LOGI(TAG, "closed");
 }
 
-/* Keeps the heading line's time right: "HH:MM" like the top bar and clock, redrawn
- * only when the minute changes. */
+/* Keeps the heading line's time right: the same style as the top bar and clock (Time format
+ * on the config page), redrawn only when the minute changes. */
 static void time_tick_cb(lv_timer_t *t)
 {
     (void)t;
@@ -76,8 +77,8 @@ static void time_tick_cb(lv_timer_t *t)
     time_t now = time(NULL);
     struct tm lt;
     localtime_r(&now, &lt);
-    char buf[8];
-    strftime(buf, sizeof(buf), "%H:%M", &lt);
+    char buf[16];
+    tfmt_hm(ui_get_cfg()->clock_24h, lt.tm_hour, lt.tm_min, buf, sizeof(buf));
     if (strcmp(lv_label_get_text(s_time_label), buf) != 0) {
         lv_label_set_text(s_time_label, buf);
     }
@@ -269,14 +270,15 @@ static const char *wind_compass16(float deg)
     return N16[((int)floorf((d + 11.25f) / 22.5f)) % 16];
 }
 
+/* A time of day in the configured clock style: "14:35" or "2:35 PM". */
 static void hhmm(time_t t, char *out, size_t sz)
 {
     struct tm lt;
     localtime_r(&t, &lt);
-    strftime(out, sz, "%H:%M", &lt);
+    tfmt_hm(ui_get_cfg()->clock_24h, lt.tm_hour, lt.tm_min, out, sz);
 }
 
-/* "HH:MM", plus " (yesterday)" when t is before today's local midnight - the
+/* hhmm(), plus " (yesterday)" when t is before today's local midnight - the
  * 24-hour graphs reach back into the previous day, so a bare time could be
  * either. */
 static void hhmm_day(time_t t, char *out, size_t sz)
@@ -308,7 +310,7 @@ typedef struct {
     int ny;
     char ylab[12][16];                 /* Y numbers, top to bottom, on the gridlines */
     int nx;
-    char xlab[3][8];                  /* under the plot: left, middle, right */
+    char xlab[3][12];                  /* under the plot: left, middle, right */
     int ndays, day_lines;             /* per-day text under a bar chart */
     char day[WEATHER_WEEK_DAYS][4][14];
     uint32_t day_col[4];              /* colour of each line of the day text */
@@ -668,11 +670,10 @@ static void add_hourly_strip(lv_obj_t *list)
     for (int i = 0; i < h->count; i++) {
         struct tm lt;
         localtime_r(&h->t[i], &lt);
-        int h12 = lt.tm_hour % 12 == 0 ? 12 : lt.tm_hour % 12;
         if (i == 0) {
             snprintf(s_hr[i].time, sizeof(s_hr[i].time), "Now");
         } else {
-            snprintf(s_hr[i].time, sizeof(s_hr[i].time), "%d %s", h12, lt.tm_hour < 12 ? "AM" : "PM");
+            tfmt_hour(ui_get_cfg()->clock_24h, lt.tm_hour, s_hr[i].time, sizeof(s_hr[i].time));
         }
         if (isnan(h->temp[i])) {
             snprintf(s_hr[i].temp, sizeof(s_hr[i].temp), "-");
@@ -1008,7 +1009,7 @@ void ui_weather_open(void)
      * reply) - what's shown is older data or missing a graph. */
     if (weather_graphs_incomplete()) {
         lv_obj_t *warn = add_label(s_overlay, &gcal_font_20, 0xF9AB00, LV_SYMBOL_WARNING);
-        lv_obj_align(warn, LV_ALIGN_TOP_RIGHT, -100, 20);
+        lv_obj_align(warn, LV_ALIGN_TOP_RIGHT, -150, 20);   /* clear of the widest time, "12:35 PM" */
     }
 
     lv_obj_t *list = lv_obj_create(s_overlay);

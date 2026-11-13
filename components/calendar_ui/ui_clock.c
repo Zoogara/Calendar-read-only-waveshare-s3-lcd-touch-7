@@ -58,6 +58,7 @@
  * revisiting - so it was dropped once the zoom-free layout turned out to
  * already look right without it.) */
 #include "calendar_ui_internal.h"
+#include "time_fmt.h"
 #include "ui_theme.h"
 
 #include <math.h>
@@ -86,6 +87,7 @@ static lv_obj_t *s_row;
 static lv_obj_t *s_hh_label;
 static lv_obj_t *s_colon_label;
 static lv_obj_t *s_mm_label;
+static lv_obj_t *s_ampm_label;      /* "AM"/"PM" after the minutes in 12-hour style; hidden in 24-hour */
 static lv_obj_t *s_bell_label;
 static lv_obj_t *s_weather_row;
 static lv_obj_t *s_weather_icon;
@@ -258,6 +260,17 @@ lv_obj_t *ui_clock_create(lv_obj_t *parent)
     lv_label_set_recolor(s_mm_label, true);
     lv_obj_set_style_text_font(s_mm_label, &gcal_font_clock, 0);
 
+    /* 12-hour style: "AM"/"PM" inline after the minutes. gcal_font_clock only has the digits and
+     * ":" (see its header), so this is a separate label in the 20px font. The big top padding
+     * drops its text into the lower part of the row, level with the foot of the digits; it is
+     * hidden (and out of the row's layout) when the clock is in 24-hour style. */
+    s_ampm_label = lv_label_create(s_row);
+    lv_obj_set_style_text_font(s_ampm_label, &gcal_font_20, 0);
+    lv_obj_set_style_text_color(s_ampm_label, ui_color(UI_COLOR_TEXT_MUTED), 0);
+    lv_obj_set_style_pad_left(s_ampm_label, 10, 0);
+    lv_obj_set_style_pad_top(s_ampm_label, 90, 0);
+    lv_obj_add_flag(s_ampm_label, LV_OBJ_FLAG_HIDDEN);
+
     /* Small "a reminder's pending" indicator (see ui_reminder.c) - a
      * sibling of s_row, not a child of it, so it stays put in the corner
      * regardless of s_row's own every-10-minutes jitter. Hidden by
@@ -407,15 +420,24 @@ void ui_clock_update(void)
                         tm_now.tm_hour < cfg->view_end_hour);
     uint8_t pct = is_daytime ? DIM_PCT_DAY : DIM_PCT_NIGHT;
 
+    /* The hour's own digits: two ("14") in 24-hour style; in 12-hour style one or two with no
+     * leading zero ("2", "10"), the row re-centring around the shorter text. A lone digit takes the
+     * first digit's colour. */
+    const bool h24 = cfg->clock_24h;
     char digits[4];
-    snprintf(digits, sizeof(digits), "%02d", tm_now.tm_hour);
+    tfmt_clock_hour(h24, tm_now.tm_hour, digits, sizeof(digits));
     char mins[4];
     snprintf(mins, sizeof(mins), "%02d", tm_now.tm_min);
 
     char hh_buf[64];
-    snprintf(hh_buf, sizeof(hh_buf), "#%06lx %c##%06lx %c#",
-             (unsigned long)ui_darken(digit_base_color(0), pct), digits[0],
-             (unsigned long)ui_darken(digit_base_color(1), pct), digits[1]);
+    if (digits[1] == '\0') {
+        snprintf(hh_buf, sizeof(hh_buf), "#%06lx %c#",
+                 (unsigned long)ui_darken(digit_base_color(0), pct), digits[0]);
+    } else {
+        snprintf(hh_buf, sizeof(hh_buf), "#%06lx %c##%06lx %c#",
+                 (unsigned long)ui_darken(digit_base_color(0), pct), digits[0],
+                 (unsigned long)ui_darken(digit_base_color(1), pct), digits[1]);
+    }
     char mm_buf[64];
     snprintf(mm_buf, sizeof(mm_buf), "#%06lx %c##%06lx %c#",
              (unsigned long)ui_darken(digit_base_color(2), pct), mins[0],
@@ -425,6 +447,14 @@ void ui_clock_update(void)
     static char s_last_mm[64] = {0};
     set_label_if_changed(s_hh_label, hh_buf, s_last_hh, sizeof(s_last_hh));
     set_label_if_changed(s_mm_label, mm_buf, s_last_mm, sizeof(s_last_mm));
+    static char s_last_ampm[4] = "?";
+    if (h24) {
+        lv_obj_add_flag(s_ampm_label, LV_OBJ_FLAG_HIDDEN);
+        s_last_ampm[0] = '?';
+    } else {
+        lv_obj_clear_flag(s_ampm_label, LV_OBJ_FLAG_HIDDEN);
+        set_label_if_changed(s_ampm_label, tfmt_ampm(false, tm_now.tm_hour), s_last_ampm, sizeof(s_last_ampm));
+    }
 
     /* Plain text colour, not recolor - the colon is always one solid
      * tone, no per-run colour needed. The bell indicator (see
@@ -436,6 +466,7 @@ void ui_clock_update(void)
     uint32_t colon_color = ui_darken(UI_COLOR_TEXT_MUTED, pct);
     if ((int32_t)colon_color != s_last_colon_color) {
         lv_obj_set_style_text_color(s_colon_label, ui_color(colon_color), 0);
+        lv_obj_set_style_text_color(s_ampm_label, ui_color(colon_color), 0);
         lv_obj_set_style_text_color(s_bell_label, ui_color(colon_color), 0);
         lv_obj_set_style_text_color(s_weather_label, ui_color(colon_color), 0);
         lv_obj_set_style_text_color(s_weather_icon, ui_color(colon_color), 0);

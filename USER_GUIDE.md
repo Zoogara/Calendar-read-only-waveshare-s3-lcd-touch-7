@@ -131,8 +131,8 @@ plain text, including on the SD card backup.
 |---|---|
 | Screen timeout | 1, 2, 5, 10, 15 or 30 min, or Never |
 | Refresh interval | 1, 2, 5, 10, 15, 30 or 60 min |
-| Week/day view start | 4 AM - 10 AM |
-| Week/day view end | 5 PM - midnight |
+| Week/day view start | 4 AM - 10 AM (written 4:00 - 10:00 in 24-hour style) |
+| Week/day view end | 5 PM - midnight (17:00 - 24:00 in 24-hour style) |
 | Config web password | Sets the password for the config page (below) |
 
 **Save & Restart** applies them. A value set on the config page that isn't
@@ -194,8 +194,9 @@ touch (0 = padlock only).
 | Timezone | A POSIX TZ string, e.g. `AEST-10AEDT,M10.1.0,M4.1.0/3` for Melbourne |
 | Refresh interval | Seconds between syncs |
 | Firmware update URL | Where gear → Update fetches firmware from (optional). Must be `https://` |
+| Time format | **12-hour** (2:35 PM - the default) or **24-hour** (14:35). It applies to every time the display shows: the top bar's clock and "updated" time, the ambient clock (in 12-hour style a small AM/PM sits after the minutes), the Day and Week hour lists, event times in Day view, Up next and reminders, the weather panel's heading time, graph axes, low / high / gust times and hourly strip, and the hour choices in the Display dialog |
 | Screen timeout | Seconds without a touch before the clock or screensaver; 0 = never |
-| Week/day view hours | First and last hour shown in Week and Day view; also when the clock counts as daytime |
+| Week/day view hours | First and last hour shown in Week and Day view; also when the clock counts as daytime. Plain hours 0-24 on this page, whatever the Time format |
 | Calendar cache window | Days back (up to 90) and ahead (up to 365) to fetch |
 
 ## First-time setup
