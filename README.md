@@ -95,6 +95,7 @@ a real calendar, sensor or place.*
 | ![Week view](docs/week_view.png) **Week** | ![Day view](docs/day_view.png) **Day** |
 | ![Ambient clock at night](docs/clock_night.png) **Ambient clock, after dark** | ![Lock keypad](docs/lock_keypad.png) **Screen lock** |
 | ![On this day](docs/on_this_day.png) **On this day** (tap the date) | ![News feed](docs/news_feed.png) **News feed** (corner icon) |
+| ![Gear menu](docs/settings_menu.png) **Gear menu** (with its status block) | |
 
 The weather panel (tap the weather on the clock, or the small grey weather icon in the calendar's top bar; `with-HA-weather` branch) scrolls through its sections:
 

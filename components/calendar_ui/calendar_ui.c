@@ -1,6 +1,10 @@
 #include "calendar_ui.h"
 #include "calendar_ui_internal.h"
 #include "time_fmt.h"
+#include "wifi_sta.h"
+#include "esp_app_desc.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "ui_theme.h"
 #include "board_bsp.h"
 #include "event_store.h"
@@ -325,10 +329,55 @@ static void clock_toggle_btn_cb(lv_event_t *e)
     lv_obj_set_style_text_opa(icon, ui_screensaver_clock_enabled() ? LV_OPA_COVER : LV_OPA_40, 0);
 }
 
+/* The status block above the menu buttons: what you'd otherwise have to work out from the router
+ * or a serial log - where to point a browser or the update script, how healthy the link and memory
+ * are, which firmware is running, and when the calendar last synced. */
+static void settings_menu_info(char *out, size_t sz)
+{
+    wifi_sta_status_t w;
+    wifi_sta_get_status(&w);
+
+    char wifi[64];
+    if (w.connected) {
+        snprintf(wifi, sizeof(wifi), "%s (%d dBm)", w.ssid[0] ? w.ssid : "connected", w.rssi);
+    } else {
+        snprintf(wifi, sizeof(wifi), "not connected");
+    }
+
+    char up[32];
+    tfmt_duration((unsigned long)(esp_timer_get_time() / 1000000), up, sizeof(up));
+
+    char sync[48];
+    time_t last = event_store_last_refresh();
+    if (last == 0) {
+        snprintf(sync, sizeof(sync), "not yet");
+    } else {
+        struct tm tm;
+        localtime_r(&last, &tm);
+        char t[16];
+        tfmt_hm(ui_get_cfg()->clock_24h, tm.tm_hour, tm.tm_min, t, sizeof(t));
+        snprintf(sync, sizeof(sync), "%s%s", t, s_sync_failed ? " (a calendar failed)" : "");
+    }
+
+    snprintf(out, sz,
+             "IP address:  %s\n"
+             "Wi-Fi:  %s\n"
+             "Uptime:  %s\n"
+             "Firmware:  %s\n"
+             "Internal memory:  %u KB free, largest block %u KB\n"
+             "Last sync:  %s",
+             w.ip[0] ? w.ip : "-", wifi, up, esp_app_get_description()->version,
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+             (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024), sync);
+}
+
 static void settings_btn_cb(lv_event_t *e)
 {
     (void)e;
-    lv_obj_t *mbox = lv_msgbox_create(NULL, "Settings", "", s_settings_menu_btns, false);
+    char info[384];   /* worst case: ip 15 + wifi 63 + uptime 31 + version 31 + sync 47 + the fixed text */
+    settings_menu_info(info, sizeof(info));
+    lv_obj_t *mbox = lv_msgbox_create(NULL, "Settings", info, s_settings_menu_btns, false);
+    lv_obj_set_style_text_align(lv_msgbox_get_text(mbox), LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_width(mbox, 540);
     lv_obj_center(mbox);
     lv_obj_add_event_cb(mbox, settings_menu_cb, LV_EVENT_VALUE_CHANGED, NULL);
