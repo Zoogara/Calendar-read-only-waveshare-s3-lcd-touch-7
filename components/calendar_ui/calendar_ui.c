@@ -1,5 +1,6 @@
 #include "calendar_ui.h"
 #include "calendar_ui_internal.h"
+#include "time_fmt.h"
 #include "ui_theme.h"
 #include "board_bsp.h"
 #include "event_store.h"
@@ -562,13 +563,13 @@ static void build_top_bar(lv_obj_t *parent)
 static void clock_tick_cb(lv_timer_t *timer)
 {
     (void)timer;
-    static char s_last[8] = "";
+    static char s_last[16] = "";    /* "12:35 PM" is the longest */
     time_t now;
     time(&now);
     struct tm tm;
     localtime_r(&now, &tm);
-    char buf[8];
-    strftime(buf, sizeof(buf), "%H:%M", &tm);
+    char buf[16];
+    tfmt_hm(ui_get_cfg()->clock_24h, tm.tm_hour, tm.tm_min, buf, sizeof(buf));
     if (strcmp(buf, s_last) != 0) {
         strcpy(s_last, buf);
         lv_label_set_text(s_clock_label, buf);
@@ -670,7 +671,7 @@ static void update_title(void)
         struct tm tm;
         localtime_r(&last, &tm);
         char t[16];
-        strftime(t, sizeof(t), "%H:%M", &tm);
+        tfmt_hm(ui_get_cfg()->clock_24h, tm.tm_hour, tm.tm_min, t, sizeof(t));
         snprintf(lbl, sizeof(lbl), "%s%s %s",
                  s_sync_failed ? LV_SYMBOL_WARNING " " : "", "updated", t);
     }

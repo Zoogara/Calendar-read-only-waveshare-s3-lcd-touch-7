@@ -48,8 +48,11 @@ $(BUILD)/root/%.o: $(ROOT)/%.c
 render: $(OBJS)
 	$(CC) $(OBJS) -lm -o $@
 
+# The default render (12-hour clock style), and the same screens again as out/*_24h.png in 24-hour style.
+# Only the default set goes into docs/.
 shots: render
 	./render out
+	./render out 24h
 	python3 topng.py out
 
 clean:

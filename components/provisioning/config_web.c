@@ -417,10 +417,18 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, other);
     send_value_chunk(req, s_cfg->ota_url);
     snprintf(other, sizeof(other),
-        "' placeholder='https://.../gcal_display.bin'>%s"
+        "' placeholder='https://.../gcal_display.bin'>%s",
+        ota_hint);
+    httpd_resp_sendstr_chunk(req, other);
+    snprintf(other, sizeof(other),
+        "<label>Time format (every time shown on the display)</label>"
+        "<select name='clock_24h'>"
+        "<option value='0'%s>12-hour (2:35 PM)</option>"
+        "<option value='1'%s>24-hour (14:35)</option>"
+        "</select>"
         "<label>Screen timeout (seconds, 0 = never sleep)</label>"
         "<input type='number' name='screen_timeout_s' value='%u' min='0'>"
-        "<label>Week/day view hour range (24h clock)</label>"
+        "<label>Week/day view hour range (hours 0-24, whatever the time format)</label>"
         "<div class='cal-row'>"
         "<input type='number' name='view_start_hour' value='%u' min='0' max='23' style='flex:1'>"
         "<span>to</span>"
@@ -468,7 +476,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<a class='btn-cancel' href='/'>Cancel</a>"
         "</div>"
         "</form></body></html>",
-        ota_hint,
+        s_cfg->clock_24h ? "" : " selected", s_cfg->clock_24h ? " selected" : "",
         (unsigned)s_cfg->screen_timeout_s, (unsigned)s_cfg->view_start_hour, (unsigned)s_cfg->view_end_hour,
         (unsigned)s_cfg->fetch_past_days, (unsigned)s_cfg->fetch_future_days,
         (unsigned)s_cfg->brightness_min_pct_x10, (double)s_cfg->brightness_min_pct_x10 / 10.0,
@@ -555,6 +563,9 @@ static esp_err_t save_post_handler(httpd_req_t *req)
         if (v >= 0) {
             s_cfg->screen_timeout_s = (uint32_t)v;
         }
+    }
+    if (form_get(body, "clock_24h", num, sizeof(num))) {
+        s_cfg->clock_24h = (strtol(num, NULL, 10) != 0);
     }
     uint8_t new_start = s_cfg->view_start_hour, new_end = s_cfg->view_end_hour;
     if (form_get(body, "view_start_hour", num, sizeof(num))) {

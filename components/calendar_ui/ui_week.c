@@ -1,4 +1,5 @@
 #include "calendar_ui_internal.h"
+#include "time_fmt.h"
 #include "ui_theme.h"
 #include "event_store.h"
 
@@ -7,7 +8,7 @@
 
 #define WEEK_DAYS     7
 #define ROW_H         40
-#define TIME_COL_W    40
+#define TIME_COL_W    48   /* wide enough for "12 PM" in 12-hour style */
 /* Day header: the date line (gcal_font_14, 18px line) at the very top, then
  * up to ALLDAY_MAX all-day chips (ALLDAY_CHIP_H, 1px apart) - 64 = 18 + 2x22
  * + 1 + a pixel to spare above the header's bottom border. Chips are tall
@@ -181,7 +182,7 @@ lv_obj_t *ui_week_create(lv_obj_t *parent)
 
         lv_obj_t *lbl = lv_label_create(body);
         char buf[8];
-        snprintf(buf, sizeof(buf), "%d:00", s_hour_start + h);
+        tfmt_hour(ui_get_cfg()->clock_24h, s_hour_start + h, buf, sizeof(buf));
         lv_label_set_text(lbl, buf);
         lv_obj_set_style_text_font(lbl, &gcal_font_14, 0);
         lv_obj_set_style_text_color(lbl, ui_color(UI_COLOR_TEXT_MUTED), 0);
