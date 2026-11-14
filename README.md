@@ -445,8 +445,18 @@ logging and `idf.py flash` over USB keep working exactly as before.
   until the largest free block is smaller than that (seen at 7.4 days: ~44 KB
   free in total, but a 7 KB largest block). The script retries for 30 s, then
   gives up with that message. Calendar syncs are unaffected; the heap can't be
-  defragmented, so **restart the display (unplug and replug its power - not gear
-  -> Setup, which erases your settings) and send the update again**.
+  defragmented, so a restart is the cure (unplug and replug its power - not gear
+  -> Setup, which erases your settings).
+  **Automatic restart:** a development build also has an authenticated
+  `POST /restart` (same password, same-origin check; not in a default build). Before
+  sending, `gcal_remote.py ota` looks at the largest free internal block in `/version`
+  and, if it is under 16 KB, restarts the display, waits for it to come back and finish
+  its start-up fetches (30 s of uptime), then sends. Every update that has succeeded
+  came from a freshly restarted display; the ones that crashed in the image check had
+  a largest block of 5-7 KB. `--min-largest-kb N` changes the threshold and
+  `--no-restart` turns it off. If the display has no `/restart` (a default build, or
+  firmware older than this) or refuses it, the script says so and sends anyway.
+  The script's logic is tested by `python3 tools/test_gcal_remote.py`.
 - **Rollback:** app rollback is enabled. A new image is confirmed 60 s after
   boot (`ota_update_confirm_boot_after`); one that crashes or resets before
   then reverts to the previous image. The first build with rollback enabled

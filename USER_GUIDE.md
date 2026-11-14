@@ -211,8 +211,10 @@ sends the device log over Wi-Fi to a computer running
 The same script can push firmware to the display wirelessly, using this
 page's password (see the README, *Wireless logging and updates*). If it
 reports "not enough free memory", the display has been running for a week or
-more and its memory has fragmented: restart it (unplug and replug the power -
-not gear -> Setup, which erases your settings) and send the update again.
+more and its memory has fragmented. The script restarts a development-build
+display by itself when memory is that low; otherwise restart it by hand (unplug
+and replug the power - not gear -> Setup, which erases your settings) and send
+the update again.
 
 **Screen lock** - **PIN** (exactly 4 digits; blank keeps the current one),
 **Remove the PIN** (turns the lock off), **Lock after** minutes without a
