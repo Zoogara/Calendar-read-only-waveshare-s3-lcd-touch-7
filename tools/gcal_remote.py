@@ -71,7 +71,9 @@ def device_version(device, auth, timeout=6):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             fields = dict(line.split(" ", 1) for line in r.read().decode().splitlines() if " " in line)
         return {"version": fields.get("version", "?"), "slot": fields.get("slot", "?"),
-                "uptime_s": int(fields.get("uptime_s", "0")), "reset": fields.get("reset", "?")}
+                "uptime_s": int(fields.get("uptime_s", "0")), "reset": fields.get("reset", "?"),
+                "free_kb": int(fields.get("internal_free", "0")) // 1024,
+                "largest_kb": int(fields.get("internal_largest", "0")) // 1024}
     except (urllib.error.URLError, OSError, ValueError):
         return None
 
@@ -133,7 +135,8 @@ def cmd_ota(a):
     before = device_version(a.device, auth)
     if before:
         print(f"display is running {before['version']} from {before['slot']} (up {before['uptime_s']} s, "
-              f"last restart: {before['reset']})")
+              f"last restart: {before['reset']}; internal RAM {before['free_kb']} KB free, largest block "
+              f"{before['largest_kb']} KB)")
     else:
         print("display gave no /version (an older firmware, or not answering)")
     if expected:
