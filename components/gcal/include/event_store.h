@@ -4,7 +4,9 @@
  * and publishes it in one step (event_store_publish()); the UI reads
  * filtered copies out of the published set. */
 
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <time.h>
 #include "gcal.h"
 
@@ -16,7 +18,7 @@ extern "C" {
  * 2000 (raised from 1000, 2026-10-05) leaves room for the widest fetch
  * window the config page allows (90 days back, 365 ahead) across several
  * busy calendars - ~213 events over the default 14+60 days, scaled to a
- * year, came close to 1000. sizeof(gcal_event_t) is 168 bytes, so each of
+ * year, came close to 1000. sizeof(gcal_event_t) is ~176 bytes, so each of
  * the store's two PSRAM buffers (published + next-sync scratch) is ~336KB,
  * ~672KB together, permanently allocated - out of ~4MB of PSRAM free. */
 #define EVENT_STORE_MAX_EVENTS 2000
@@ -57,6 +59,24 @@ int event_store_copy_upcoming(time_t now, gcal_event_t *out, int max_out);
  * without this, event_store_publish()'s wholesale replace would drop
  * them. */
 int event_store_copy_calendar(uint8_t calendar_index, gcal_event_t *out, int max_out, int *inout_count);
+
+/* ---- Event details: location and description ----
+ * Kept out of gcal_event_t so the two 2000-event buffers don't balloon: one text pool per buffer
+ * (EVENT_STORE_DETAIL_POOL_BYTES, PSRAM, swapped with the events on publish), each event holding
+ * only an offset into it and the generation of the sync that wrote it. */
+#define EVENT_STORE_DETAIL_POOL_BYTES (192 * 1024)
+
+/* During a sync (between event_store_begin_update() and event_store_publish()): appends this
+ * event's location and description (either may be "" or NULL) to the sync's pool and returns the
+ * offset to store in gcal_event_t::detail (and the generation for detail_gen). Returns 0 - "no
+ * details" - when both are empty or the pool is full. */
+uint32_t event_store_detail_add(const char *location, const char *description, uint16_t *gen_out);
+
+/* Copies an event's details out of the PUBLISHED pool. False (outputs set to "") if the event has
+ * none or `gen` isn't the published generation any more - a sync landed since the event was copied
+ * out - so a caller can never be handed text that belongs to another event. */
+bool event_store_detail_get(uint32_t offset, uint16_t gen, char *location, size_t loc_sz,
+                            char *description, size_t desc_sz);
 
 /* Epoch seconds of the last successful refresh, or 0 if none yet. */
 time_t event_store_last_refresh(void);

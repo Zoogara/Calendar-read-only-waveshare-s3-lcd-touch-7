@@ -1,4 +1,5 @@
 #include "event_store.h"
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
@@ -15,6 +16,16 @@
 static gcal_event_t *s_events;
 static gcal_event_t *s_scratch;
 static int s_count;
+
+/* Text pools for event details, swapped together with the event buffers. Offset 0 is never a valid
+ * detail (it means "none"), so each pool starts at length 1. s_gen is the generation of the
+ * published pool, s_scratch_gen the one being filled; gen 0 is skipped (it means "never set"). */
+static char *s_pool;
+static char *s_pool_scratch;
+static size_t s_pool_len = 1;
+static size_t s_pool_scratch_len = 1;
+static uint16_t s_gen = 1;
+static uint16_t s_scratch_gen = 2;
 static time_t s_last_refresh;
 static SemaphoreHandle_t s_lock;
 
@@ -29,6 +40,16 @@ void event_store_init(void)
     }
     if (s_scratch == NULL) {
         s_scratch = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    }
+    if (s_pool == NULL) {
+        s_pool = heap_caps_malloc(EVENT_STORE_DETAIL_POOL_BYTES, MALLOC_CAP_SPIRAM);
+    }
+    if (s_pool_scratch == NULL) {
+        s_pool_scratch = heap_caps_malloc(EVENT_STORE_DETAIL_POOL_BYTES, MALLOC_CAP_SPIRAM);
+    }
+    if (s_pool == NULL || s_pool_scratch == NULL) {
+        /* The calendar still works; events just have no details box text. */
+        ESP_LOGW("event_store", "PSRAM allocation for the event detail pools failed - no details");
     }
     if (s_events == NULL || s_scratch == NULL) {
         /* Not falling back to internal RAM: at ~336KB per buffer it
@@ -52,7 +73,66 @@ static int cmp_event(const void *a, const void *b)
 
 gcal_event_t *event_store_begin_update(void)
 {
+    /* A fresh pool for this sync, one generation on from the published one. */
+    s_pool_scratch_len = 1;
+    s_scratch_gen = (uint16_t)(s_gen + 1);
+    if (s_scratch_gen == 0) {
+        s_scratch_gen = 1;
+    }
     return (s_events != NULL) ? s_scratch : NULL;
+}
+
+uint32_t event_store_detail_add(const char *location, const char *description, uint16_t *gen_out)
+{
+    if (location == NULL) {
+        location = "";
+    }
+    if (description == NULL) {
+        description = "";
+    }
+    if (s_pool_scratch == NULL || (location[0] == '\0' && description[0] == '\0')) {
+        return 0;
+    }
+    size_t ll = strlen(location), dl = strlen(description);
+    if (s_pool_scratch_len + ll + 1 + dl + 1 > EVENT_STORE_DETAIL_POOL_BYTES) {
+        return 0;
+    }
+    uint32_t off = (uint32_t)s_pool_scratch_len;
+    memcpy(s_pool_scratch + off, location, ll + 1);
+    memcpy(s_pool_scratch + off + ll + 1, description, dl + 1);
+    s_pool_scratch_len += ll + 1 + dl + 1;
+    if (gen_out != NULL) {
+        *gen_out = s_scratch_gen;
+    }
+    return off;
+}
+
+bool event_store_detail_get(uint32_t offset, uint16_t gen, char *location, size_t loc_sz,
+                            char *description, size_t desc_sz)
+{
+    if (location != NULL && loc_sz > 0) {
+        location[0] = '\0';
+    }
+    if (description != NULL && desc_sz > 0) {
+        description[0] = '\0';
+    }
+    bool ok = false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (offset != 0 && gen == s_gen && s_pool != NULL && offset < s_pool_len) {
+        const char *loc = s_pool + offset;
+        const char *desc = loc + strlen(loc) + 1;
+        if (desc < s_pool + s_pool_len) {
+            if (location != NULL && loc_sz > 0) {
+                snprintf(location, loc_sz, "%s", loc);
+            }
+            if (description != NULL && desc_sz > 0) {
+                snprintf(description, desc_sz, "%s", desc);
+            }
+            ok = true;
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return ok;
 }
 
 void event_store_publish(int count)
@@ -71,6 +151,11 @@ void event_store_publish(int count)
     s_events = s_scratch;
     s_count = count;
     s_scratch = old;   /* the next sync's scratch */
+    char *old_pool = s_pool;                 /* the text pools swap with them */
+    s_pool = s_pool_scratch;
+    s_pool_len = s_pool_scratch_len;
+    s_pool_scratch = old_pool;
+    s_gen = s_scratch_gen;
     xSemaphoreGive(s_lock);
 }
 
@@ -111,7 +196,17 @@ int event_store_copy_calendar(uint8_t calendar_index, gcal_event_t *out, int max
     xSemaphoreTake(s_lock, portMAX_DELAY);
     for (int i = 0; i < s_count && *inout_count < max_out; i++) {
         if (s_events[i].calendar_index == calendar_index) {
-            out[(*inout_count)++] = s_events[i];
+            gcal_event_t ev = s_events[i];
+            if (ev.detail != 0 && ev.detail_gen == s_gen && ev.detail < s_pool_len && s_pool != NULL) {
+                /* Its text lives in the published pool, which the next publish retires: re-add it to
+                 * the pool this sync is filling (gen and offset change; the strings don't). */
+                const char *loc = s_pool + ev.detail;
+                const char *desc = loc + strlen(loc) + 1;
+                ev.detail = event_store_detail_add(loc, desc, &ev.detail_gen);
+            } else {
+                ev.detail = 0;
+            }
+            out[(*inout_count)++] = ev;
             added++;
         }
     }

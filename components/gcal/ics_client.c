@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "event_store.h"
+#include "event_text.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -128,15 +130,15 @@ static bool params_contain(const char *line, const char *needle)
 }
 
 /* Un-escapes ICS TEXT value escaping (backslash-comma/semicolon/backslash,
- * "\n"/"\N" for newline - turned into a space here since our chip/block
- * labels are single-line). */
-static void ics_unescape_text(const char *in, char *out, size_t out_sz)
+ * "\n"/"\N" for newline - a space for the single-line labels, a real newline when keep_newlines
+ * is set, for a description). */
+static void ics_unescape_text(const char *in, char *out, size_t out_sz, bool keep_newlines)
 {
     size_t o = 0;
     for (const char *p = in; *p && o + 1 < out_sz; p++) {
         if (*p == '\\' && p[1] != '\0') {
             char n = p[1];
-            out[o++] = (n == 'n' || n == 'N') ? ' ' : n;
+            out[o++] = (n == 'n' || n == 'N') ? (keep_newlines ? '\n' : ' ') : n;
             p++;
         } else {
             out[o++] = *p;
@@ -225,6 +227,15 @@ bool ics_client_fetch(esp_http_client_handle_t client, const app_calendar_cfg_t 
 
     normalize_and_unfold(resp.data);
 
+    /* Raw (unescaped, not yet cleaned) location and description of the event being read. In PSRAM:
+     * a description can be long, and this task's other locals are small. Allocation failure just
+     * means no details. */
+    char *ev_loc = heap_caps_malloc(160, MALLOC_CAP_SPIRAM);
+    char *ev_desc = heap_caps_malloc(1536, MALLOC_CAP_SPIRAM);
+    char *clean_loc = heap_caps_malloc(GCAL_MAX_LOCATION, MALLOC_CAP_SPIRAM);
+    char *clean_desc = heap_caps_malloc(GCAL_MAX_DESCRIPTION, MALLOC_CAP_SPIRAM);
+    bool have_text = ev_loc && ev_desc && clean_loc && clean_desc;
+    bool in_alarm = false;      /* inside a VALARM: its DESCRIPTION/SUMMARY aren't the event's */
     bool in_event = false;
     bool ev_rrule = false, ev_cancelled = false, ev_start_set = false, ev_end_set = false, ev_all_day = false;
     char ev_summary[GCAL_MAX_SUMMARY];
@@ -240,6 +251,11 @@ bool ics_client_fetch(esp_http_client_handle_t client, const app_calendar_cfg_t 
 
         if (strncasecmp(line, "BEGIN:VEVENT", 12) == 0) {
             in_event = true;
+            in_alarm = false;
+            if (have_text) {
+                ev_loc[0] = '\0';
+                ev_desc[0] = '\0';
+            }
             ev_rrule = ev_cancelled = ev_start_set = ev_end_set = ev_all_day = false;
             ev_summary[0] = '\0';
         } else if (strncasecmp(line, "END:VEVENT", 10) == 0) {
@@ -258,6 +274,11 @@ bool ics_client_fetch(esp_http_client_handle_t client, const app_calendar_cfg_t 
                         ev.color = cal->color;
                         ev.calendar_index = calendar_index;
                         strncpy(ev.calendar_label, cal->label, sizeof(ev.calendar_label) - 1);
+                        if (have_text) {
+                            gcal_clean_text(ev_loc, clean_loc, GCAL_MAX_LOCATION);
+                            gcal_clean_text(ev_desc, clean_desc, GCAL_MAX_DESCRIPTION);
+                            ev.detail = event_store_detail_add(clean_loc, clean_desc, &ev.detail_gen);
+                        }
                         out[*inout_count] = ev;
                         (*inout_count)++;
                         added++;
@@ -267,10 +288,22 @@ bool ics_client_fetch(esp_http_client_handle_t client, const app_calendar_cfg_t 
                 }
             }
             in_event = false;
-        } else if (in_event) {
+        } else if (in_event && strncasecmp(line, "BEGIN:VALARM", 12) == 0) {
+            in_alarm = true;
+        } else if (in_event && strncasecmp(line, "END:VALARM", 10) == 0) {
+            in_alarm = false;
+        } else if (in_event && !in_alarm) {
             const char *val;
             if (prop_match(line, "SUMMARY", &val)) {
-                ics_unescape_text(val, ev_summary, sizeof(ev_summary));
+                ics_unescape_text(val, ev_summary, sizeof(ev_summary), false);
+            } else if (prop_match(line, "LOCATION", &val)) {
+                if (have_text) {
+                    ics_unescape_text(val, ev_loc, 160, false);
+                }
+            } else if (prop_match(line, "DESCRIPTION", &val)) {
+                if (have_text) {
+                    ics_unescape_text(val, ev_desc, 1536, true);
+                }
             } else if (prop_match(line, "STATUS", &val)) {
                 if (strncasecmp(val, "CANCELLED", 9) == 0) {
                     ev_cancelled = true;
@@ -293,6 +326,10 @@ bool ics_client_fetch(esp_http_client_handle_t client, const app_calendar_cfg_t 
     }
 
     free(resp.data);
+    free(ev_loc);
+    free(ev_desc);
+    free(clean_loc);
+    free(clean_desc);
 
     if (skipped_recurring > 0) {
         ESP_LOGI(TAG, "[%s] skipped %d recurring event(s) - not expanded yet", cal->label, skipped_recurring);

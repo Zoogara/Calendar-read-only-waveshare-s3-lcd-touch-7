@@ -1,5 +1,7 @@
 #include "gcal_client.h"
 #include "url_encode.h"
+#include "event_text.h"
+#include "event_store.h"
 #include "gcal.h"
 #include "jwt_auth.h"
 #include "event_store.h"
@@ -57,7 +59,12 @@ static esp_err_t http_perform_with_retry(esp_http_client_handle_t client)
  * (a loop), not on a genuinely busy calendar. */
 #define MAX_PAGES_PER_CALENDAR 20
 
-#define EVENT_FIELDS "nextPageToken,items(status,summary,start,end,colorId,attendees(email,responseStatus))"
+/* The full set carries the location and description for the details box; the lite one (location
+ * only) is the fallback for a page that came back too large - see MAX_PAGE_BYTES. */
+#define EVENT_FIELDS_FULL \
+    "nextPageToken,items(status,summary,location,description,start,end,colorId,attendees(email,responseStatus))"
+#define EVENT_FIELDS_LITE \
+    "nextPageToken,items(status,summary,location,start,end,colorId,attendees(email,responseStatus))"
 
 /* ESP-IDF's newlib doesn't provide timegm(), so convert UTC-wallclock
  * struct tm fields to a Unix timestamp ourselves. days_from_civil is
@@ -143,9 +150,22 @@ struct http_resp_buf {
     size_t cap;
 };
 
+/* A Google page is capped so that one calendar with enormous descriptions (an imported mail
+ * thread, say) can't swallow the PSRAM: past this the transfer is aborted and the page is fetched
+ * again without the descriptions - see fetch_one_calendar(). Set only around a Google page's request
+ * (0 = no cap: ics_client.c shares this handler and its feeds are legitimately large). A global, not a
+ * field of http_resp_buf, because ics_client.c's buffer struct is a smaller look-alike of that one. */
+#define MAX_PAGE_BYTES (768 * 1024)
+static size_t s_page_cap;
+static bool s_page_overflow;
+
 static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 {
     struct http_resp_buf *buf = (struct http_resp_buf *)evt->user_data;
+    if (evt->event_id == HTTP_EVENT_ON_DATA && s_page_cap != 0 && buf->len + evt->data_len > s_page_cap) {
+        s_page_overflow = true;
+        return ESP_FAIL;
+    }
     /* evt->data is already de-chunked payload during ON_DATA regardless of
      * transfer encoding when using esp_http_client_perform() - see the
      * matching comment in jwt_auth.c's http_event_handler for why
@@ -251,6 +271,22 @@ static bool event_declined_by_owner(cJSON *item, const char *owner_email)
  * silently truncated any calendar busy enough to exceed that in the
  * fetch window, which for a shared/family calendar over ~74 days is a
  * real risk, not just theoretical. */
+/* The events.list URL for one calendar over the window, asking for the full or the lite field set. */
+static bool build_base_url(char *out, size_t sz, const char *cal_id_enc, const char *tmin_enc,
+                           const char *tmax_enc, bool with_desc)
+{
+    char fields_enc[320];
+    if (!gcal_url_encode(with_desc ? EVENT_FIELDS_FULL : EVENT_FIELDS_LITE, fields_enc, sizeof(fields_enc))) {
+        return false;
+    }
+    int n = snprintf(out, sz,
+                     "https://www.googleapis.com/calendar/v3/calendars/%s/events"
+                     "?timeMin=%s&timeMax=%s&singleEvents=true&orderBy=startTime&maxResults=250"
+                     "&fields=%s",
+                     cal_id_enc, tmin_enc, tmax_enc, fields_enc);
+    return n > 0 && (size_t)n < sz;
+}
+
 static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calendar_cfg_t *cal,
                                 uint8_t calendar_index, time_t time_min, time_t time_max,
                                 gcal_event_t *out, int *inout_count, int max_out)
@@ -258,9 +294,7 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
     ESP_LOGI(TAG, "[%s] fetching calendar id \"%s\"", cal->label, cal->id);
 
     char cal_id_enc[192];
-    char fields_enc[160];
-    if (!gcal_url_encode(cal->id, cal_id_enc, sizeof(cal_id_enc)) ||
-        !gcal_url_encode(EVENT_FIELDS, fields_enc, sizeof(fields_enc))) {
+    if (!gcal_url_encode(cal->id, cal_id_enc, sizeof(cal_id_enc))) {
         ESP_LOGE(TAG, "[%s] calendar ID too long to request", cal->label);
         return false;
     }
@@ -276,13 +310,10 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
     gcal_url_encode(tmin_s, tmin_enc, sizeof(tmin_enc));
     gcal_url_encode(tmax_s, tmax_enc, sizeof(tmax_enc));
 
-    char base_url[640];
-    int n = snprintf(base_url, sizeof(base_url),
-                     "https://www.googleapis.com/calendar/v3/calendars/%s/events"
-                     "?timeMin=%s&timeMax=%s&singleEvents=true&orderBy=startTime&maxResults=250"
-                     "&fields=%s",
-                     cal_id_enc, tmin_enc, tmax_enc, fields_enc);
-    if (n < 0 || n >= (int)sizeof(base_url)) {
+    /* With descriptions first; dropped for the rest of this calendar if a page proves too large. */
+    bool with_desc = true;
+    char base_url[768];
+    if (!build_base_url(base_url, sizeof(base_url), cal_id_enc, tmin_enc, tmax_enc, with_desc)) {
         ESP_LOGE(TAG, "[%s] request URL too long", cal->label);
         return false;
     }
@@ -300,7 +331,7 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
                      cal->label, MAX_PAGES_PER_CALENDAR);
             break;   /* incomplete - rolled back below */
         }
-        char url[1200]; /* base_url (up to 640) + "&pageToken=" + token_enc (up to 512) */
+        char url[1344]; /* base_url (up to 768) + "&pageToken=" + token_enc (up to 512) */
         if (page_token[0] != '\0') {
             char token_enc[512];
             if (!gcal_url_encode(page_token, token_enc, sizeof(token_enc))) {
@@ -329,9 +360,24 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
         esp_http_client_set_url(client, url);
         esp_http_client_set_user_data(client, &resp);
 
+        s_page_cap = MAX_PAGE_BYTES;
+        s_page_overflow = false;
         esp_err_t err = http_perform_with_retry(client);
+        s_page_cap = 0;
         int status = esp_http_client_get_status_code(client);
 
+        if (err != ESP_OK && s_page_overflow && with_desc) {
+            /* This page is enormous - almost certainly long descriptions. Ask again without them
+             * (the locations still come), for the rest of this calendar too. */
+            ESP_LOGW(TAG, "[%s] page over %d KB with descriptions - fetching without them", cal->label,
+                     MAX_PAGE_BYTES / 1024);
+            free(resp.data);
+            with_desc = false;
+            if (!build_base_url(base_url, sizeof(base_url), cal_id_enc, tmin_enc, tmax_enc, with_desc)) {
+                break;
+            }
+            continue;
+        }
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "[%s] request failed: %s", cal->label, esp_err_to_name(err));
             free(resp.data);
@@ -418,6 +464,15 @@ static bool fetch_one_calendar(esp_http_client_handle_t client, const app_calend
                 ev.color = override_color != 0 ? override_color : cal->color;
                 ev.calendar_index = calendar_index;
                 strncpy(ev.calendar_label, cal->label, sizeof(ev.calendar_label) - 1);
+
+                /* Location and description for the details box: cleaned to plain text and parked in
+                 * the event store's text pool; the event keeps only the offset. */
+                cJSON *loc_j = cJSON_GetObjectItemCaseSensitive(item, "location");
+                cJSON *desc_j = cJSON_GetObjectItemCaseSensitive(item, "description");
+                char loc_txt[GCAL_MAX_LOCATION], desc_txt[GCAL_MAX_DESCRIPTION];
+                gcal_clean_text(cJSON_IsString(loc_j) ? loc_j->valuestring : NULL, loc_txt, sizeof(loc_txt));
+                gcal_clean_text(cJSON_IsString(desc_j) ? desc_j->valuestring : NULL, desc_txt, sizeof(desc_txt));
+                ev.detail = event_store_detail_add(loc_txt, desc_txt, &ev.detail_gen);
 
                 out[*inout_count] = ev;
                 (*inout_count)++;
