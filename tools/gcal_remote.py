@@ -14,6 +14,9 @@
       build with tools/dev_build.sh (-> build-dev/), and send the display a dev
       build every time - a default build is https-only and would end this.
 
+      If the display's largest free internal block is under 16 KB it is restarted first (POST /restart,
+      development builds only; --no-restart / --min-largest-kb change that): updates sent to a display with
+      fragmented memory have crashed in the image check, ones sent to a freshly restarted display have not.
       Before sending it reads GET /version (which image the display runs), and afterwards waits
       for the display to come back and checks it is running the build it was sent - a new image
       that dies early is rolled back by the bootloader with no other sign. Exit status 2 if the
@@ -88,6 +91,53 @@ def build_version(build):
         return None
 
 
+def restart_device(device, auth, timeout=10):
+    """POST /restart (only a development build has it). Returns "ok", "unsupported" (404: a default build or an
+    older firmware), or "error: ..." (a wrong password, a lockout, a connection problem)."""
+    req = urllib.request.Request(f"http://{device}/restart", method="POST", data=b"")
+    req.add_header("Authorization", auth)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout):
+            return "ok"
+    except urllib.error.HTTPError as e:
+        return "unsupported" if e.code == 404 else f"error: HTTP {e.code}"
+    except (urllib.error.URLError, OSError) as e:
+        return f"error: {e}"
+
+
+def ensure_fresh_heap(device, auth, before, min_largest_kb, settle_s=30, timeout=150, log=print,
+                      sleep=time.sleep, clock=time.monotonic):
+    """Every update that has succeeded came from a freshly restarted display, and the ones that crashed
+    (in the image check, at the end of the download) had a largest free internal block of 5-7 KB. So if the
+    display reports a largest block under `min_largest_kb`, restart it first, wait for it to come back and
+    its start-up fetches to finish (`settle_s` of uptime), and return its fresh /version. Returns `before`
+    unchanged when memory is fine, when the display can't say (an older firmware), or when it can't be
+    restarted (no /restart) - the update is then simply attempted as before."""
+    if not before or before.get("largest_kb", 0) <= 0 or before["largest_kb"] >= min_largest_kb:
+        return before
+    log(f"largest free block is only {before['largest_kb']} KB (under {min_largest_kb} KB) - "
+        "restarting the display first")
+    result = restart_device(device, auth)
+    if result == "unsupported":
+        log("  this firmware has no /restart (a default build, or an older one) - sending anyway")
+        return before
+    if result != "ok":
+        log(f"  could not restart it ({result}) - sending anyway")
+        return before
+    t0 = clock()
+    latest = None
+    while clock() - t0 < timeout:
+        sleep(3)
+        v = device_version(device, auth, timeout=4)
+        # restarted since the request (not the old image still answering) and past its start-up fetches
+        if v and v["uptime_s"] <= (clock() - t0) + 10 and v["uptime_s"] >= settle_s:
+            log(f"  back up: internal RAM {v['free_kb']} KB free, largest block {v['largest_kb']} KB")
+            return v
+        latest = v or latest
+    log("  the display did not settle in time - sending anyway")
+    return latest or before
+
+
 def cmd_ota(a):
     build = os.path.abspath(a.build)
     if not os.path.isfile(build):
@@ -139,6 +189,8 @@ def cmd_ota(a):
               f"{before['largest_kb']} KB)")
     else:
         print("display gave no /version (an older firmware, or not answering)")
+    if not a.no_restart:
+        before = ensure_fresh_heap(a.device, auth, before, a.min_largest_kb)
     if expected:
         print(f"sending {expected}")
     # The display needs a free 8KB chunk of internal RAM to start the update
@@ -198,19 +250,27 @@ def cmd_ota(a):
     sys.exit(2)
 
 
-p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-sub = p.add_subparsers(dest="cmd", required=True)
-l = sub.add_parser("logs")
-l.add_argument("--port", type=int, default=9999)
-l.add_argument("--file")
-l.add_argument("--from", dest="sender", help="only accept packets from this IP (default: first sender that sends log lines)")
-l.set_defaults(fn=cmd_logs)
-o = sub.add_parser("ota")
-o.add_argument("--device", required=True, help="the display's IP or hostname")
-o.add_argument("--build", default="build-dev/gcal_display.bin", help="a development build (tools/dev_build.sh)")
-o.add_argument("--serve-port", type=int, default=8070)
-o.add_argument("--wait", type=int, default=300, help="max seconds to keep serving")
-o.add_argument("--verify-wait", type=int, default=150, help="max seconds to wait for the display to come back on the new image")
-o.set_defaults(fn=cmd_ota)
-a = p.parse_args()
-a.fn(a)
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    l = sub.add_parser("logs")
+    l.add_argument("--port", type=int, default=9999)
+    l.add_argument("--file")
+    l.add_argument("--from", dest="sender", help="only accept packets from this IP (default: first sender that sends log lines)")
+    l.set_defaults(fn=cmd_logs)
+    o = sub.add_parser("ota")
+    o.add_argument("--device", required=True, help="the display's IP or hostname")
+    o.add_argument("--build", default="build-dev/gcal_display.bin", help="a development build (tools/dev_build.sh)")
+    o.add_argument("--serve-port", type=int, default=8070)
+    o.add_argument("--wait", type=int, default=300, help="max seconds to keep serving")
+    o.add_argument("--verify-wait", type=int, default=150, help="max seconds to wait for the display to come back on the new image")
+    o.add_argument("--min-largest-kb", type=int, default=16,
+                   help="restart the display first if its largest free internal block is smaller than this (default 16)")
+    o.add_argument("--no-restart", action="store_true", help="never restart the display before sending")
+    o.set_defaults(fn=cmd_ota)
+    a = p.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()
