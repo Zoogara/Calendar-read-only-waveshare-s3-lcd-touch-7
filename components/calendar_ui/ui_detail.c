@@ -104,7 +104,13 @@ void ui_detail_init(void)
     lv_obj_set_style_bg_color(s_card, ui_color(UI_COLOR_SURFACE), 0);
     lv_obj_set_style_bg_opa(s_card, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(s_card, 10, 0);
-    /* A thick stripe down the left in the event's calendar colour; no shadow (it allocates and redraws a lot). */
+    /* A thin grey outline: the card is white on a mostly white calendar, so without it only the stripe and the
+     * grid lines stopping would show where it ends. (An outline is just style properties on this one object;
+     * a shadow would allocate and redraw a lot, so there isn't one.) */
+    lv_obj_set_style_outline_width(s_card, 1, 0);
+    lv_obj_set_style_outline_color(s_card, lv_color_hex(0xB4B8BD), 0);
+    lv_obj_set_style_outline_opa(s_card, LV_OPA_COVER, 0);
+    /* A thick stripe down the left in the event's calendar colour. */
     lv_obj_set_style_border_side(s_card, LV_BORDER_SIDE_LEFT, 0);
     lv_obj_set_style_border_width(s_card, 8, 0);
     lv_obj_set_style_pad_left(s_card, PAD_LEFT - 8, 0);
