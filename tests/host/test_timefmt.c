@@ -1,5 +1,7 @@
 /* time_fmt.c: 12-hour (AM/PM) and 24-hour time text. */
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "test.h"
 #include "time_fmt.h"
@@ -101,6 +103,36 @@ static void out_of_range_hours_wrap(void)
     tfmt_hm(false, -1, 0, out, sizeof(out));  CHECK_STR(out, "11:00 PM");
 }
 
+static time_t utc(int y, int mo, int d, int h, int mi)
+{
+    struct tm t = {.tm_year = y - 1900, .tm_mon = mo - 1, .tm_mday = d, .tm_hour = h, .tm_min = mi};
+    return timegm(&t);
+}
+
+static void event_when(void)
+{
+    char big[96];                       /* the size the details card uses */
+    setenv("TZ", "UTC0", 1);
+    tzset();
+    tfmt_event_when(false, utc(2026, 10, 14, 14, 30), utc(2026, 10, 14, 15, 15), false, big, sizeof(big));
+    CHECK_STR(big, "Wed 14 Oct, 2:30 PM - 3:15 PM");
+    tfmt_event_when(true, utc(2026, 10, 14, 14, 30), utc(2026, 10, 14, 15, 15), false, big, sizeof(big));
+    CHECK_STR(big, "Wed 14 Oct, 14:30 - 15:15");
+    tfmt_event_when(false, utc(2026, 10, 14, 23, 0), utc(2026, 10, 15, 1, 0), false, big, sizeof(big));
+    CHECK_STR(big, "Wed 14 Oct 11:00 PM - Thu 15 Oct 1:00 AM");                    /* across midnight */
+    tfmt_event_when(false, utc(2026, 10, 4, 9, 0), utc(2026, 10, 4, 9, 0), false, big, sizeof(big));
+    CHECK_STR(big, "Sun 4 Oct, 9:00 AM");                                           /* no end: just the start; day unpadded */
+    tfmt_event_when(false, utc(2026, 10, 15, 0, 0), utc(2026, 10, 16, 0, 0), true, big, sizeof(big));
+    CHECK_STR(big, "All day, Thu 15 Oct");                                          /* end is exclusive */
+    tfmt_event_when(false, utc(2026, 10, 15, 0, 0), utc(2026, 10, 18, 0, 0), true, big, sizeof(big));
+    CHECK_STR(big, "All day, Thu 15 Oct - Sat 17 Oct");
+    tfmt_event_when(false, utc(2026, 12, 31, 0, 0), utc(2027, 1, 2, 0, 0), true, big, sizeof(big));
+    CHECK_STR(big, "All day, Thu 31 Dec - Fri 1 Jan");                              /* across a year end */
+    char small[12];
+    tfmt_event_when(false, utc(2026, 10, 14, 14, 30), utc(2026, 10, 14, 15, 15), false, small, sizeof(small));
+    CHECK_INT(strlen(small), 11);                                                   /* cut, but terminated */
+}
+
 static void durations(void)
 {
     tfmt_duration(0, out, sizeof(out));         CHECK_STR(out, "0 s");
@@ -119,6 +151,7 @@ static void durations(void)
 void test_timefmt(void)
 {
     RUN(durations);
+    RUN(event_when);
     RUN(hm_24h);
     RUN(hm_12h);
     RUN(hour_labels);
