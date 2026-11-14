@@ -145,6 +145,14 @@ void event_store_publish(int count)
     }
     /* Sort before taking the lock - only the syncing task touches s_scratch. */
     qsort(s_scratch, count, sizeof(gcal_event_t), cmp_event);
+    int with_details = 0;
+    for (int i = 0; i < count; i++) {
+        if (s_scratch[i].detail != 0) {
+            with_details++;
+        }
+    }
+    ESP_LOGI("event_store", "publishing %d events, %d with details (text pool %u of %u bytes used)", count,
+             with_details, (unsigned)s_pool_scratch_len, (unsigned)EVENT_STORE_DETAIL_POOL_BYTES);
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     gcal_event_t *old = s_events;
