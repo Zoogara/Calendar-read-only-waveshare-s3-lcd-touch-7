@@ -10,6 +10,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +36,11 @@ void tfmt_clock_hour(bool h24, int hour, char *out, size_t sz);
 /* A length of time, for uptime: "42 s", "5 min", "3 h 05 min", "2 d 4 h 12 min" (once there is a
  * day, hours and minutes always follow it). */
 void tfmt_duration(unsigned long secs, char *out, size_t sz);
+
+/* When an event is, for its details box, in local time: "Wed 14 Oct, 2:30 PM - 3:15 PM", or across midnight
+ * "Wed 14 Oct 11:00 PM - Thu 15 Oct 1:00 AM", or all-day "All day, Wed 14 Oct" / "All day, Wed 14 Oct - Fri 16 Oct"
+ * (an all-day event's end is the day after its last day). Uses the C library's local time zone. */
+void tfmt_event_when(bool h24, time_t start, time_t end, bool all_day, char *out, size_t sz);
 
 #ifdef __cplusplus
 }

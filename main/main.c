@@ -341,6 +341,7 @@ static void net_task(void *arg)
          * fetches only every 15 minutes, and like everything after the
          * calendar sync it never counts towards failed_cycles or changes
          * wait_ms. A no-op until a location is set. */
+        wait_for_panels("the weather");
         weather_refresh(&s_cfg);
         weather_series_refresh(&s_cfg);
         /* "On this day" history for the clock's date (components/onthisday,

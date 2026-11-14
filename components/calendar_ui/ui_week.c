@@ -94,6 +94,11 @@ static void ensure_shared_styles(void)
 
 static void day_header_click_cb(lv_event_t *e)
 {
+    /* An all-day chip in the header bubbles its tap up to here: that opens the event's details; a tap
+     * anywhere else on the header still opens the day. */
+    if (ui_detail_try_show(lv_event_get_target(e))) {
+        return;
+    }
     int d = (int)(uintptr_t)lv_event_get_user_data(e);
     ui_switch_to_day(ui_add_days(s_week_start, d));
 }
@@ -156,6 +161,7 @@ lv_obj_t *ui_week_create(lv_obj_t *parent)
          * day_header_click_cb (same gotcha noted in ui_month.c's
          * events_box). */
         lv_obj_clear_flag(allday, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(allday, LV_OBJ_FLAG_EVENT_BUBBLE);      /* a tagged chip's tap passes up to the header cell */
         lv_obj_set_flex_flow(allday, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_row(allday, 1, 0);
         s_day_allday_box[d] = allday;
@@ -201,6 +207,7 @@ lv_obj_t *ui_week_create(lv_obj_t *parent)
     for (int d = 0; d < WEEK_DAYS; d++) {
         lv_obj_t *col = lv_obj_create(body);
         lv_obj_remove_style_all(col);
+        lv_obj_add_event_cb(col, ui_detail_click_cb, LV_EVENT_CLICKED, NULL);   /* a tagged block was tapped */
         lv_obj_set_pos(col, TIME_COL_W + d * colw2, 0);
         lv_obj_set_size(col, colw2, body_content_h);
         lv_obj_set_style_border_side(col, LV_BORDER_SIDE_LEFT, 0);
@@ -342,6 +349,7 @@ static void add_block(lv_obj_t *parent, int colw, const gcal_event_t *ev, time_t
     lv_obj_set_pos(lbl, 3, 1);
     lv_obj_add_style(lbl, is_past ? &s_lbl_past_style : &s_lbl_style, 0);
     lv_label_set_text(lbl, ev->summary);
+    ui_detail_tag(blk, ev);
 }
 
 void ui_week_release(void)
@@ -386,6 +394,7 @@ static void align_grid(bool this_week)
 
 void ui_week_populate(lv_obj_t *root, time_t cursor)
 {
+    ui_detail_reset();      /* the blocks are about to be rebuilt: close the card, forget the tags */
     (void)root;
     s_week_start = ui_start_of_week(cursor);
     time_t now;
@@ -460,6 +469,9 @@ void ui_week_populate(lv_obj_t *root, time_t cursor)
                 lv_obj_set_style_bg_color(chip, ui_color(is_past ? ui_lighten(events[e].color) : events[e].color), 0);
                 lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
                 lv_obj_clear_flag(chip, LV_OBJ_FLAG_CLICKABLE); /* let the tap reach day_header_click_cb */
+                if (!more_chip) {
+                    ui_detail_tag(chip, &events[e]);            /* ...which opens the details (ui_detail.c) */
+                }
                 lv_obj_t *lbl = lv_label_create(chip);
                 lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
                 lv_obj_set_width(lbl, LV_PCT(100));
