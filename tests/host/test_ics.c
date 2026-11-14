@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "event_store.h"
 #include "fake_http.h"
 #include "ics_client.h"
 #include "test.h"
@@ -217,6 +218,111 @@ static void very_long_summary_is_cut(void)
     CHECK_INT(strlen(ev[0].summary), GCAL_MAX_SUMMARY - 1);
 }
 
+void fake_store_reset(void);
+
+static char loc_out[GCAL_MAX_LOCATION], desc_out[GCAL_MAX_DESCRIPTION];
+
+static bool details_of(int i)
+{
+    return event_store_detail_get(ev[i].detail, ev[i].detail_gen, loc_out, sizeof(loc_out), desc_out,
+                                  sizeof(desc_out));
+}
+
+static void location_and_description(void)
+{
+    fake_store_reset();
+    CHECK(fetch(WRAP(EVENT("SUMMARY:Picnic\r\nLOCATION:Town Hall\\, 1 Main St\r\n"
+                           "DESCRIPTION:Bring a plate.\\nSee you there\\; rain or shine.\r\n"
+                           "DTSTART:20261014T010000Z\r\nDTEND:20261014T020000Z\r\n"))));
+    CHECK_INT(count, 1);
+    CHECK(details_of(0));
+    CHECK_STR(loc_out, "Town Hall, 1 Main St");
+    CHECK_STR(desc_out, "Bring a plate.\nSee you there; rain or shine.");     /* \n kept as a line break */
+}
+
+static void html_in_a_description_is_stripped(void)
+{
+    fake_store_reset();
+    CHECK(fetch(WRAP(EVENT("SUMMARY:Call\r\nDESCRIPTION:<p>Agenda</p><p>Item &amp; notes</p>\r\n"
+                           "DTSTART:20261014T010000Z\r\nDTEND:20261014T020000Z\r\n"))));
+    CHECK(details_of(0));
+    CHECK_STR(desc_out, "Agenda\nItem & notes");
+}
+
+static void a_long_folded_description_is_joined_and_cut(void)
+{
+    fake_store_reset();
+    char ics[4096];
+    int n = snprintf(ics, sizeof(ics), "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Long\r\nDESCRIPTION:start");
+    for (int i = 0; i < 30; i++) {                          /* 30 folded lines of 70 characters */
+        n += snprintf(ics + n, sizeof(ics) - (size_t)n, "\r\n %s", "0123456789012345678901234567890123456789012345678901234567890123456789");
+    }
+    snprintf(ics + n, sizeof(ics) - (size_t)n,
+             "\r\nDTSTART:20261014T010000Z\r\nDTEND:20261014T020000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+    CHECK(fetch(ics));
+    CHECK_INT(count, 1);
+    CHECK(details_of(0));
+    CHECK(strncmp(desc_out, "start0123456789", 15) == 0);       /* the folds were joined */
+    CHECK(strlen(desc_out) < GCAL_MAX_DESCRIPTION);
+    CHECK(memcmp(desc_out + strlen(desc_out) - 3, "\xE2\x80\xA6", 3) == 0);   /* cut with an ellipsis */
+}
+
+static void no_details_means_no_offset(void)
+{
+    fake_store_reset();
+    CHECK(fetch(WRAP(EVENT("SUMMARY:Plain\r\nDTSTART:20261014T010000Z\r\nDTEND:20261014T020000Z\r\n"))));
+    CHECK_INT(count, 1);
+    CHECK_INT(ev[0].detail, 0);
+    CHECK(!details_of(0));
+    CHECK_STR(loc_out, "");
+}
+
+static void only_a_location(void)
+{
+    fake_store_reset();
+    CHECK(fetch(WRAP(EVENT("SUMMARY:Where\r\nLOCATION:Room 4\r\nDTSTART:20261014T010000Z\r\n"
+                           "DTEND:20261014T020000Z\r\n"))));
+    CHECK(details_of(0));
+    CHECK_STR(loc_out, "Room 4");
+    CHECK_STR(desc_out, "");
+}
+
+static void each_event_keeps_its_own_details(void)
+{
+    fake_store_reset();
+    CHECK(fetch(WRAP(
+        EVENT("SUMMARY:One\r\nLOCATION:Alpha\r\nDESCRIPTION:first\r\nDTSTART:20261014T010000Z\r\nDTEND:20261014T020000Z\r\n")
+        EVENT("SUMMARY:Two\r\nDTSTART:20261014T030000Z\r\nDTEND:20261014T040000Z\r\n")
+        EVENT("SUMMARY:Three\r\nLOCATION:Gamma\r\nDESCRIPTION:third\r\nDTSTART:20261014T050000Z\r\nDTEND:20261014T060000Z\r\n"))));
+    CHECK_INT(count, 3);
+    CHECK(details_of(0));  CHECK_STR(loc_out, "Alpha");  CHECK_STR(desc_out, "first");
+    CHECK(!details_of(1));                                                      /* nothing leaked from the first */
+    CHECK(details_of(2));  CHECK_STR(loc_out, "Gamma");  CHECK_STR(desc_out, "third");
+}
+
+static void a_reminder_block_does_not_overwrite_the_event(void)
+{
+    fake_store_reset();
+    CHECK(fetch(WRAP(EVENT("SUMMARY:Real title\r\nDESCRIPTION:Real description\r\n"
+                           "DTSTART:20261014T010000Z\r\nDTEND:20261014T020000Z\r\n"
+                           "BEGIN:VALARM\r\nACTION:EMAIL\r\nSUMMARY:Alarm subject\r\n"
+                           "DESCRIPTION:Alarm body\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\n"))));
+    CHECK_INT(count, 1);
+    CHECK_STR(ev[0].summary, "Real title");
+    CHECK(details_of(0));
+    CHECK_STR(desc_out, "Real description");
+}
+
+static void a_description_before_the_reminder_block_survives_it(void)
+{
+    fake_store_reset();
+    CHECK(fetch(WRAP(EVENT("BEGIN:VALARM\r\nDESCRIPTION:Alarm body\r\nEND:VALARM\r\n"
+                           "SUMMARY:Title\r\nDESCRIPTION:Event body\r\n"
+                           "DTSTART:20261014T010000Z\r\nDTEND:20261014T020000Z\r\n"))));
+    CHECK(details_of(0));
+    CHECK_STR(desc_out, "Event body");
+}
+
 void test_ics(void)
 {
     setenv("TZ", "AEST-10AEDT,M10.1.0,M4.1.0/3", 1);
@@ -244,4 +350,12 @@ void test_ics(void)
     RUN(output_cap_and_existing_events);
     RUN(failures_leave_events_alone);
     RUN(very_long_summary_is_cut);
+    RUN(location_and_description);
+    RUN(html_in_a_description_is_stripped);
+    RUN(a_long_folded_description_is_joined_and_cut);
+    RUN(no_details_means_no_offset);
+    RUN(only_a_location);
+    RUN(each_event_keeps_its_own_details);
+    RUN(a_reminder_block_does_not_overwrite_the_event);
+    RUN(a_description_before_the_reminder_block_survives_it);
 }
