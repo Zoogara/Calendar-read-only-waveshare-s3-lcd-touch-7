@@ -5,6 +5,7 @@
 #include "url_decode.h"
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
+#include "esp_heap_caps.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -728,7 +729,7 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 }
 
 /* GET /version: which image is running, as plain text - "version v1.0-141-ga4ef516", "slot ota_1",
- * "uptime_s 37", "reset <why the chip last restarted>". Same password as everything else here.
+ * "uptime_s 37", "reset <why the chip last restarted>", "internal_free" and "internal_largest" (bytes of internal RAM). Same password as everything else here.
  * tools/gcal_remote.py ota reads it before and after an update to tell whether the display really
  * came back on the new image (a new image that dies early is rolled back by the bootloader without
  * any other sign - the reset line says why it restarted). */
@@ -738,9 +739,11 @@ static esp_err_t version_get_handler(httpd_req_t *req)
         return ESP_OK;
     }
     const esp_partition_t *rp = esp_ota_get_running_partition();
-    char body[200];
-    snprintf(body, sizeof(body), "version %s\nslot %s\nuptime_s %lld\nreset %s\n", esp_app_get_description()->version,
-             rp ? rp->label : "?", (long long)(esp_timer_get_time() / 1000000), ota_update_reset_reason());
+    char body[280];
+    snprintf(body, sizeof(body), "version %s\nslot %s\nuptime_s %lld\nreset %s\ninternal_free %u\ninternal_largest %u\n",
+             esp_app_get_description()->version, rp ? rp->label : "?", (long long)(esp_timer_get_time() / 1000000),
+             ota_update_reset_reason(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_sendstr(req, body);
     return ESP_OK;

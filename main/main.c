@@ -546,6 +546,7 @@ void app_main(void)
 
     event_store_init();
     calendar_ui_init(&s_cfg);
+    ota_update_set_prepare_hook(calendar_ui_free_memory_for_update);
 
     /* 8192 was already tight for TLS (mbedtls handshake state is large) +
      * JSON parsing + JWT signing on the stack; it overflowed once the
