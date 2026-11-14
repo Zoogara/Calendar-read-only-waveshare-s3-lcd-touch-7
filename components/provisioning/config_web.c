@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "esp_timer.h"
+#include "esp_system.h"
 #include "mbedtls/base64.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -826,6 +827,41 @@ static esp_err_t version_get_handler(httpd_req_t *req)
  * tools/gcal_remote.py. Same Basic-auth password as the settings page; with
  * no url it uses the configured Firmware update URL. Returns straight away:
  * the download and restart happen on their own task. */
+/* POST /restart: restarts the display about a second after answering. Registered ONLY in a development
+ * build (see config_web_start()): tools/gcal_remote.py ota uses it to start an update from a freshly
+ * restarted display when memory is fragmented - every update that has succeeded came from a fresh heap, and
+ * the ones that crashed had a largest free block of 5-7KB. Same password, lockout and same-origin check as
+ * /ota; a default build has no such route at all. */
+static void restart_timer_cb(void *arg)
+{
+    (void)arg;
+    esp_restart();
+}
+
+static esp_err_t restart_post_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    if (!check_same_origin(req)) {
+        return ESP_OK;
+    }
+    static esp_timer_handle_t s_timer;
+    if (s_timer == NULL) {
+        const esp_timer_create_args_t args = {.callback = restart_timer_cb, .name = "web_restart"};
+        if (esp_timer_create(&args, &s_timer) != ESP_OK) {
+            httpd_resp_set_status(req, "500 Internal Server Error");
+            httpd_resp_sendstr(req, "could not schedule the restart\n");
+            return ESP_OK;
+        }
+    }
+    ESP_LOGI(TAG, "restart requested via the config web page");
+    esp_timer_start_once(s_timer, 1000 * 1000);
+    httpd_resp_set_status(req, "202 Accepted");
+    httpd_resp_sendstr(req, "restarting\n");
+    return ESP_OK;
+}
+
 static esp_err_t ota_post_handler(httpd_req_t *req)
 {
     if (!check_auth(req)) {
@@ -908,6 +944,10 @@ void config_web_start(app_settings_t *cfg)
     httpd_register_uri_handler(s_server, &ota_uri);
     httpd_uri_t version_uri = {.uri = "/version", .method = HTTP_GET, .handler = version_get_handler};
     httpd_register_uri_handler(s_server, &version_uri);
+    if (ota_update_http_allowed_in_build()) {         /* a development build only */
+        httpd_uri_t restart_uri = {.uri = "/restart", .method = HTTP_POST, .handler = restart_post_handler};
+        httpd_register_uri_handler(s_server, &restart_uri);
+    }
 
     ESP_LOGI(TAG, "config web server up");
 }
