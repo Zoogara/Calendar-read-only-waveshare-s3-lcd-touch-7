@@ -120,6 +120,25 @@ Then the buttons:
 - **Brightness** follows the room light automatically (with the optional
   light sensor fitted), fading smoothly rather than jumping.
 
+## Event details
+
+In **Week**, **Day** and **Up next**, touch an event to open a card with its details: the title, when it
+is (date and times, or "All day"), which calendar it's from, and its **location** and **description**
+if it has them. The card's left edge is in the calendar's colour. Touch the card (or its ✕) to close it;
+it also closes after a minute untouched, or when you change view or page. Touching another event while
+it's open just swaps to that one.
+
+- **Month view is unchanged:** touching a day there opens that day.
+- **All-day events** in Week and Day work the same way (in Week, touching the date itself still opens
+  the day).
+- **Descriptions are plain text.** Calendar descriptions often contain HTML; links, bold and so on are
+  dropped, line breaks kept. They are cut at about 400 characters (and the card shows at most 7 lines of
+  it), locations at about 95.
+- **While the card is open the display holds off syncing** - the calendar, weather and news refresh
+  once it closes (or after 2.5 minutes at most) - so nothing changes under it and memory isn't contended.
+- If the display is very short of memory when you touch an event, it skips opening the card rather than
+  risk a restart; touch again a moment later (this is logged).
+
 ## Reminders
 
 15 minutes before a timed event (not all-day events), a card pops up with

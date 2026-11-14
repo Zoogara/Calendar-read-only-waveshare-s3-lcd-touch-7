@@ -17,6 +17,7 @@ void host_select_view(int v);
 void host_set_cursor(time_t t);
 void host_go_ambient(void);
 void host_open_settings_menu(void);
+bool host_detail_show(const char *summary_part);
 void host_close_top(void);
 void host_go_calendar(void);
 
@@ -146,6 +147,25 @@ int main(int argc, char **argv)
     snap("day");
     host_select_view(UI_VIEW_UPNEXT);
     snap("upnext");
+
+    /* The event details card, in each view that has it (Month is unchanged: a tap opens that day). */
+    host_select_view(UI_VIEW_WEEK);
+    host_detail_show("Physio");
+    snap("detail_week");
+    ui_detail_close();
+    host_set_cursor(demo_now());
+    host_select_view(UI_VIEW_DAY);
+    host_detail_show("Dinner at Maya");
+    snap("detail_day");
+    ui_detail_close();
+    host_detail_show("Return library");
+    snap("detail_allday");
+    ui_detail_close();
+    host_select_view(UI_VIEW_UPNEXT);
+    host_detail_show("Parent-teacher");
+    snap("detail_upnext");
+    ui_detail_close();
+    settle(300);
 
     host_select_view(UI_VIEW_MONTH);
     host_open_settings_menu();

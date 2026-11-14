@@ -109,6 +109,7 @@ lv_obj_t *ui_day_create(lv_obj_t *parent)
 
     s_allday_box = lv_obj_create(root);
     lv_obj_remove_style_all(s_allday_box);
+    lv_obj_add_event_cb(s_allday_box, ui_detail_click_cb, LV_EVENT_CLICKED, NULL);  /* a tagged chip was tapped */
     lv_obj_set_pos(s_allday_box, TIME_COL_W, 4);
     lv_obj_set_size(s_allday_box, col_w(), HEADER_H - 6);
     lv_obj_set_flex_flow(s_allday_box, LV_FLEX_FLOW_ROW_WRAP);
@@ -154,6 +155,7 @@ lv_obj_t *ui_day_create(lv_obj_t *parent)
 
     s_event_col = lv_obj_create(body);
     lv_obj_remove_style_all(s_event_col);
+    lv_obj_add_event_cb(s_event_col, ui_detail_click_cb, LV_EVENT_CLICKED, NULL);   /* a tagged block was tapped */
     lv_obj_set_pos(s_event_col, TIME_COL_W, 0);
     lv_obj_set_size(s_event_col, col_w(), body_content_h);
     lv_obj_clear_flag(s_event_col, LV_OBJ_FLAG_SCROLLABLE);
@@ -334,6 +336,7 @@ static void add_block(const gcal_event_t *ev, time_t day, time_t now, bool *out_
 
     bool is_past = ev->end <= now;
     lv_obj_t *blk = lv_obj_create(s_event_col);
+    ui_detail_tag(blk, ev);
     lv_obj_remove_style_all(blk);
     lv_obj_set_pos(blk, x, y);
     lv_obj_set_size(blk, slot_w, h - 2);
@@ -361,6 +364,7 @@ void ui_day_release(void)
 
 void ui_day_populate(lv_obj_t *root, time_t cursor)
 {
+    ui_detail_reset();      /* the blocks are about to be rebuilt: close the card, forget the tags */
     (void)root;
     time_t day = ui_start_of_day(cursor);
     time_t now;
@@ -403,6 +407,7 @@ void ui_day_populate(lv_obj_t *root, time_t cursor)
              * before today, same reasoning as ui_month.c's populate. */
             bool is_past = (day < today) || (events[e].end <= now);
             lv_obj_t *chip = lv_obj_create(s_allday_box);
+            ui_detail_tag(chip, &events[e]);
             lv_obj_remove_style_all(chip);
             lv_obj_set_height(chip, 22);
             lv_obj_set_width(chip, LV_SIZE_CONTENT);

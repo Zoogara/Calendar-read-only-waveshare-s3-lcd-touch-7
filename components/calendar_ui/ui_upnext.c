@@ -108,6 +108,7 @@ static void add_item(lv_obj_t *items_col, const gcal_event_t *ev)
 {
     lv_obj_t *item = lv_obj_create(items_col);
     lv_obj_remove_style_all(item);
+    ui_detail_tag(item, ev);
     lv_obj_set_width(item, LV_PCT(100));
     lv_obj_set_height(item, ITEM_H);
     lv_obj_add_style(item, &s_item_style, 0);
@@ -156,6 +157,7 @@ void ui_upnext_release(void)
 
 void ui_upnext_populate(lv_obj_t *root)
 {
+    ui_detail_reset();      /* the items are about to be rebuilt: close the card, forget the tags */
     (void)root;
     lv_obj_clean(s_list);
 
@@ -214,6 +216,7 @@ void ui_upnext_populate(lv_obj_t *root)
                 lv_obj_set_flex_flow(items_col, LV_FLEX_FLOW_COLUMN);
                 lv_obj_set_style_pad_row(items_col, 6, 0);
                 lv_obj_clear_flag(items_col, LV_OBJ_FLAG_SCROLLABLE);
+                lv_obj_add_event_cb(items_col, ui_detail_click_cb, LV_EVENT_CLICKED, NULL);   /* a tagged item was tapped */
             }
 
             add_item(items_col, &events[i]);

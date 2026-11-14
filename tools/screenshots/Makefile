@@ -22,9 +22,9 @@ LVGL_DIRS := core draw draw/sw hal misc widgets font extra extra/themes extra/th
              extra/layouts extra/layouts/flex extra/layouts/grid \
              extra/others
 LVGL_SRC  := $(foreach d,$(LVGL_DIRS),$(wildcard $(LVGL)/src/$(d)/*.c)) $(wildcard $(LVGL)/src/extra/widgets/*/*.c)
-UI_SRC    := $(filter-out %ui_settings_dialog.c %/calendar_ui.c %/ui_screensaver.c,$(wildcard $(ROOT)/components/calendar_ui/*.c))
+UI_SRC    := $(filter-out %ui_settings_dialog.c %/calendar_ui.c %/ui_screensaver.c %/ui_detail.c,$(wildcard $(ROOT)/components/calendar_ui/*.c))
 GCAL_SRC  := $(ROOT)/components/gcal/event_store.c $(ROOT)/components/ha_weather/ha_wind_calc.c
-APP_SRC   := render.c demo_data.c host_stubs.c host_calendar_ui.c host_screensaver.c
+APP_SRC   := render.c demo_data.c host_stubs.c host_calendar_ui.c host_screensaver.c host_detail.c
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(subst $(ROOT)/,root/,$(subst $(LVGL)/,lvgl/,$(LVGL_SRC) $(UI_SRC) $(GCAL_SRC))) $(APP_SRC))
 

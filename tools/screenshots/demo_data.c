@@ -82,6 +82,13 @@ static void ev(int idx, const char *summary, time_t a, time_t b, bool all_day)
     e->calendar_index = (uint8_t)idx;
 }
 
+/* Gives the event just added a location and description, as a real sync would (fictional text). */
+static void details(const char *loc, const char *desc)
+{
+    gcal_event_t *e = &s_ev[s_n - 1];
+    e->detail = event_store_detail_add(loc, desc, &e->detail_gen);
+}
+
 /* y/m/d are local dates; h/mi the start; len minutes. */
 static void timed(int idx, const char *s, int y, int mo, int d, int h, int mi, int len)
 {
@@ -117,11 +124,19 @@ void demo_fill_events(void)
     /* one-offs - Family */
     timed(0, "Dentist", 2026, 10, 14, 9, 30, 45);
     timed(0, "Cafe catch-up with Jo", 2026, 10, 14, 12, 30, 60);
+    details("Harbour Road Cafe, 14 Quay St, Port Hartley", "Bring the photos from the weekend.");
     timed(0, "Physio", 2026, 10, 14, 15, 30, 45);
+    details("Hartley Physio, Level 1, 80 High St", "Wear loose clothing.\nBring the exercise sheet and the referral letter.");
     timed(0, "Dinner at Maya's", 2026, 10, 14, 18, 30, 150);
+    details("Maya's place, 22 Wattle Close, Port Hartley",
+            "Bring a dessert to share.\nMaya is vegetarian and one guest is allergic to nuts, so please check "
+            "the ingredients.\nParking is on the street; the gate sticks, so push it hard.");
     allday(2, "\xE2\x98\x90 Return library books", 2026, 10, 14, 1);
+    details("", "Due by 5 PM. Three picture books and one novel.");
     timed(0, "Parent-teacher chats", 2026, 10, 15, 15, 30, 60);
+    details("Room 6, Port Hartley Primary School", "Slots: 3:30 PM Alex, 4:00 PM Sam.\nBring the term report.");
     allday(0, "Sam's birthday", 2026, 10, 17, 1);
+    details("Home", "Cake at 4 PM. Don't forget the candles!");
     timed(0, "Vet - Biscuit", 2026, 10, 20, 11, 0, 30);
     allday(0, "Weekend at the coast", 2026, 10, 23, 3);
     timed(0, "Book club", 2026, 10, 30, 19, 30, 120);

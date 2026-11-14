@@ -144,6 +144,20 @@ void ui_weather_open(void);
 void ui_weather_close(void);
 bool ui_weather_is_open(void);
 
+/* The event details card (ui_detail.c): touching an event in the Week, Day or Up next view opens it.
+ * A view calls ui_detail_reset() as it starts redrawing, ui_detail_tag() for each event object it
+ * makes (the event is copied; the object then bubbles its tap to a container that has
+ * ui_detail_click_cb attached), and the card is built once, hidden, by ui_detail_init().
+ * See ui_detail.c for why it is built this way. */
+void ui_detail_init(void);
+void ui_detail_reset(void);
+void ui_detail_tag(lv_obj_t *obj, const gcal_event_t *ev);
+void ui_detail_click_cb(lv_event_t *e);          /* attach to a container: LV_EVENT_CLICKED */
+bool ui_detail_try_show(lv_obj_t *tagged_target);   /* for a handler that must also do its own thing */
+bool ui_detail_show_index(int tagged_index);        /* for the screenshot renderer */
+void ui_detail_close(void);
+bool ui_detail_is_open(void);
+
 /* "On this day" list (ui_history.c), opened by tapping the date on the
  * ambient clock; closed by a tap or by ui_screensaver.c after a minute. */
 void ui_history_open(void);

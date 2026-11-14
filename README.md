@@ -95,7 +95,7 @@ a real calendar, sensor or place.*
 | ![Week view](docs/week_view.png) **Week** | ![Day view](docs/day_view.png) **Day** |
 | ![Ambient clock at night](docs/clock_night.png) **Ambient clock, after dark** | ![Lock keypad](docs/lock_keypad.png) **Screen lock** |
 | ![On this day](docs/on_this_day.png) **On this day** (tap the date) | ![News feed](docs/news_feed.png) **News feed** (corner icon) |
-| ![Gear menu](docs/settings_menu.png) **Gear menu** (with its status block) | |
+| ![Gear menu](docs/settings_menu.png) **Gear menu** (with its status block) | ![Event details](docs/event_details.png) **Event details** (touch an event in Week, Day or Up next) |
 
 The weather panel (tap the weather on the clock, or the small grey weather icon in the calendar's top bar; `with-HA-weather` branch) scrolls through its sections:
 
@@ -647,6 +647,42 @@ Wikipedia text is full of - accented calendar event titles benefit too; and
 mbedTLS's receive buffer went from 8KB to the TLS maximum of 16KB
 (`CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN`), since Wikipedia sends full-size
 records - costing PSRAM only, as mbedTLS allocates from there.
+
+## Event details
+
+![Event details card](docs/event_details.png)
+
+Touching an event in the **Week**, **Day** or **Up next** view opens a card with its title, when, calendar,
+location and description (`components/calendar_ui/ui_detail.c`). Month view keeps its tap-opens-the-day. How
+it is built, because internal RAM is the constraint here:
+
+- **One card, built once at startup on `lv_layer_top()` and then only hidden and shown** (like the reminder
+  card), with its text in PSRAM buffers shown via `lv_label_set_text_static()`. A tap allocates nothing.
+  LVGL's malloc assert reboots the device on a failed allocation, so building a pop-up on demand - right
+  when a sync may have taken the memory - is the risky way, and creating and deleting objects of varying
+  sizes also fragments the heap (the thing that makes a week-old display refuse a wireless update). The
+  permanent cost is about 2KB of internal RAM for the card's objects.
+- **No callback per event.** A view tags each block, chip or list item with `ui_detail_tag()`: the event is
+  copied into a 96-entry PSRAM table and its index kept in the object's `user_data`; the object bubbles its
+  CLICKED event to one container per view that has the shared handler. The copy is the event as drawn, so a
+  sync landing afterwards can't change what a tap shows.
+- **While the card is open, `calendar_ui_panel_open()` is true**, so the network task holds the calendar sync,
+  the weather fetches, "On this day" and the news feeds (the existing `wait_for_panels()`, capped at 150 s);
+  the card closes after a minute untouched like the other panels, and whenever the display goes to the clock
+  or screensaver or a view is redrawn. A sync already running when you tap isn't interrupted, which is why a
+  tap also checks the largest free internal block (3KB) and quietly skips if it's smaller.
+- **Location and description live in a text pool, not in `gcal_event_t`.** The event store keeps two buffers
+  of 2000 events (published and next-sync); ~300 bytes of text per event inside them would have cost ~1.9MB of
+  PSRAM. Instead each buffer has a 192KB text pool (swapped with the events on publish), and an event holds an
+  offset and the pool's generation. `event_store_detail_get()` refuses an offset from another generation, so a
+  sync between a copy and a lookup can't hand back another event's text. Total PSRAM for events is now about
+  1.1MB (it was 0.7MB).
+- **Fetching:** Google's `events.list` also asks for `location` and `description`; a page is capped at 768KB
+  and, if exceeded (one calendar with enormous descriptions), fetched again without descriptions. ICS feeds'
+  `LOCATION` and `DESCRIPTION` are read (inside a `VALARM` they are ignored - an alarm's text used to be able
+  to replace the event's). Text is cleaned by `gcal_clean_text()` (pure C, host-tested): tags dropped, `<br>`/
+  `<p>`/`<li>` to line breaks, entities decoded, typographic quotes and dashes made plain, cut on a UTF-8
+  boundary.
 
 ## Screen lock
 
