@@ -44,6 +44,14 @@ esp_err_t ota_update_start_background(const char *url);
  * rolls itself back, while a power cycle later with Wi-Fi down doesn't. */
 void ota_update_confirm_boot_after(uint32_t seconds);
 
+/* A function to call just before a wireless update starts, to free memory: the UI registers one that
+ * releases the calendar view and closes panels (see calendar_ui_free_memory_for_update()). An update needs
+ * contiguous internal RAM for its task and for verifying the new image, and two updates sent to a display
+ * showing a busy view crashed in that verification with the largest free block down at 5-7KB; sent to a
+ * freshly restarted display (20KB) they went through. ota_update can't call the UI itself (the UI depends on
+ * this component), hence the hook. */
+void ota_update_set_prepare_hook(void (*hook)(void));
+
 /* Why the chip last restarted, in words: "power-on", "software restart", "panic (crash)",
  * "interrupt watchdog", "task watchdog", "brownout (supply dipped)", ... For the boot log and /version:
  * a new image that dies shortly after boot is rolled back with no other trace. */

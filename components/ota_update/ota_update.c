@@ -3,6 +3,7 @@
 #include <string.h>
 #include <strings.h>
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -96,6 +97,13 @@ static void background_task(void *arg)
     vTaskDelete(NULL);
 }
 
+static void (*s_prepare_hook)(void);
+
+void ota_update_set_prepare_hook(void (*hook)(void))
+{
+    s_prepare_hook = hook;
+}
+
 esp_err_t ota_update_start_background(const char *url)
 {
     if (url == NULL || url[0] == '\0') {
@@ -104,6 +112,15 @@ esp_err_t ota_update_start_background(const char *url)
     if (ota_update_url_is_insecure(url) && !ota_update_http_allowed_in_build()) {
         ESP_LOGW(TAG, "refusing a plain-http update URL: this build is https-only");
         return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (s_prepare_hook != NULL) {
+        ESP_LOGI(TAG, "internal RAM before freeing the UI: %u free / %u largest block",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        s_prepare_hook();      /* free what the UI holds before the task and the image check need memory */
+        ESP_LOGI(TAG, "internal RAM after: %u free / %u largest block",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
     }
     char *copy = strdup(url);
     if (copy == NULL) {

@@ -53,6 +53,12 @@ bool calendar_ui_is_asleep(void);
  * requests while one is up so the two never compete for the same memory. */
 bool calendar_ui_panel_open(void);
 
+/* Releases the memory the UI is holding so a wireless update has room: closes any panel or the details
+ * card and, if the calendar is showing, goes to the clock (which releases the calendar view's objects, as
+ * it always does). Takes the LVGL lock itself; call from any task but the LVGL one. If the update then
+ * fails the display just stays on the clock until touched. */
+void calendar_ui_free_memory_for_update(void);
+
 /* Blocks the calling task until the screensaver wakes (a touch is
  * detected) or timeout_ms elapses, whichever comes first. Returns true if
  * woken by touch, false on timeout. Meant to replace a plain vTaskDelay()

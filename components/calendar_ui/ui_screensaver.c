@@ -818,6 +818,22 @@ bool calendar_ui_is_asleep(void)
     return s_state != DISPLAY_CALENDAR;
 }
 
+void calendar_ui_free_memory_for_update(void)
+{
+    if (!bsp_lvgl_lock(3000)) {
+        return;
+    }
+    ui_weather_close();
+    ui_history_close();
+    ui_feed_close();
+    ui_detail_close();
+    ui_lock_keypad_close();
+    if (s_state == DISPLAY_CALENDAR) {
+        go_ambient();
+    }
+    bsp_lvgl_unlock();
+}
+
 bool calendar_ui_panel_open(void)
 {
     return ui_weather_is_open() || ui_history_is_open() || ui_feed_is_open() || ui_detail_is_open();
