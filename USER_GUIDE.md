@@ -232,6 +232,16 @@ touch (0 = padlock only).
 | Week/day view hours | First and last hour shown in Week and Day view; also when the clock counts as daytime. Plain hours 0-24 on this page, whatever the Time format |
 | Calendar cache window | Days back (up to 90) and ahead (up to 365) to fetch |
 
+**Backup and restore** (bottom of the page) - *Download backup* saves every
+setting, passwords and keys included, to one file encrypted with a passphrase
+you choose (12 characters or more, typed twice). *Restore & restart* takes
+that file and its passphrase and replaces all the display's settings, then
+restarts it; a wrong passphrase or a damaged file changes nothing. Keep the
+passphrase safe - it can't be recovered - and use a long one: whoever has the
+file can try to guess it. The passphrase and file travel over this page's plain
+http connection, so do it on your own network. See the README, *Encrypted
+settings backup*, for the details and for reading a backup on a computer.
+
 ## First-time setup
 
 On first start, or after gear → Setup, the device creates its own Wi-Fi
