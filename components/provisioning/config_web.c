@@ -3,6 +3,7 @@
 #include "ota_update.h"
 #include "auth_guard.h"
 #include "url_decode.h"
+#include "settings_crypt.h"
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #include "esp_heap_caps.h"
@@ -15,6 +16,8 @@
 #include "esp_http_server.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_random.h"
+#include "mbedtls/platform_util.h"
 #include "mbedtls/base64.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -176,7 +179,7 @@ static const char *HTML_HEAD =
     "body{font-family:sans-serif;max-width:640px;margin:1.5em auto;padding:0 1em;color:#222}"
     "h1{font-size:1.3em}h2{font-size:1.05em;margin-top:1.6em;border-top:1px solid #ddd;padding-top:1em}"
     "label{display:block;margin-top:.8em;font-weight:600;font-size:.9em}"
-    "input[type=text],input[type=number],textarea{width:100%;box-sizing:border-box;"
+    "input[type=text],input[type=password],input[type=number],textarea{width:100%;box-sizing:border-box;"
     "padding:.5em;font-size:1em;margin-top:.2em}"
     "textarea{font-family:monospace;font-size:.8em}"
     "input[type=range]{width:100%;margin-top:.4em}"
@@ -252,6 +255,44 @@ static bool check_same_origin(httpd_req_t *req)
     httpd_resp_sendstr(req, "cross-origin request refused\n");
     return false;
 }
+
+/* After the main form (its own forms: nested ones aren't valid HTML). The backup is an ordinary form post
+ * whose reply downloads; the restore has to send a binary file plus the passphrase, so it uses fetch(). */
+static const char *BACKUP_SECTION_HTML =
+    "<h2>Backup and restore</h2>"
+    "<div class='hint'>A backup is one file holding <b>every</b> setting - the Wi-Fi password, the service-account "
+    "key, this page's password, tokens - encrypted with a passphrase you choose (AES-256-GCM; the key comes from "
+    "the passphrase by PBKDF2-SHA256, 100,000 rounds). Anyone who gets the file can try passphrases on their own "
+    "computer, so use a long one, and keep it somewhere safe: it cannot be recovered. The passphrase travels to the "
+    "display over this page's plain-http connection, like the password you type to open it - use a trusted network.</div>"
+    "<form method='POST' action='/backup'>"
+    "<label>Passphrase (at least 12 characters)</label>"
+    "<input type='password' name='passphrase' minlength='12' maxlength='100' required autocomplete='new-password'>"
+    "<label>Passphrase again</label>"
+    "<input type='password' name='passphrase2' minlength='12' maxlength='100' required autocomplete='new-password'>"
+    "<div class='btn-row'><button type='submit'>Download backup</button></div></form>"
+    "<label style='margin-top:1.6em'>Restore from a backup file</label>"
+    "<input type='file' id='bkfile' accept='.enc'>"
+    "<label>Its passphrase</label>"
+    "<input type='password' id='bkpass' autocomplete='off'>"
+    "<div class='btn-row'><button type='button' id='bkgo'>Restore &amp; restart</button></div>"
+    "<div class='hint' id='bkmsg'>Restoring replaces <b>all</b> the settings on this display with the ones in the "
+    "file, then restarts it. A wrong passphrase or a damaged file changes nothing.</div>"
+    "<script>"
+    "document.getElementById('bkgo').onclick=async function(){"
+    "var f=document.getElementById('bkfile').files[0],p=document.getElementById('bkpass').value,"
+    "m=document.getElementById('bkmsg');"
+    "if(!f||!p){m.textContent='Choose the file and enter its passphrase.';return}"
+    "var pe=new TextEncoder().encode(p);"
+    "if(pe.length>255){m.textContent='That passphrase is too long.';return}"
+    "if(!confirm('Replace ALL the settings on this display with the ones in this file?'))return;"
+    "var fb=new Uint8Array(await f.arrayBuffer()),b=new Uint8Array(1+pe.length+fb.length);"
+    "b[0]=pe.length;b.set(pe,1);b.set(fb,1+pe.length);"
+    "m.textContent='Working - this takes a few seconds...';"
+    "try{var r=await fetch('/restore',{method:'POST',body:b,"
+    "headers:{'Content-Type':'application/octet-stream'}});m.textContent=await r.text()}"
+    "catch(e){m.textContent='The display restarted or did not answer: '+e}};"
+    "</script></body></html>";
 
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
@@ -545,13 +586,14 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<button type='submit'>Save &amp; restart</button>"
         "<a class='btn-cancel' href='/'>Cancel</a>"
         "</div>"
-        "</form></body></html>",
+        "</form>",
         s_cfg->clock_24h ? "" : " selected", s_cfg->clock_24h ? " selected" : "",
         (unsigned)s_cfg->screen_timeout_s, (unsigned)s_cfg->view_start_hour, (unsigned)s_cfg->view_end_hour,
         (unsigned)s_cfg->fetch_past_days, (unsigned)s_cfg->fetch_future_days,
         (unsigned)s_cfg->brightness_min_pct_x10, (double)s_cfg->brightness_min_pct_x10 / 10.0,
         (unsigned)s_cfg->brightness_max_lux, (unsigned)s_cfg->brightness_max_lux);
     httpd_resp_sendstr_chunk(req, other);
+    httpd_resp_sendstr_chunk(req, BACKUP_SECTION_HTML);
 
     httpd_resp_sendstr_chunk(req, NULL);
     return ESP_OK;
@@ -905,6 +947,254 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* ---------------- encrypted settings backup (POST /backup, POST /restore) ----------------
+ * The format and the crypto are in settings_crypt.c (host-tested, and readable without the display with
+ * tools/gcal_settings.py). What is here is the plumbing: the work runs on a short-lived task with an
+ * internal-RAM stack - the same reason as save_task() above, and restoring ends in a flash write too -
+ * and the buffers (the settings JSON, the file) are in PSRAM so as not to ask internal RAM for contiguous
+ * blocks it hasn't got. A backup holds every secret the display has; the plain JSON is wiped after use. */
+
+#define BACKUP_FORM_MAX     1024      /* the passphrase form */
+#define RESTORE_BODY_MAX    24576     /* passphrase + file; the settings JSON is a few KB */
+#define BACKUP_TASK_STACK   6144
+
+enum job_stage { JOB_OK = 0, JOB_NOMEM, JOB_BAD_CONFIG, JOB_SAVE_FAILED };
+
+struct crypt_job {
+    bool restore;
+    const char *pass;
+    const uint8_t *in;          /* restore: the encrypted file */
+    size_t in_len;
+    uint8_t *out;               /* backup: the file produced (PSRAM; the caller frees it) */
+    size_t out_len;
+    setcrypt_err_t err;
+    enum job_stage stage;
+    SemaphoreHandle_t done;
+};
+
+static void *big_alloc(size_t n)
+{
+    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : malloc(n);
+}
+
+static void wipe(void *p, size_t n)
+{
+    mbedtls_platform_zeroize(p, n);
+}
+
+static void crypt_yield(void)
+{
+    vTaskDelay(1);      /* lets the idle task (and its watchdog) run during the key derivation */
+}
+
+static void crypt_task(void *arg)
+{
+    struct crypt_job *job = (struct crypt_job *)arg;
+    job->stage = JOB_OK;
+    settings_crypt_set_yield(crypt_yield);
+
+    if (!job->restore) {
+        char *json = provisioning_settings_to_json(s_cfg);
+        if (json == NULL) {
+            job->stage = JOB_NOMEM;
+        } else {
+            size_t jl = strlen(json);
+            job->out = big_alloc(jl + SETCRYPT_OVERHEAD);
+            if (job->out == NULL) {
+                job->stage = JOB_NOMEM;
+            } else {
+                uint8_t salt[SETCRYPT_SALT_LEN], nonce[SETCRYPT_NONCE_LEN];
+                esp_fill_random(salt, sizeof(salt));
+                esp_fill_random(nonce, sizeof(nonce));
+                job->err = settings_crypt_encrypt(job->pass, (const uint8_t *)json, jl, SETCRYPT_ITERATIONS, salt,
+                                                  nonce, job->out, jl + SETCRYPT_OVERHEAD, &job->out_len);
+                if (job->err != SETCRYPT_OK) {
+                    free(job->out);
+                    job->out = NULL;
+                }
+            }
+            wipe(json, jl);
+            free(json);
+        }
+    } else {
+        uint8_t *plain = big_alloc(job->in_len);
+        app_settings_t *tmp = big_alloc(sizeof(*tmp));
+        if (plain == NULL || tmp == NULL) {
+            job->stage = JOB_NOMEM;
+        } else {
+            size_t pl = 0;
+            job->err = settings_crypt_decrypt(job->pass, job->in, job->in_len, plain, job->in_len, &pl);
+            if (job->err == SETCRYPT_OK) {
+                plain[pl] = '\0';       /* in_len is pl + 56, so there is room */
+                if (!provisioning_settings_from_json((const char *)plain, tmp)) {
+                    job->stage = JOB_BAD_CONFIG;
+                } else if (provisioning_save(tmp) != ESP_OK) {
+                    job->stage = JOB_SAVE_FAILED;
+                }
+            }
+        }
+        if (plain) {
+            wipe(plain, job->in_len);
+            free(plain);
+        }
+        if (tmp) {
+            wipe(tmp, sizeof(*tmp));
+            free(tmp);
+        }
+    }
+    xSemaphoreGive(job->done);
+    vTaskDelete(NULL);
+}
+
+/* Runs a job on its own task and waits. False if the task couldn't be made (internal RAM). */
+static bool run_crypt_job(struct crypt_job *job)
+{
+    job->done = xSemaphoreCreateBinary();
+    if (job->done == NULL) {
+        return false;
+    }
+    bool ok = xTaskCreate(crypt_task, "settings_crypt", BACKUP_TASK_STACK, job, 5, NULL) == pdPASS;
+    if (ok) {
+        xSemaphoreTake(job->done, portMAX_DELAY);
+    }
+    vSemaphoreDelete(job->done);
+    return ok;
+}
+
+static esp_err_t text_reply(httpd_req_t *req, const char *status, const char *msg)
+{
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, msg);
+    return ESP_OK;
+}
+
+/* Reads the whole request body into a PSRAM buffer (NUL-terminated, *len bytes). NULL after sending the
+ * error reply if it is empty, too big, or can't be read. */
+static uint8_t *recv_body(httpd_req_t *req, size_t max, size_t *len)
+{
+    size_t total = req->content_len;
+    if (total == 0 || total > max) {
+        text_reply(req, "400 Bad Request", "bad content length\n");
+        return NULL;
+    }
+    uint8_t *body = big_alloc(total + 1);
+    if (body == NULL) {
+        text_reply(req, "503 Service Unavailable", "not enough free memory just now - try again\n");
+        return NULL;
+    }
+    size_t got = 0;
+    while (got < total) {
+        int r = httpd_req_recv(req, (char *)body + got, total - got);
+        if (r <= 0) {
+            wipe(body, total);
+            free(body);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+            return NULL;
+        }
+        got += r;
+    }
+    body[total] = '\0';
+    *len = total;
+    return body;
+}
+
+static esp_err_t backup_post_handler(httpd_req_t *req)
+{
+    if (!check_auth(req) || !check_same_origin(req)) {
+        return ESP_OK;
+    }
+    size_t n = 0;
+    uint8_t *body = recv_body(req, BACKUP_FORM_MAX, &n);
+    if (body == NULL) {
+        return ESP_OK;
+    }
+    char pass[128] = "", again[128] = "";
+    form_get((const char *)body, "passphrase", pass, sizeof(pass));
+    form_get((const char *)body, "passphrase2", again, sizeof(again));
+    wipe(body, n);
+    free(body);
+
+    esp_err_t rc = ESP_OK;
+    if (strlen(pass) < SETCRYPT_MIN_PASSPHRASE) {
+        rc = text_reply(req, "400 Bad Request", "the passphrase must be at least 12 characters\n");
+    } else if (strcmp(pass, again) != 0) {
+        rc = text_reply(req, "400 Bad Request", "the two passphrases are different - go back and try again\n");
+    } else {
+        struct crypt_job job = {.restore = false, .pass = pass};
+        if (!run_crypt_job(&job)) {
+            rc = text_reply(req, "503 Service Unavailable", "not enough free memory just now - try again in a few seconds\n");
+        } else if (job.out == NULL) {
+            rc = text_reply(req, "500 Internal Server Error", "could not make the backup (out of memory)\n");
+        } else {
+            httpd_resp_set_type(req, "application/octet-stream");
+            httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"gcal-settings.enc\"");
+            httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+            rc = httpd_resp_send(req, (const char *)job.out, job.out_len);
+            free(job.out);
+            ESP_LOGI(TAG, "settings backup downloaded (%u bytes)", (unsigned)job.out_len);
+        }
+    }
+    wipe(pass, sizeof(pass));
+    wipe(again, sizeof(again));
+    return rc;
+}
+
+/* The body is one byte of passphrase length, the passphrase, then the file - so the passphrase is in
+ * neither the URL nor a header, and one request carries both. */
+static esp_err_t restore_post_handler(httpd_req_t *req)
+{
+    if (!check_auth(req) || !check_same_origin(req)) {
+        return ESP_OK;
+    }
+    size_t n = 0;
+    uint8_t *body = recv_body(req, RESTORE_BODY_MAX, &n);
+    if (body == NULL) {
+        return ESP_OK;
+    }
+    size_t plen = body[0];
+    if (plen == 0 || 1 + plen + SETCRYPT_OVERHEAD > n) {
+        wipe(body, n);
+        free(body);
+        return text_reply(req, "400 Bad Request", "that doesn't look like a settings backup\n");
+    }
+    char pass[256];
+    memcpy(pass, body + 1, plen);
+    pass[plen] = '\0';
+
+    struct crypt_job job = {.restore = true, .pass = pass, .in = body + 1 + plen, .in_len = n - 1 - plen};
+    esp_err_t rc;
+    if (!run_crypt_job(&job)) {
+        rc = text_reply(req, "503 Service Unavailable", "not enough free memory just now - try again in a few seconds\n");
+    } else if (job.stage == JOB_NOMEM) {
+        rc = text_reply(req, "503 Service Unavailable", "not enough free memory just now - try again in a few seconds\n");
+    } else if (job.err == SETCRYPT_ERR_FORMAT) {
+        rc = text_reply(req, "400 Bad Request", "that isn't a settings backup from this display (or it is from a newer version)\n");
+    } else if (job.err == SETCRYPT_ERR_AUTH) {
+        rc = text_reply(req, "400 Bad Request", "wrong passphrase, or the file is damaged - nothing was changed\n");
+    } else if (job.err != SETCRYPT_OK) {
+        rc = text_reply(req, "500 Internal Server Error", "could not read the backup - nothing was changed\n");
+    } else if (job.stage == JOB_BAD_CONFIG) {
+        rc = text_reply(req, "400 Bad Request", "the backup doesn't hold a usable configuration - nothing was changed\n");
+    } else if (job.stage == JOB_SAVE_FAILED) {
+        rc = text_reply(req, "500 Internal Server Error", "could not save the settings - nothing was changed\n");
+    } else {
+        ESP_LOGI(TAG, "settings restored from a backup, restarting in 2s");
+        rc = text_reply(req, "200 OK", "Restored. The display is restarting now - reload this page in a minute.\n");
+        wipe(pass, sizeof(pass));
+        wipe(body, n);
+        free(body);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        esp_restart();
+        return rc;
+    }
+    wipe(pass, sizeof(pass));
+    wipe(body, n);
+    free(body);
+    return rc;
+}
+
 void config_web_start(app_settings_t *cfg)
 {
     if (s_server != NULL) {
@@ -919,6 +1209,7 @@ void config_web_start(app_settings_t *cfg)
 
     httpd_config_t http_cfg = HTTPD_DEFAULT_CONFIG();
     http_cfg.stack_size = 8192;
+    http_cfg.max_uri_handlers = 12;
     /* This always-on second HTTP server task sits idle almost all the
      * time, so keep its stack off internal RAM - it otherwise competes
      * with the calendar-fetch task's mbedtls/TLS work for the same small
@@ -944,6 +1235,10 @@ void config_web_start(app_settings_t *cfg)
     httpd_register_uri_handler(s_server, &ota_uri);
     httpd_uri_t version_uri = {.uri = "/version", .method = HTTP_GET, .handler = version_get_handler};
     httpd_register_uri_handler(s_server, &version_uri);
+    httpd_uri_t backup_uri = {.uri = "/backup", .method = HTTP_POST, .handler = backup_post_handler};
+    httpd_register_uri_handler(s_server, &backup_uri);
+    httpd_uri_t restore_uri = {.uri = "/restore", .method = HTTP_POST, .handler = restore_post_handler};
+    httpd_register_uri_handler(s_server, &restore_uri);
     if (ota_update_http_allowed_in_build()) {         /* a development build only */
         httpd_uri_t restart_uri = {.uri = "/restart", .method = HTTP_POST, .handler = restart_post_handler};
         httpd_register_uri_handler(s_server, &restart_uri);
