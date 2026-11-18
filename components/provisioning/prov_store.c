@@ -382,3 +382,23 @@ esp_err_t provisioning_save_sd(const app_settings_t *cfg)
     ESP_LOGI(TAG, "config backed up to %s", SD_CONFIG_FILE);
     return ESP_OK;
 }
+
+char *provisioning_settings_to_json(const app_settings_t *cfg)
+{
+    cJSON *root = settings_to_json(cfg);
+    char *str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    return str;
+}
+
+bool provisioning_settings_from_json(const char *json, app_settings_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    cJSON *root = cJSON_Parse(json);
+    if (root == NULL) {
+        return false;
+    }
+    json_to_settings(root, out);
+    cJSON_Delete(root);
+    return out->valid;
+}

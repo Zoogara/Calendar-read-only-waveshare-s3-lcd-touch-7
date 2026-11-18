@@ -85,6 +85,16 @@ esp_err_t provisioning_load_sd(app_settings_t *out);
  * sync with NVS - see the file-level comment above for why. */
 esp_err_t provisioning_save_sd(const app_settings_t *cfg);
 
+/* The settings as the JSON that is stored (every field, passwords and keys included), as a malloc'd
+ * string the caller frees - and should wipe first if it held it for long. NULL if out of memory.
+ * Used by the encrypted settings backup (config_web.c); the stored copies are this same JSON. */
+char *provisioning_settings_to_json(const app_settings_t *cfg);
+
+/* The reverse: parses such JSON into *out (zeroed first). Returns false, with out->valid false, if it
+ * isn't JSON or lacks the essentials (Wi-Fi network, service account, a calendar) - the same test a
+ * stored config has to pass at boot. Doesn't save anything. */
+bool provisioning_settings_from_json(const char *json, app_settings_t *out);
+
 /* Starts the AP + web form and BLOCKS until the user submits it, then
  * saves and calls esp_restart(). Never returns normally. */
 void provisioning_run_portal(void) __attribute__((noreturn));

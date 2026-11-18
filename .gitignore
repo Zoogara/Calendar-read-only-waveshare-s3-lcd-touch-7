@@ -15,3 +15,5 @@ tools/screenshots/render
 # development (plain-http OTA) build
 build-dev/
 sdkconfig.dev.out*
+tests/host/build-mbedtls/
+__pycache__/
