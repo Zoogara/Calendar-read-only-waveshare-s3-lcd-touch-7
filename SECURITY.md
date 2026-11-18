@@ -35,8 +35,8 @@ lockout that doubles up to 15 minutes, per device rather than per client); see t
 scope; that the lockout can be triggered by anyone on the network, or that Basic auth travels over
 plain HTTP, is a documented limitation.
 
-In scope: the firmware in this repository - the config web page and its `/save` and `/ota`
-routes, the setup portal, update handling, parsing of calendar/feed/weather data, and the storage
+In scope: the firmware in this repository - the config web page and its `/save`, `/ota`, `/backup`
+and `/restore` routes (including the encrypted settings file format), the setup portal, update handling, parsing of calendar/feed/weather data, and the storage
 of settings. Out of scope: the issues the README already lists as known limitations, attacks that
 need physical access to the board or card, and vulnerabilities in ESP-IDF, LVGL or other
 third-party code (report those upstream).

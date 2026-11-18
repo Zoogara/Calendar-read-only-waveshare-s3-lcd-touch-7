@@ -455,6 +455,48 @@ logging and `idf.py flash` over USB keep working exactly as before.
   then reverts to the previous image. The first build with rollback enabled
   has to be flashed over USB once (it changes the bootloader).
 
+## Encrypted settings backup
+
+The config page's last section, **Backup and restore**, saves every setting to one file you can keep
+anywhere, protected by a passphrase - so a replaced board or a mistaken *Setup* (gear -> Setup erases
+the settings) costs a minute rather than re-entering a service-account key. It is separate from the
+plain-JSON TF-card copy described under *Config backup*: that one is for the board's own recovery and
+isn't encrypted; this one is for you to store, and is.
+
+- **What's in it:** everything the display stores - Wi-Fi password, service-account key, calendars,
+  this page's password, the lock PIN, tokens (the Home Assistant one on `with-HA-weather`), feed URLs,
+  display options. A backup is therefore as sensitive as the display itself; only the passphrase
+  protects it.
+- **Making one:** type a passphrase twice (12 characters or more) and press *Download backup*; the
+  browser saves `gcal-settings.enc`. Nothing is kept on the display.
+- **Restoring:** choose the file, type its passphrase, press *Restore & restart*, confirm. The display
+  decrypts and fully checks the file (it must parse and hold a Wi-Fi network, a service account and a
+  calendar) *before* it changes anything; a wrong passphrase, a damaged file or one that isn't a backup
+  is refused with nothing changed. Only then does it save the settings and restart. Restoring replaces
+  all settings, including the Wi-Fi network and this page's password - after a restore to a board that
+  has none, you still need the setup portal first, to reach the config page at all.
+- **Format:** `GCALSET`, a version byte, the PBKDF2 iteration count, a 16-byte salt, a 12-byte nonce,
+  then AES-256-GCM ciphertext and tag. The key is PBKDF2-HMAC-SHA256 of the passphrase (100,000 rounds,
+  a second or two on the display); the header is authenticated, so any change anywhere in the file -
+  or a different passphrase - fails the same check, and the two are not told apart. A fresh random salt
+  and nonce are used every time (the hardware RNG). Files claiming fewer than 10,000 or more than
+  1,000,000 rounds are refused.
+- **Without the display:** `tools/gcal_settings.py decrypt gcal-settings.enc -o settings.json` (and
+  `encrypt` to go the other way; the passphrase from `GCAL_BACKUP_PASS` or a prompt; needs
+  `pip install cryptography`). The decrypted file has every secret in the clear (it is written owner-only):
+  delete it when done. So a backup stays readable even if this firmware is gone.
+- **Limits, plainly:** the passphrase and file cross your LAN over the config page's plain http, like
+  the page's own password (see *Security notes*). Someone who gets the file can guess passphrases offline
+  as fast as their hardware allows - 100,000 rounds slows that, it doesn't stop it, so use a long,
+  unique passphrase and don't keep it with the file. There is no recovery if it's lost. Both routes need
+  the page password and share its lockout, but that lockout does nothing against a stolen file.
+- **Tests:** `settings_crypt.c` has no ESP-IDF in it and runs in the host tests against vectors made
+  by Python's own PBKDF2 and AES-GCM (so the format is checked against something other than itself), plus
+  every single-bit change to a file, truncation, bad versions and iteration counts, and the passphrase
+  rules. The host tests need mbedTLS: the machine's if it has one (`apt install libmbedtls-dev`), else
+  ESP-IDF's copy, built once into `tests/host/build-mbedtls/`. The routes themselves are tested on the
+  display, not on the host.
+
 ## News feeds
 
 Two RSS 2.0 / Atom feeds, set by address on the config web page (*News feeds*:
@@ -861,6 +903,10 @@ network or against someone who can touch the hardware**. What that means in prac
   restart clears it, and it is **per device, not per client**: anyone on your network can keep the
   page locked against you for up to 15 minutes at a time (the display itself is unaffected). Use a
   strong, unique password, don't stay logged in, and keep the device on a network you control.
+- **The encrypted settings backup** (config page -> *Backup and restore*) protects its file with a
+  passphrase (AES-256-GCM, PBKDF2-SHA256), but the passphrase and the file cross the LAN over the
+  page's plain http. A stolen file can be guessed at offline, so the passphrase has to be long. See
+  *Encrypted settings backup*.
 - **The setup portal is an open access point.** On first boot, or after *Setup*, the device runs
   `GCal-Display-Setup` with no Wi-Fi password and serves its setup page over plain HTTP on
   `192.168.4.1`, so the Wi-Fi password and service-account key you type are sent unencrypted. Do
