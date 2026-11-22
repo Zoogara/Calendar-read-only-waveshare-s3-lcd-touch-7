@@ -20,7 +20,7 @@ extern "C" {
 #define RADAR_FRAMES   6
 #define RADAR_ID_MAX   32
 
-/* "https://tilecache.rainviewer.com/v2/radar/34ec6b97a411/256/7/-36.05/146.45/1/1_1.png" -> "34ec6b97a411".
+/* "https://tilecache.rainviewer.com/v2/radar/34ec6b97a411/256/7/-33.87/151.21/1/1_1.png" -> "34ec6b97a411".
  * False if there is no /radar/<id>/ part or the id is empty, too long, or not letters and digits only (it
  * becomes part of a URL and a file name, so it is checked). */
 bool radar_id_from_url(const char *url, char *id, size_t id_sz);

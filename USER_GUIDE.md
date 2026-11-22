@@ -216,7 +216,8 @@ device read your calendars (see the README's *Google Cloud setup*).
 **Home Assistant weather** - **URL** (`http://` and the port, e.g.
 `http://192.168.0.10:8123`; blank turns the weather off), **long-lived
 access token** (from your Home Assistant profile → Security; blank keeps
-the current one), **temperature sensor**, an optional **second temperature
+the current one), **temperature sensor** (needed: the weather stays off while
+it is blank), an optional **second temperature
 sensor** (e.g. a local weather station or a feels-like reading) with
 **Temperature to show** choosing between them, and the **description
 sensor** whose condition picks the icon.
@@ -225,7 +226,7 @@ sensor** whose condition picks the icon.
 **feels-like**, **wind speed**, **wind gust**, **wind direction** (e.g. NNW),
 **wind direction in degrees** (for the arrows on the wind graph - blank means
 no arrows), **rainfall** and **air pressure**, and the **BOM forecast entity
-prefix** (e.g. `sensor.rutherglen_`) the 7-day forecast is read from - the
+prefix** (e.g. `sensor.myplace_`) the 7-day forecast is read from - the
 page lists the forecast sensors that prefix stands for, just below it, as you
 type. Leave one blank to leave that line out of the panel.
 

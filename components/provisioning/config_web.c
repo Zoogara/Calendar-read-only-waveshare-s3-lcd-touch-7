@@ -415,7 +415,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         { "ha_wdeg_entity", "Wind direction in degrees - arrows on the wind graph (blank = no arrows)", offsetof(app_settings_t, ha_wdeg_entity) },
         { "ha_rain_entity", "Rainfall sensor", offsetof(app_settings_t, ha_rain_entity) },
         { "ha_pressure_entity", "Air pressure sensor", offsetof(app_settings_t, ha_pressure_entity) },
-        { "ha_bom_prefix", "BOM forecast entity prefix (e.g. sensor.rutherglen_)", offsetof(app_settings_t, ha_bom_prefix) },
+        { "ha_bom_prefix", "BOM forecast entity prefix (e.g. sensor.myplace_)", offsetof(app_settings_t, ha_bom_prefix) },
         { "ha_graph_entity", "Graph line 1, last 24 hours - end of the details panel (blank = the temperature sensor)", offsetof(app_settings_t, ha_graph_entity) },
         { "ha_graph2_entity", "Graph line 2 (blank = the BOM temperature, <prefix>temp)", offsetof(app_settings_t, ha_graph2_entity) },
         { "ha_hourly_entity", "Hourly forecast sensor (24 hours of datetime_N, temperature_N, condition_N, ...) - blank = no hourly strip", offsetof(app_settings_t, ha_hourly_entity) },
@@ -445,7 +445,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "f.addEventListener('input',u);u();})();</script>");
     httpd_resp_sendstr_chunk(req,
         "<label>Location name (optional)</label>"
-        "<input type='text' name='weather_place' placeholder='e.g. Rutherglen' value='");
+        "<input type='text' name='weather_place' placeholder='e.g. Port Hartley' value='");
     send_value_chunk(req, s_cfg->weather_place);
     httpd_resp_sendstr_chunk(req, "'><div class='hint'>Shown in the weather panel's heading.</div>");
     /* Own chunks, like the calendar rows - other[] below is close to full. */

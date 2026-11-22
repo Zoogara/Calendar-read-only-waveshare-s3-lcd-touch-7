@@ -581,14 +581,14 @@ local network, read by `components/ha_weather/` after each calendar sync.
 
 What it reads:
 
-- **Temperature sensor** (default `sensor.rutherglen_temp`): a number in
-  °C, shown to one decimal place.
+- **Temperature sensor** (required - the weather stays off while it is blank;
+  e.g. `sensor.outdoor_temperature`): a number in °C, shown to one decimal place.
 - **Second temperature sensor** (optional, e.g. a local weather station or
   a "feels like" sensor): a radio button on the config page chooses which
   of the two is shown, and only that one is read. With no second sensor
   set, the first is always shown.
-- **Description sensor** (default `sensor.rutherglen_icon_descriptor_0`):
-  the Bureau of Meteorology's condition word, such as `mostly_sunny`, used
+- **Description sensor** (optional; e.g. the BOM integration's
+  `icon_descriptor` sensor for your location): the Bureau of Meteorology's condition word, such as `mostly_sunny`, used
   only to choose the icon. Conditions without an icon show the
   temperature alone.
 - **`sun.sun`**, Home Assistant's built-in sun entity, to choose a day or
@@ -604,7 +604,8 @@ Setup, on the runtime config page (not the first-boot portal):
 2. **Long-lived access token**, created in Home Assistant under your user
    profile > Security. It's never shown on the page again; leaving the box
    blank on a later save keeps the saved one.
-3. The sensor entity IDs, if yours differ from the defaults, and which
+3. The sensor entity IDs - the temperature sensor is needed (the weather stays
+   off while it is blank), the others are optional - and which
    temperature to show.
 4. The **weather details** sensors and the BOM forecast prefix (below).
 
@@ -624,10 +625,13 @@ entities, built from one configured prefix: `<prefix>short_text_N`,
 `icon_descriptor_N`, `temp_min_N`, `temp_max_N`, `rain_chance_N`,
 `rain_amount_range_N` for days 0-6, and `extended_text_0`/`_1` - read from
 their `state` attribute, which holds the full forecast, because Home
-Assistant cuts every entity's state itself at 255 characters. Defaults
-are this installation's sensors (a local weather station for wind, rain and
-pressure; the BOM's Rutherglen entities for the rest). A blank sensor field
-leaves its line out.
+Assistant cuts every entity's state itself at 255 characters. Nothing that
+names a place is preset: the feels-like sensor and the forecast prefix start
+blank, and the wind, gust, wind direction, rain, pressure and hourly-forecast
+sensors start as common names (`sensor.wind_speed`, `sensor.wind_gust`,
+`sensor.named_wind_direction`, `sensor.rain_accumulation`,
+`sensor.atmospheric_pressure_msl`, `sensor.weather_data`) that you will want to
+change to yours. A blank sensor field leaves its line out.
 
 All of it - about 50 values - comes back from **one request**: a POST to
 Home Assistant's `/api/template` with a Jinja template that renders every
@@ -677,8 +681,8 @@ Four graphs (and the hourly strip) below the forecast, all from Home Assistant's
   Line 1 is `ha_graph_entity` (blank = the temperature sensor the clock
   shows); line 2 is `ha_graph2_entity` (blank = the BOM observation,
   `<ha_bom_prefix>temp`). Legend names are the `ha_graph_label` /
-  `ha_graph2_label` settings (line 2 defaults to "BOM Rutherglen
-  Temperature"; blank = the sensor's own name). Resampled to 96 steps of 15
+  `ha_graph2_label` settings (blank = the sensor's own
+  name). Resampled to 96 steps of 15
   minutes, each holding the last value; refreshed every ~10 minutes.
 - **Last 14 days - daily high and low** - paired bars per day for line 1's
   sensor (the value is held across midnight), with a labelled scale at every

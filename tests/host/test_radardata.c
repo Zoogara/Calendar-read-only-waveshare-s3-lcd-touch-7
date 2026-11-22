@@ -9,7 +9,7 @@
 static void ids_from_urls(void)
 {
     char id[RADAR_ID_MAX];
-    CHECK(radar_id_from_url("https://tilecache.rainviewer.com/v2/radar/34ec6b97a411/256/7/-36.05/146.45/1/1_1.png", id, sizeof(id)));
+    CHECK(radar_id_from_url("https://tilecache.rainviewer.com/v2/radar/34ec6b97a411/256/7/-33.87/151.21/1/1_1.png", id, sizeof(id)));
     CHECK_STR(id, "34ec6b97a411");
     /* HA's own file URL has "/radar/" too, but its "id" has a dot: not for this function, and refused */
     CHECK(!radar_id_from_url("http://ha.local:8123/local/radar/abc123.png", id, sizeof(id)));

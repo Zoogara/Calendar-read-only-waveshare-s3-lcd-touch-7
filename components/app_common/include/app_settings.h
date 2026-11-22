@@ -201,7 +201,7 @@ typedef struct {
      * the clock is showing. */
     char ha_graph_entity[64];
     /* A second line on the same graph. Blank = the BOM observation,
-     * "<ha_bom_prefix>temp" (e.g. sensor.rutherglen_temp). */
+     * "<ha_bom_prefix>temp" (e.g. sensor.myplace_temp). */
     char ha_graph2_entity[64];
     /* Hourly forecast for the weather panel's horizontal strip: a sensor whose
      * attributes hold datetime_N / temperature_N / condition_N /
@@ -248,9 +248,12 @@ typedef struct {
 #define APP_SETTINGS_DEFAULT_FETCH_FUTURE_DAYS 60
 #define APP_SETTINGS_DEFAULT_BRIGHTNESS_MIN_PCT_X10 105 /* 10.5% - backlight floor in full dark,
                                                              the bottom of the measured-good range */
-#define APP_SETTINGS_DEFAULT_HA_TEMP_ENTITY "sensor.rutherglen_temp"
-#define APP_SETTINGS_DEFAULT_HA_DESC_ENTITY "sensor.rutherglen_icon_descriptor_0"
-#define APP_SETTINGS_DEFAULT_HA_FEELS_ENTITY    "sensor.rutherglen_temp_feels_like"
+/* Entities that name a place are not preset: blank until set on the config page. The weather stays off while the
+ * temperature sensor is blank, and a blank description / feels-like / forecast prefix just leaves that part out.
+ * (A config saved before a field existed gets these values; one that has the field keeps what it has.) */
+#define APP_SETTINGS_DEFAULT_HA_TEMP_ENTITY ""
+#define APP_SETTINGS_DEFAULT_HA_DESC_ENTITY ""
+#define APP_SETTINGS_DEFAULT_HA_FEELS_ENTITY    ""
 #define APP_SETTINGS_DEFAULT_HA_WIND_ENTITY     "sensor.wind_speed"
 #define APP_SETTINGS_DEFAULT_HA_GUST_ENTITY     "sensor.wind_gust"
 #define APP_SETTINGS_DEFAULT_HA_WDEG_ENTITY     "sensor.wind_direction"
@@ -259,9 +262,9 @@ typedef struct {
 #define APP_SETTINGS_DEFAULT_HA_WDIR_ENTITY     "sensor.named_wind_direction"
 #define APP_SETTINGS_DEFAULT_HA_RAIN_ENTITY     "sensor.rain_accumulation"
 #define APP_SETTINGS_DEFAULT_HA_PRESSURE_ENTITY "sensor.atmospheric_pressure_msl"
-#define APP_SETTINGS_DEFAULT_HA_BOM_PREFIX      "sensor.rutherglen_"
-#define APP_SETTINGS_DEFAULT_HA_GRAPH2_LABEL    "BOM Rutherglen Temperature"
-#define APP_SETTINGS_DEFAULT_WEATHER_PLACE      "Rutherglen"
+#define APP_SETTINGS_DEFAULT_HA_BOM_PREFIX      ""
+#define APP_SETTINGS_DEFAULT_HA_GRAPH2_LABEL    ""     /* blank = the sensor's own name */
+#define APP_SETTINGS_DEFAULT_WEATHER_PLACE      ""
 #define APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX 150     /* ~typical lit-room lux for 100% */
 
 #ifdef __cplusplus
