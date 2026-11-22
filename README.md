@@ -17,12 +17,13 @@ history**.
 
 > **This is the `with-HA-weather` branch.** It adds to the ambient clock the
 > date, the current temperature and a weather icon - tap the weather for
-> current conditions and a 7-day forecast, tap the date for "on this day"
-> history from Wikipedia. The weather comes from a Home Assistant server
-> on the local network (see "Home Assistant weather" and "On this day"
-> below) and depends on one particular home setup - Home Assistant with
-> Bureau of Meteorology sensors for a specific town - so it won't work
-> as-is anywhere else. `main` is the general-purpose version.
+> current conditions, a 7-day forecast and graphs, and from there a radar and
+> satellite page. The weather comes from a Home Assistant server on the local
+> network (see "Home Assistant weather" and "Radar and satellite" below) and
+> depends on one particular home setup - Home Assistant with Bureau of
+> Meteorology sensors for a specific town - so it won't work as-is anywhere
+> else. `main` is the general-purpose version, with Open-Meteo weather;
+> everything else, "On this day" included, is the same on every branch.
 
 ## What it does
 
@@ -87,6 +88,12 @@ a real calendar, sensor or place.*
 - **Screen lock** (optional): with a 4-digit PIN set on the config page,
   the display locks from the padlock in the top bar, after a set number
   of minutes without a touch, and at every boot. See "Screen lock" below.
+- **Weather** (optional, from Home Assistant on this branch): the ambient clock
+  shows the date, a weather icon and the temperature; tap the weather for
+  current conditions, a 7-day forecast and graphs, and from there the radar and
+  satellite page. See "Home Assistant weather" and "Radar and satellite" below.
+- **On this day**: tap the date on the ambient clock for notable events
+  in history on today's date, from Wikipedia. See "On this day" below.
 
 ## More screens
 
@@ -184,7 +191,8 @@ components/
 tests/host/              unit tests for the pure-C code (RSS/Atom and ICS
                            parsers, the config page's auth lockout and URL
                            decoding, JWT building, time formatting, text
-                           cleaning, the encrypted-backup format), run on a
+                           cleaning, the encrypted-backup format, the Home Assistant
+                           wind arithmetic, the radar frame code), run on a
                            computer under AddressSanitizer:
                            `make -C tests/host test`
 tools/
@@ -659,7 +667,7 @@ the font file's header).
 
 ### Sensor history graphs (end of the details panel)
 
-Three graphs below the forecast, all from Home Assistant's REST history API
+Four graphs (and the hourly strip) below the forecast, all from Home Assistant's REST history API
 (`components/ha_weather/ha_history.c`, plain http on the LAN like the rest):
 
 - **Last 24 hours** - up to two sensors as lines on shared axes, in different
