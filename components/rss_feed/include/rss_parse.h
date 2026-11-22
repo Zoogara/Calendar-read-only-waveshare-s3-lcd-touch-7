@@ -2,10 +2,12 @@
 /*
  * Pure-C RSS 2.0 / Atom reader: no ESP-IDF calls, so it can be tested on a
  * computer against real feeds (see tools/ if that is ever needed again).
- * Keeps only each item's heading and a short plain-text body.
+ * Keeps only each item's heading, a short plain-text body, and its link (only a plain
+ * http(s) address that passes link_url_ok() - see components/readlater).
  */
 
 #include <stddef.h>
+#include "link_url.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,6 +24,7 @@ extern "C" {
 typedef struct {
     char title[RSS_TITLE_LEN];   /* UTF-8, plain text */
     char text[RSS_TEXT_LEN];     /* UTF-8, plain text, may be empty */
+    char url[LINK_URL_MAX];      /* the article's address, or empty if the item had none we would accept */
 } rss_item_t;
 
 typedef struct {

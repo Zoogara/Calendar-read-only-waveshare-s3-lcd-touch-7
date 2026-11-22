@@ -8,13 +8,15 @@
  * Fetched at most once per local day, after a calendar sync, and kept in
  * PSRAM. The response is ~190KB (it carries full summaries of every linked
  * article), all of which is received and parsed in PSRAM; only the year, a
- * heading (the main linked article's title) and the one-line description of
- * each entry are kept, ~10KB.
+ * heading (the main linked article's title), the one-line description and the
+ * article's address (for the QR code and the read-later list) of each entry are
+ * kept, ~15KB.
  */
 
 #include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "link_url.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +28,7 @@ typedef struct {
     int16_t year;      /* negative for BC */
     char title[80];    /* UTF-8, may be empty */
     char text[320];    /* UTF-8 */
+    char url[LINK_URL_MAX]; /* the main article's address, or empty */
 } onthisday_entry_t;
 
 typedef struct {

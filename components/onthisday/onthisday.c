@@ -195,6 +195,13 @@ static esp_err_t fetch(int month, int day, onthisday_t *out)
         if (cJSON_IsString(norm)) {
             copy_utf8(e->title, norm->valuestring, sizeof(e->title));
         }
+        /* ... and its address (pages[0].content_urls.desktop.page), kept only if it is a plain web address that fits */
+        cJSON *cu = page ? cJSON_GetObjectItemCaseSensitive(page, "content_urls") : NULL;
+        cJSON *desk = cu ? cJSON_GetObjectItemCaseSensitive(cu, "desktop") : NULL;
+        cJSON *pg = desk ? cJSON_GetObjectItemCaseSensitive(desk, "page") : NULL;
+        if (cJSON_IsString(pg) && link_url_ok(pg->valuestring)) {
+            strcpy(e->url, pg->valuestring);
+        }
         out->count++;
     }
     cJSON_Delete(root);

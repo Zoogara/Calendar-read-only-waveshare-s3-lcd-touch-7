@@ -117,6 +117,10 @@ typedef struct {
     uint16_t fetch_past_days;
     uint16_t fetch_future_days;
 
+    /* How many days a link saved with "Save for later" (from the news feed and "On this day" pages) is kept before it
+     * expires. 1-90, default APP_SETTINGS_DEFAULT_READ_LATER_DAYS. See components/readlater. */
+    uint16_t read_later_days;
+
     /* Password for the runtime config web server (see config_web.c) -
      * everything configurable except Wi-Fi, reachable over the LAN while
      * the device is running normally (unlike the AP-mode setup portal,
@@ -200,6 +204,8 @@ typedef struct {
 #define APP_SETTINGS_DEFAULT_VIEW_END_HOUR     22
 #define APP_SETTINGS_DEFAULT_FETCH_PAST_DAYS   14
 #define APP_SETTINGS_DEFAULT_FETCH_FUTURE_DAYS 60
+#define APP_SETTINGS_DEFAULT_READ_LATER_DAYS   14
+#define APP_SETTINGS_MAX_READ_LATER_DAYS       90
 #define APP_SETTINGS_DEFAULT_BRIGHTNESS_MIN_PCT_X10 105 /* 10.5% - backlight floor in full dark,
                                                              the bottom of the measured-good range */
 #define APP_SETTINGS_DEFAULT_BRIGHTNESS_MAX_LUX 150     /* ~typical lit-room lux for 100% */

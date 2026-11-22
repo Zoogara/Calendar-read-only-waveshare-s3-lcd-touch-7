@@ -4,6 +4,7 @@
 #include "auth_guard.h"
 #include "url_decode.h"
 #include "settings_crypt.h"
+#include "readlater.h"
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #include "esp_heap_caps.h"
@@ -11,6 +12,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <time.h>
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "esp_timer.h"
@@ -455,7 +457,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<label>Timezone (POSIX TZ string)</label>"
         "<input type='text' name='posix_tz' value='");
     send_value_chunk(req, s_cfg->posix_tz);
-    char other[4400];
+    char other[4900];
     snprintf(other, sizeof(other),
         "'>"
         "<div class='hint'>Find yours by searching \"POSIX TZ string &lt;your city&gt;\".</div>"
@@ -494,6 +496,10 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<div class='hint'>How far back/forward each sync fetches and keeps "
         "cached - wider covers more paging without a fresh fetch, but costs "
         "more time/memory per sync. Dial back if syncs start struggling.</div>"
+        "<label>Saved links are kept for (days)</label>"
+        "<input type='number' name='read_later_days' value='%u' min='1' max='90'>"
+        "<div class='hint'>Links saved with <b>Save for later</b> from the news feed and \"On this day\" "
+        "pages expire after this many days. <a href='/links'>See the saved links</a>.</div>"
         "<div class='btn-row'>"
         "<button type='submit'>Save &amp; restart</button>"
         "<a class='btn-cancel' href='/'>Cancel</a>"
@@ -501,7 +507,8 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "</form>",
         s_cfg->clock_24h ? "" : " selected", s_cfg->clock_24h ? " selected" : "",
         (unsigned)s_cfg->screen_timeout_s, (unsigned)s_cfg->view_start_hour, (unsigned)s_cfg->view_end_hour,
-        (unsigned)s_cfg->fetch_past_days, (unsigned)s_cfg->fetch_future_days);
+        (unsigned)s_cfg->fetch_past_days, (unsigned)s_cfg->fetch_future_days,
+        (unsigned)s_cfg->read_later_days);
     httpd_resp_sendstr_chunk(req, other);
     httpd_resp_sendstr_chunk(req, BACKUP_SECTION_HTML);
 
@@ -616,6 +623,12 @@ static esp_err_t save_post_handler(httpd_req_t *req)
         long v = strtol(num, NULL, 10);
         if (v >= 1 && v <= 365) {
             s_cfg->fetch_future_days = (uint16_t)v;
+        }
+    }
+    if (form_get(body, "read_later_days", num, sizeof(num))) {
+        long v = strtol(num, NULL, 10);
+        if (v >= 1 && v <= APP_SETTINGS_MAX_READ_LATER_DAYS) {
+            s_cfg->read_later_days = (uint16_t)v;
         }
     }
     if (form_get(body, "brightness_min_pct_x10", num, sizeof(num))) {
@@ -1098,6 +1111,135 @@ static esp_err_t restore_post_handler(httpd_req_t *req)
     return rc;
 }
 
+/* ---------------- saved links (GET /links, POST /links/remove, POST /links/clear) ----------------
+ * The read-later list (components/readlater): links saved with "Save for later" on the display, each kept for
+ * read_later_days. Titles and addresses come from news feeds and Wikipedia, so they are treated as untrusted: only
+ * addresses link_url_ok() accepts are ever printed as a link (nothing like javascript:), and everything is
+ * HTML-escaped. Removing needs the entry's saved time as well as its position, so a page left open can't delete the
+ * wrong link after the list has changed. */
+
+static void send_link_age(httpd_req_t *req, const rl_link_t *k, uint32_t now, int keep_days)
+{
+    char line[160];
+    const char *host = strstr(k->url, "://");
+    host = host ? host + 3 : k->url;
+    size_t hl = strcspn(host, "/?#:");
+    char hostbuf[64];
+    snprintf(hostbuf, sizeof(hostbuf), "%.*s", (int)(hl < sizeof(hostbuf) - 1 ? hl : sizeof(hostbuf) - 1), host);
+    int left = rl_days_left(k, now, keep_days);
+    if (k->saved == 0 || now < RL_MIN_VALID_TIME) {
+        snprintf(line, sizeof(line), "<div class='hint'>%s &middot; saved before the clock was set</div>", hostbuf);
+    } else {
+        uint32_t age = now > k->saved ? (now - k->saved) / 86400u : 0;
+        char when[32];
+        if (age == 0) {
+            snprintf(when, sizeof(when), "today");
+        } else {
+            snprintf(when, sizeof(when), "%u day%s ago", (unsigned)age, age == 1 ? "" : "s");
+        }
+        snprintf(line, sizeof(line), "<div class='hint'>%s &middot; saved %s &middot; %d day%s left</div>", hostbuf, when,
+                 left, left == 1 ? "" : "s");
+    }
+    httpd_resp_sendstr_chunk(req, line);
+}
+
+static esp_err_t links_get_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_OK;
+    }
+    rl_list_t *l = big_alloc(sizeof(*l));
+    if (l == NULL) {
+        return text_reply(req, "503 Service Unavailable", "not enough free memory just now - try again\n");
+    }
+    int keep = s_cfg->read_later_days ? s_cfg->read_later_days : APP_SETTINGS_DEFAULT_READ_LATER_DAYS;
+    int n = readlater_copy(l, (uint16_t)keep);
+    time_t t = time(NULL);
+    uint32_t now = t > 0 ? (uint32_t)t : 0;
+
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr_chunk(req, HTML_HEAD);
+    char head[320];
+    snprintf(head, sizeof(head),
+        "<h1>Saved links</h1>"
+        "<p>Links saved with <b>Save for later</b> on the display's news feed and \"On this day\" pages. Each is kept for "
+        "%d day%s (change that under <a href='/'>settings</a>), up to %d links.</p>",
+        keep, keep == 1 ? "" : "s", RL_MAX);
+    httpd_resp_sendstr_chunk(req, head);
+    if (n == 0) {
+        httpd_resp_sendstr_chunk(req, "<p>Nothing saved at the moment.</p>");
+    }
+    for (int i = 0; i < n; i++) {
+        const rl_link_t *k = &l->items[i];
+        if (!link_url_ok(k->url)) {
+            continue;                                   /* never print a link that isn't a plain web address */
+        }
+        httpd_resp_sendstr_chunk(req, "<div style='margin:1em 0;padding-bottom:.8em;border-bottom:1px solid #ddd'>"
+                                      "<a href='");
+        send_value_chunk(req, k->url);
+        httpd_resp_sendstr_chunk(req, "' target='_blank' rel='noopener noreferrer'>");
+        send_value_chunk(req, k->title);
+        httpd_resp_sendstr_chunk(req, "</a>");
+        send_link_age(req, k, now, keep);
+        char form[300];
+        snprintf(form, sizeof(form),
+            "<form method='POST' action='/links/remove' style='margin-top:.4em'>"
+            "<input type='hidden' name='i' value='%d'><input type='hidden' name='t' value='%u'>"
+            "<button type='submit' style='padding:.3em .9em;font-size:.85em'>Remove</button></form></div>",
+            i, (unsigned)k->saved);
+        httpd_resp_sendstr_chunk(req, form);
+    }
+    if (n > 0) {
+        httpd_resp_sendstr_chunk(req,
+            "<form method='POST' action='/links/clear' onsubmit=\"return confirm('Remove all saved links?')\">"
+            "<button type='submit' style='background:#d93025'>Clear all</button></form>");
+    }
+    httpd_resp_sendstr_chunk(req, "<p><a href='/'>Back to settings</a></p></body></html>");
+    httpd_resp_sendstr_chunk(req, NULL);
+    free(l);
+    return ESP_OK;
+}
+
+static esp_err_t links_redirect(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "303 See Other");
+    httpd_resp_set_hdr(req, "Location", "/links");
+    return httpd_resp_send(req, NULL, 0);
+}
+
+static esp_err_t links_remove_handler(httpd_req_t *req)
+{
+    if (!check_auth(req) || !check_same_origin(req)) {
+        return ESP_OK;
+    }
+    size_t n = 0;
+    uint8_t *body = recv_body(req, 256, &n);
+    if (body == NULL) {
+        return ESP_OK;
+    }
+    char idx[16] = "", saved[16] = "";
+    form_get((const char *)body, "i", idx, sizeof(idx));
+    form_get((const char *)body, "t", saved, sizeof(saved));
+    free(body);
+    char *e1 = NULL, *e2 = NULL;
+    long i = strtol(idx, &e1, 10);
+    unsigned long t = strtoul(saved, &e2, 10);
+    if (idx[0] == '\0' || saved[0] == '\0' || *e1 != '\0' || *e2 != '\0') {
+        return text_reply(req, "400 Bad Request", "bad request\n");
+    }
+    readlater_remove((int)i, (uint32_t)t, s_cfg->read_later_days);
+    return links_redirect(req);
+}
+
+static esp_err_t links_clear_handler(httpd_req_t *req)
+{
+    if (!check_auth(req) || !check_same_origin(req)) {
+        return ESP_OK;
+    }
+    readlater_clear();
+    return links_redirect(req);
+}
+
 void config_web_start(app_settings_t *cfg)
 {
     if (s_server != NULL) {
@@ -1142,6 +1284,12 @@ void config_web_start(app_settings_t *cfg)
     httpd_register_uri_handler(s_server, &backup_uri);
     httpd_uri_t restore_uri = {.uri = "/restore", .method = HTTP_POST, .handler = restore_post_handler};
     httpd_register_uri_handler(s_server, &restore_uri);
+    httpd_uri_t links_uri = {.uri = "/links", .method = HTTP_GET, .handler = links_get_handler};
+    httpd_register_uri_handler(s_server, &links_uri);
+    httpd_uri_t links_remove_uri = {.uri = "/links/remove", .method = HTTP_POST, .handler = links_remove_handler};
+    httpd_register_uri_handler(s_server, &links_remove_uri);
+    httpd_uri_t links_clear_uri = {.uri = "/links/clear", .method = HTTP_POST, .handler = links_clear_handler};
+    httpd_register_uri_handler(s_server, &links_clear_uri);
     if (ota_update_http_allowed_in_build()) {         /* a development build only */
         httpd_uri_t restart_uri = {.uri = "/restart", .method = HTTP_POST, .handler = restart_post_handler};
         httpd_register_uri_handler(s_server, &restart_uri);
