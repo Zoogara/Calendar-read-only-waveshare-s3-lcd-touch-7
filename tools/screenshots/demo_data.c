@@ -201,6 +201,7 @@ static void item(int f, int i, const char *t, const char *x)
     rss_item_t *it = &s_feed[f].items[i];
     snprintf(it->title, sizeof(it->title), "%s", t);
     snprintf(it->text, sizeof(it->text), "%s", x);
+    snprintf(it->url, sizeof(it->url), "https://news.example.org/%s/story-%d", f == 0 ? "port-hartley" : "world", i + 1);   /* invented */
     s_feed[f].count = i + 1;
 }
 
@@ -210,6 +211,15 @@ static void otd(int i, int year, const char *title, const char *text)
     e->year = (int16_t)year;
     snprintf(e->title, sizeof(e->title), "%s", title);
     snprintf(e->text, sizeof(e->text), "%s", text);
+    {   /* Wikipedia's own article address: the entries are well-known public history */
+        char slug[96];
+        size_t k = 0;
+        for (const char *p = title; *p && k < sizeof(slug) - 1; p++) {
+            slug[k++] = *p == ' ' ? '_' : *p;
+        }
+        slug[k] = '\0';
+        snprintf(e->url, sizeof(e->url), "https://en.wikipedia.org/wiki/%s", slug);
+    }
     s_otd.count = i + 1;
 }
 

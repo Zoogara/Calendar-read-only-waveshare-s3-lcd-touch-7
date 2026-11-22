@@ -3,10 +3,14 @@
  *
  * Same shape as ui_history.c: a full-screen scrollable overlay on
  * lv_layer_top(), built when opened and deleted when closed (so its labels
- * cost internal RAM only while it's showing); a tap closes it (a drag scrolls
- * instead), ui_screensaver.c closes it after PANEL_IDLE_CLOSE_MS untouched,
- * and either way it's back to the clock, never the calendar. Headings and
- * plain text only - no images. */
+ * cost internal RAM only while it's showing). Touching an item with a link opens
+ * the link card (ui_link.c: a QR code to scan, and Save for later); the close
+ * button at the top right, a tap on the heading or the empty background, or
+ * ui_screensaver.c after PANEL_IDLE_CLOSE_MS untouched, closes the list (a
+ * drag scrolls instead) - back to the clock, never the calendar. Headings and
+ * plain text only - no images. Each item's labels carry its position in their
+ * user_data (+1; -1 = no link, so a tap does nothing) and bubble to the list's
+ * one handler, as the calendar views do for the details card. */
 #include "calendar_ui_internal.h"
 #include "ui_theme.h"
 #include "rss_feed.h"
@@ -23,6 +27,7 @@
 static const char *TAG = "ui_feed";
 
 static lv_obj_t *s_overlay;
+static int s_feed_idx;
 
 /* Same double invalidate + refresh as ui_history.c after deleting a
  * full-screen lv_layer_top() object (direct_mode dual framebuffers). */
@@ -55,6 +60,25 @@ static void tap_cb(lv_event_t *e)
         lv_indev_wait_release(indev);
     }
     lv_async_call(close_async, NULL);
+}
+
+/* One handler for the whole list: a tagged item opens its link card, an untagged tap (the background) closes the list. */
+static void list_tap_cb(lv_event_t *e)
+{
+    intptr_t tag = (intptr_t)lv_obj_get_user_data(lv_event_get_target(e));
+    if (tag < 0) {
+        return;                                   /* an item with no link */
+    }
+    if (tag > 0) {
+        const rss_feed_t *feed = rss_feed_acquire(s_feed_idx);
+        if (feed != NULL && tag - 1 < feed->count) {
+            const rss_item_t *it = &feed->items[tag - 1];
+            ui_link_show(it->title, it->url);     /* copies them */
+        }
+        rss_feed_release();
+        return;
+    }
+    tap_cb(e);
 }
 
 static lv_obj_t *add_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, const char *text)
@@ -98,8 +122,18 @@ void ui_feed_open(int idx)
     lv_obj_set_style_text_font(heading, &gcal_font_20, 0);
     lv_obj_set_style_text_color(heading, lv_color_hex(HEAD_COLOR), 0);
     lv_label_set_long_mode(heading, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(heading, LV_HOR_RES - 64);
+    lv_obj_set_width(heading, 480);
     lv_obj_align(heading, LV_ALIGN_TOP_LEFT, 32, 20);
+
+    /* The way out: a close button, always (a tap on an item opens its link card now, so "tap anywhere" is no longer it). */
+    lv_obj_t *close_btn = lv_label_create(s_overlay);
+    lv_label_set_text(close_btn, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_font(close_btn, &gcal_font_20, 0);
+    lv_obj_set_style_text_color(close_btn, lv_color_hex(HEAD_COLOR), 0);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -28, 20);
+    lv_obj_add_flag(close_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(close_btn, 28);
+    lv_obj_add_event_cb(close_btn, tap_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *list = lv_obj_create(s_overlay);
     lv_obj_remove_style_all(list);
@@ -109,7 +143,8 @@ void ui_feed_open(int idx)
     lv_obj_set_style_pad_row(list, 4, 0);
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_add_flag(list, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(list, tap_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(list, list_tap_cb, LV_EVENT_CLICKED, NULL);
+    s_feed_idx = idx;
 
     const rss_feed_t *feed = rss_feed_acquire(idx);
     /* The label set on the config page wins; otherwise the feed's own title. */
@@ -127,15 +162,26 @@ void ui_feed_open(int idx)
                   "calendar sync and then about every 20 minutes - if this stays "
                   "empty, check the feed's address on the settings page.");
     } else {
+        bool any_link = false;
         for (int i = 0; i < feed->count; i++) {
             const rss_item_t *it = &feed->items[i];
+            void *tag = (void *)(intptr_t)(it->url[0] ? i + 1 : -1);
+            any_link = any_link || it->url[0];
             lv_obj_t *head = add_label(list, &gcal_font_20, TITLE_COLOR, it->title);
+            lv_obj_set_user_data(head, tag);
             if (i > 0) {
                 lv_obj_set_style_pad_top(head, 12, 0);
             }
             if (it->text[0]) {
-                add_label(list, &gcal_font_14, TEXT_COLOR, it->text);
+                lv_obj_set_user_data(add_label(list, &gcal_font_14, TEXT_COLOR, it->text), tag);
             }
+        }
+        if (any_link) {
+            lv_obj_t *hint = lv_label_create(s_overlay);
+            lv_label_set_text(hint, "Tap an item for its link");
+            lv_obj_set_style_text_font(hint, &gcal_font_14, 0);
+            lv_obj_set_style_text_color(hint, lv_color_hex(TEXT_COLOR), 0);
+            lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -88, 24);
         }
     }
     rss_feed_release();

@@ -13,7 +13,7 @@ CFLAGS  := -O1 -g -w -std=gnu11 -MMD -MP -DLV_CONF_KCONFIG_EXTERNAL_INCLUDE=\"sd
            -I$(ROOT)/components/calendar_ui/include -I$(ROOT)/components/app_common/include \
            -I$(ROOT)/components/gcal/include \
            -I$(ROOT)/components/weather/include -I$(ROOT)/components/onthisday/include \
-           -I$(ROOT)/components/rss_feed/include -I$(ROOT)/components/provisioning/include \
+           -I$(ROOT)/components/rss_feed/include -I$(ROOT)/components/readlater/include -I$(ROOT)/components/provisioning/include \
            -I$(ROOT)/components/presence_sensor/include -I$(ROOT)/components/light_sensor/include \
            -I$(ROOT)/components/ota_update/include -I$(ROOT)/components/board_bsp/include \
            -include shim/host_prefix.h
@@ -21,9 +21,10 @@ CFLAGS  := -O1 -g -w -std=gnu11 -MMD -MP -DLV_CONF_KCONFIG_EXTERNAL_INCLUDE=\"sd
 LVGL_DIRS := core draw draw/sw hal misc widgets font extra extra/themes extra/themes/default \
              extra/layouts extra/layouts/flex extra/layouts/grid \
              extra/others
-LVGL_SRC  := $(foreach d,$(LVGL_DIRS),$(wildcard $(LVGL)/src/$(d)/*.c)) $(wildcard $(LVGL)/src/extra/widgets/*/*.c)
+LVGL_SRC  := $(foreach d,$(LVGL_DIRS),$(wildcard $(LVGL)/src/$(d)/*.c)) $(wildcard $(LVGL)/src/extra/widgets/*/*.c) \
+             $(LVGL)/src/extra/libs/qrcode/qrcodegen.c
 UI_SRC    := $(filter-out %ui_settings_dialog.c %/calendar_ui.c %/ui_screensaver.c %/ui_detail.c,$(wildcard $(ROOT)/components/calendar_ui/*.c))
-GCAL_SRC  := $(ROOT)/components/gcal/event_store.c
+GCAL_SRC  := $(ROOT)/components/gcal/event_store.c $(ROOT)/components/readlater/link_url.c
 APP_SRC   := render.c demo_data.c host_stubs.c host_calendar_ui.c host_screensaver.c host_detail.c
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(subst $(ROOT)/,root/,$(subst $(LVGL)/,lvgl/,$(LVGL_SRC) $(UI_SRC) $(GCAL_SRC))) $(APP_SRC))

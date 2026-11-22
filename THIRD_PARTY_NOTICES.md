@@ -23,6 +23,7 @@ Pinned in `dependencies.lock`; `idf.py build` downloads them.
 |---|---|---|
 | **ESP-IDF** | 5.3.2 | Apache-2.0. It carries its own third-party components, among them **cJSON** (MIT), **mbedTLS** (Apache-2.0), **lwIP** (BSD-3-Clause), **FreeRTOS** (MIT) and others; each is licensed in its own directory inside ESP-IDF. |
 | **LVGL** | 8.4.0 | MIT - Copyright (c) 2021 LVGL Kft |
+| **QR Code generator library** (bundled in LVGL, `src/extra/libs/qrcode/qrcodegen.c`) | as bundled in LVGL 8.4.0 | MIT - Copyright (c) Project Nayuki (https://www.nayuki.io/page/qr-code-generator-library). Used by the link card (`ui_link.c`) to make the QR code. "QR Code" is a registered trademark of DENSO WAVE INCORPORATED. |
 | **espressif/esp_lvgl_port** | 2.9.0 | Apache-2.0 |
 | **espressif/esp_lcd_touch** | 1.2.1 | Apache-2.0 |
 | **espressif/esp_lcd_touch_gt911** | 1.2.1 | Apache-2.0 |
