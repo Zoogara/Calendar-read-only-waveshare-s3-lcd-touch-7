@@ -110,7 +110,8 @@ def ensure_fresh_heap(device, auth, before, min_largest_kb, settle_s=30, timeout
     """Every update that has succeeded came from a freshly restarted display, and the ones that crashed
     (in the image check, at the end of the download) had a largest free internal block of 5-7 KB. So if the
     display reports a largest block under `min_largest_kb`, restart it first, wait for it to come back and
-    its start-up fetches to finish (`settle_s` of uptime), and return its fresh /version. Returns `before`
+    its start-up fetches to finish (`settle_s` of uptime) and its largest block to recover to `min_largest_kb`
+    (up to `timeout` seconds), and return its fresh /version. Returns `before`
     unchanged when memory is fine, when the display can't say (an older firmware), or when it can't be
     restarted (no /restart) - the update is then simply attempted as before."""
     if not before or before.get("largest_kb", 0) <= 0 or before["largest_kb"] >= min_largest_kb:
@@ -126,14 +127,22 @@ def ensure_fresh_heap(device, auth, before, min_largest_kb, settle_s=30, timeout
         return before
     t0 = clock()
     latest = None
+    settled = None
     while clock() - t0 < timeout:
         sleep(3)
         v = device_version(device, auth, timeout=4)
         # restarted since the request (not the old image still answering) and past its start-up fetches
         if v and v["uptime_s"] <= (clock() - t0) + 10 and v["uptime_s"] >= settle_s:
-            log(f"  back up: internal RAM {v['free_kb']} KB free, largest block {v['largest_kb']} KB")
-            return v
+            settled = v
+            # ...and its internal heap has recovered: just after a restart the largest block is still small while
+            # the start-up work finishes (13 KB at 30 s, 19 KB a minute or so later), and an update sent then has crashed
+            if v["largest_kb"] >= min_largest_kb or v["largest_kb"] <= 0:
+                log(f"  back up: internal RAM {v['free_kb']} KB free, largest block {v['largest_kb']} KB")
+                return v
         latest = v or latest
+    if settled is not None:
+        log(f"  back up, but its largest block stayed at {settled['largest_kb']} KB - sending anyway")
+        return settled
     log("  the display did not settle in time - sending anyway")
     return latest or before
 
