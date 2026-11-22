@@ -10,6 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install mbedTLS (the settings backup's crypto)
-        run: sudo apt-get update && sudo apt-get install -y libmbedtls-dev
+        run: sudo apt-get update && sudo apt-get install -y libmbedtls-dev zlib1g-dev
       - name: Build and run the parser tests
         run: make -C tests/host test
