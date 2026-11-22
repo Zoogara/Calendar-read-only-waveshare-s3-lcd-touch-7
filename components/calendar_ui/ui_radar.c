@@ -8,7 +8,7 @@
  * six frames kept as lossless 8-bit indexed (ha_radar_pack.c, ~72 KB each), the satellite as RGB565 (251 KB), and one
  * shared 380x330 RGB565+alpha working image (376 KB) that each animation step is expanded into and LVGL draws
  * directly. Internal RAM: the objects below (a few hundred bytes), a mutex, and a parked task's control block.
- * The base map is a constant in flash. PNGs are decoded a row at a time (ha_radar_png.c, on the ROM's miniz): a file
+ * The three base maps (one per zoom) are constants in flash. PNGs are decoded a row at a time (ha_radar_png.c, on the ROM's miniz): a file
  * and a 32 KB inflate window of PSRAM, where lodepng needed ~1.2 MB and failed when PSRAM was fragmented (error 83).
  *
  * Order: frames are only ever shown oldest to newest. They are sorted by their own times (never trusting HA's
@@ -20,6 +20,11 @@
  * 2 minutes past each mark and, if the new frame isn't there yet, every 45 s after that (ha_radar_data.h). It
  * fetches only frames it doesn't already hold. After the page is closed the data lingers for two minutes so
  * opening it again is instant, then everything is freed.
+ *
+ * Zoom: + and - over the map's top right corner step the zoom through RainViewer zoom 5, 6 and 7 (1/2x, 1x, 2x; HA keeps every frame at all
+ * three - homeassistant/radar.yaml). Only the zoom on show is held: a change swaps the base map at once, abandons the
+ * download in progress, drops the frames and fetches the six for the new zoom (they appear as they arrive). Closing the page
+ * puts it back to 1x. The satellite picture has no zoom.
  *
  * Threads: the loader task (PSRAM stack: it only fetches, decodes and packs - no flash writes, no LVGL calls)
  * and the LVGL task (the animation timer, which expands the next frame under D->lock). */
@@ -74,10 +79,19 @@ static const char *TAG = "ui_radar";
 #define SENSOR_BUF       16384
 #define PNG_BUF_MAX      262144
 
+#define ZOOM_MIN      5                    /* RainViewer zoom levels: 1/2x, 1x, 2x */
+#define ZOOM_NORMAL   6
+#define ZOOM_MAX      7
+
 #ifdef HOST_RENDER
-extern uint8_t radar_base_start[];       /* the screenshot renderer loads the fictional map into it */
+extern uint8_t radar_base_start[3][RADAR_WIN_W * RADAR_WIN_H * 2];   /* the screenshot renderer loads the fictional maps into it */
+#define BASE_MAP(z) (radar_base_start[(z) - ZOOM_MIN])
 #else
-extern const uint8_t radar_base_start[] asm(RADAR_BASE_SYM);      /* set by CMakeLists.txt: radar_base.local.rgb565 if present */
+/* set by CMakeLists.txt: radar_base_zN.local.rgb565 if present, else the fictional radar_base_zN.rgb565 */
+extern const uint8_t radar_base_start_5[] asm(RADAR_BASE_SYM_5);
+extern const uint8_t radar_base_start_6[] asm(RADAR_BASE_SYM_6);
+extern const uint8_t radar_base_start_7[] asm(RADAR_BASE_SYM_7);
+#define BASE_MAP(z) ((z) == 5 ? radar_base_start_5 : (z) == 7 ? radar_base_start_7 : radar_base_start_6)
 #endif
 
 /* ---------------------------------------------------------------------------------------------------------
@@ -86,6 +100,8 @@ extern const uint8_t radar_base_start[] asm(RADAR_BASE_SYM);      /* set by CMak
 typedef struct {
     SemaphoreHandle_t lock;                         /* guards n, ids, times, packs and the satellite copy */
     bool stop;                                      /* the page was closed (cleared if it is reopened) */
+    int want;                                       /* the zoom the buttons ask for (5, 6 or 7)  - s_mux */
+    int zoom;                                       /* the zoom of the frames held / being fetched; only the loader changes it - s_mux */
     int n;                                          /* frames ready, chronological: ids/times/packs[0..n-1] */
     char ids[RADAR_FRAMES][RADAR_ID_MAX];
     time_t times[RADAR_FRAMES];
@@ -232,6 +248,26 @@ static bool stopping(void)
     return s;
 }
 
+/* True when the work in hand should be dropped: the page was closed, or the zoom was changed (the frames being fetched
+ * are for the old one). */
+static bool aborting(void)
+{
+    bool a;
+    taskENTER_CRITICAL(&s_mux);
+    a = (D == NULL) || D->stop || D->want != D->zoom;
+    taskEXIT_CRITICAL(&s_mux);
+    return a;
+}
+
+static int cycle_zoom(void)
+{
+    int z;
+    taskENTER_CRITICAL(&s_mux);
+    z = D->zoom;
+    taskEXIT_CRITICAL(&s_mux);
+    return z;
+}
+
 typedef struct {
     char id[RADAR_ID_MAX];
     time_t time;
@@ -298,15 +334,19 @@ static bool read_sat_time(const char *base, const char *token, time_t *out)
 static int pack_row_cb(void *user, int y, const uint8_t *row)
 {
     radar_pack_row((radar_pack_stream_t *)user, y, row);
-    return !stopping();                                 /* the page was closed: stop decoding */
+    return !aborting();                                 /* the page was closed or the zoom changed: stop decoding */
 }
 
 /* Fetch one radar frame and pack it straight from the PNG, a row at a time (ha_radar_png.c): no decoded image ever
  * exists, so a frame costs its file (~25 KB) and a 32 KB inflate window of PSRAM, not 1.2 MB. NULL on any failure. */
-static radar_pack_t *fetch_frame(const char *base, const char *id)
+static radar_pack_t *fetch_frame(const char *base, const char *id, int zoom)
 {
     char url[300];
-    snprintf(url, sizeof(url), "%s/local/radar/%s.png", base, id);
+    if (zoom == ZOOM_NORMAL) {
+        snprintf(url, sizeof(url), "%s/local/radar/%s.png", base, id);
+    } else {
+        snprintf(url, sizeof(url), "%s/local/radar/%s_z%d.png", base, id, zoom);
+    }
     uint8_t *png = NULL;
     int len = http_get(url, NULL, &png, PNG_BUF_MAX);
     if (len <= 0) {
@@ -402,6 +442,7 @@ static bool refresh_once(const app_settings_t *cfg)
 {
     char base[160];
     base_url(cfg, base, sizeof(base));
+    const int zoom = cycle_zoom();
     listed_t list[RADAR_FRAMES];
     int n = read_frame_list(base, cfg->ha_token, list);
     if (n == 0) {
@@ -456,7 +497,7 @@ static bool refresh_once(const app_settings_t *cfg)
         radar_pack_t *np[RADAR_FRAMES] = {0};
         int got = 0;
         int i = 0;
-        for (; i < n && !stopping(); i++) {
+        for (; i < n && !aborting(); i++) {
             if (reuse[i] >= 0) {
                 np[i] = old_packs[reuse[i]];
                 continue;
@@ -464,7 +505,7 @@ static bool refresh_once(const app_settings_t *cfg)
             char st[32];
             snprintf(st, sizeof(st), "Loading %d/%d", got + 1, to_fetch);
             set_status(st);
-            np[i] = fetch_frame(base, list[i].id);
+            np[i] = fetch_frame(base, list[i].id, zoom);
             if (np[i] == NULL) {
                 complete = false;
             } else {
@@ -490,7 +531,7 @@ static bool refresh_once(const app_settings_t *cfg)
              * on show is never a mixture. Frames that failed are dropped from the new list, but if the newest
              * one failed we keep the old list and try again soon. */
             bool newest_ok = np[n - 1] != NULL;
-            if (newest_ok && !stopping()) {
+            if (newest_ok && !aborting()) {
                 xSemaphoreTake(D->lock, portMAX_DELAY);
                 radar_pack_t *dropped[RADAR_FRAMES];
                 int nd = 0;
@@ -601,6 +642,27 @@ static void loader_task(void *arg)
                 next = 0;                     /* reopened: look straight away (cheap when nothing is new) */
                 retries = 0;
             }
+            int want_z, have_z;
+            taskENTER_CRITICAL(&s_mux);
+            want_z = D->want;
+            have_z = D->zoom;
+            taskEXIT_CRITICAL(&s_mux);
+            if (want_z != have_z) {
+                /* the zoom was changed: nothing held is for it. Drop the frames (the UI skips drawing while want != zoom, so
+                 * it isn't using them) and start a fresh cycle at the new zoom. */
+                xSemaphoreTake(D->lock, portMAX_DELAY);
+                D->n = 0;
+                for (int i = 0; i < RADAR_SLOTS; i++) D->slot_used[i] = false;
+                snprintf(D->status, sizeof(D->status), "Loading");
+                D->err[0] = '\0';
+                xSemaphoreGive(D->lock);
+                taskENTER_CRITICAL(&s_mux);
+                D->zoom = want_z;
+                taskEXIT_CRITICAL(&s_mux);
+                ESP_LOGI(TAG, "zoom %d -> %d", have_z, want_z);
+                next = 0;
+                retries = 0;
+            }
             time_t now = time(NULL);
             if (next == 0 || now >= next) {
                 bool complete = refresh_once(cfg);
@@ -624,15 +686,16 @@ static void loader_task(void *arg)
  * The page
  * ------------------------------------------------------------------------------------------------------- */
 static lv_obj_t *s_overlay;
-static lv_obj_t *s_img_radar, *s_img_sat;
+static lv_obj_t *s_img_radar, *s_img_sat, *s_img_base;
+static lv_obj_t *s_zoom_lbl, *s_zoom_in, *s_zoom_out;
 static lv_obj_t *s_bar, *s_radar_ts, *s_sat_ts, *s_status;
 static lv_timer_t *s_timer;
 static lv_img_dsc_t s_dsc_radar, s_dsc_sat;
-static const lv_img_dsc_t s_dsc_base = {
+static lv_img_dsc_t s_dsc_base = {
     .header = {.cf = LV_IMG_CF_TRUE_COLOR, .w = RADAR_WIN_W, .h = RADAR_WIN_H},
     .data_size = RADAR_WIN_W * RADAR_WIN_H * 2,
-    .data = radar_base_start,
 };
+static bool s_clear_shown;               /* the radar image and its time/progress are blank (zoom change in progress) */
 static char s_radar_ts_buf[48], s_sat_ts_buf[48], s_status_buf[32];
 static int s_step;
 static int64_t s_expand_us_total;
@@ -681,12 +744,29 @@ static void animate_cb(lv_timer_t *t)
         return;                                    /* the loader is swapping the list: skip this step */
     }
     int n = D->n;
+    bool zoom_changing;
+    taskENTER_CRITICAL(&s_mux);
+    zoom_changing = D->want != D->zoom;
+    taskEXIT_CRITICAL(&s_mux);
+    if (zoom_changing) {
+        n = 0;                                     /* frames held are for the old zoom: show nothing until the loader swaps */
+    }
     bool sat_dirty = D->sat_dirty, status_changed = strcmp(s_status_buf, D->status) != 0;
     time_t sat_time = D->sat_time;
     if (status_changed) {
         snprintf(s_status_buf, sizeof(s_status_buf), "%s", D->status);
     }
+    if (n == 0 && !s_clear_shown) {
+        memset(D->work, 0, (size_t)RADAR_WIN_W * RADAR_WIN_H * 3);
+        s_radar_ts_buf[0] = '\0';
+        lv_label_set_text_static(s_radar_ts, s_radar_ts_buf);
+        lv_bar_set_value(s_bar, 0, LV_ANIM_OFF);
+        lv_obj_invalidate(s_img_radar);
+        s_clear_shown = true;
+        s_step = 0;
+    }
     if (n > 0) {
+        s_clear_shown = false;
         int cycle = n + HOLD_STEPS;
         if (s_step >= cycle) s_step = 0;
         int k = s_step < n ? s_step : n - 1;     /* oldest to newest, then the newest held */
@@ -722,6 +802,75 @@ static void animate_cb(lv_timer_t *t)
     if (status_changed) {
         lv_label_set_text_static(s_status, s_status_buf);
     }
+}
+
+#define ZOOM_ON_COLOR   0xE8EAED
+#define ZOOM_OFF_COLOR  0x5F6368
+
+static const char *zoom_text(int z)
+{
+    return z == ZOOM_MIN ? "1/2x" : z == ZOOM_MAX ? "2x" : "1x";
+}
+
+/* Brings the base map, the zoom label and the + / - buttons into line with the zoom wanted. */
+static void zoom_ui_apply(int z)
+{
+    s_dsc_base.data = BASE_MAP(z);
+    lv_obj_invalidate(s_img_base);
+    lv_label_set_text_static(s_zoom_lbl, zoom_text(z));
+    lv_obj_set_style_border_color(s_zoom_out, lv_color_hex(z > ZOOM_MIN ? ZOOM_ON_COLOR : ZOOM_OFF_COLOR), 0);
+    lv_obj_set_style_text_color(s_zoom_out, lv_color_hex(z > ZOOM_MIN ? ZOOM_ON_COLOR : ZOOM_OFF_COLOR), 0);
+    lv_obj_set_style_border_color(s_zoom_in, lv_color_hex(z < ZOOM_MAX ? ZOOM_ON_COLOR : ZOOM_OFF_COLOR), 0);
+    lv_obj_set_style_text_color(s_zoom_in, lv_color_hex(z < ZOOM_MAX ? ZOOM_ON_COLOR : ZOOM_OFF_COLOR), 0);
+}
+
+/* A zoom button: +1 (in) or -1 (out) step. The loader notices the change, drops the frames and fetches the new zoom's. */
+static void zoom_cb(lv_event_t *e)
+{
+    int dir = (int)(intptr_t)lv_event_get_user_data(e);
+    if (D == NULL || s_overlay == NULL) {
+        return;
+    }
+    int z;
+    taskENTER_CRITICAL(&s_mux);
+    z = D->want + dir;
+    if (z < ZOOM_MIN) z = ZOOM_MIN;
+    if (z > ZOOM_MAX) z = ZOOM_MAX;
+    D->want = z;
+    taskEXIT_CRITICAL(&s_mux);
+    zoom_ui_apply(z);
+    animate_cb(NULL);                              /* blank the old frame at once */
+}
+
+/* Zoom controls sit over the map's top corners on translucent grey, so they take no room and the map stays visible. */
+#define ZOOM_BTN_W   32
+#define ZOOM_BTN_H   26
+#define ZOOM_MARGIN  5
+
+static void zoom_chip_style(lv_obj_t *o)
+{
+    lv_obj_set_style_bg_color(o, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_bg_opa(o, LV_OPA_60, 0);
+    lv_obj_set_style_radius(o, 5, 0);
+}
+
+static lv_obj_t *add_zoom_button(lv_obj_t *parent, const char *text, int x, int dir)
+{
+    lv_obj_t *b = lv_obj_create(parent);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_pos(b, x, ZOOM_MARGIN);
+    lv_obj_set_size(b, ZOOM_BTN_W, ZOOM_BTN_H);
+    zoom_chip_style(b);
+    lv_obj_set_style_border_width(b, 1, 0);
+    lv_obj_set_style_text_font(b, &gcal_font_20, 0);
+    lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(b, zoom_cb, LV_EVENT_CLICKED, (void *)(intptr_t)dir);
+    lv_obj_t *l = lv_label_create(b);
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_font(l, &gcal_font_20, 0);
+    lv_obj_center(l);                              /* its colour is the button's (zoom_ui_apply) */
+    return b;
 }
 
 static void tap_cb(lv_event_t *e)
@@ -785,10 +934,12 @@ void ui_radar_close(void)
     }
     lv_obj_del(s_overlay);
     s_overlay = NULL;
-    s_img_radar = s_img_sat = s_bar = s_radar_ts = s_sat_ts = s_status = NULL;
+    s_img_radar = s_img_sat = s_img_base = s_bar = s_radar_ts = s_sat_ts = s_status = NULL;
+    s_zoom_lbl = s_zoom_in = s_zoom_out = NULL;
     taskENTER_CRITICAL(&s_mux);
     if (D != NULL) {
         D->stop = true;                  /* the loader frees everything after IDLE_LINGER_S */
+        D->want = ZOOM_NORMAL;           /* back to 1x: the next opening starts at the normal view */
     }
     taskEXIT_CRITICAL(&s_mux);
 }
@@ -805,6 +956,7 @@ static radar_data_t *new_data(void)
     const size_t px = (size_t)RADAR_WIN_W * RADAR_WIN_H;
     const size_t work_b = (px * 3 + 15) & ~(size_t)15, sat_b = (px * 2 + 15) & ~(size_t)15;
     const size_t scratch_b = (sizeof(radar_scratch_t) + 15) & ~(size_t)15, slot_b = (radar_pack_bytes(&crop) + 15) & ~(size_t)15;
+    d->want = d->zoom = ZOOM_NORMAL;
     d->lock = xSemaphoreCreateMutex();
     d->res = heap_caps_calloc(1, work_b + sat_b + scratch_b + slot_b * RADAR_SLOTS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (d->lock == NULL || d->res == NULL) {
@@ -920,9 +1072,14 @@ void ui_radar_open(void)
     lv_obj_set_pos(h2, SAT_X + 1, 40);
 
     lv_obj_t *rp = add_panel(s_overlay, RADAR_X);
-    lv_obj_t *base = lv_img_create(rp);
-    lv_img_set_src(base, &s_dsc_base);
-    lv_obj_set_pos(base, 0, 0);
+    int zoom_now;
+    taskENTER_CRITICAL(&s_mux);
+    zoom_now = D->want;
+    taskEXIT_CRITICAL(&s_mux);
+    s_dsc_base.data = BASE_MAP(zoom_now);
+    s_img_base = lv_img_create(rp);
+    lv_img_set_src(s_img_base, &s_dsc_base);
+    lv_obj_set_pos(s_img_base, 0, 0);
     memset(D->work, 0, (size_t)RADAR_WIN_W * RADAR_WIN_H * 3);
     s_dsc_radar.header.always_zero = 0;
     s_dsc_radar.header.cf = LV_IMG_CF_RGB565A8;
@@ -933,6 +1090,19 @@ void ui_radar_open(void)
     s_img_radar = lv_img_create(rp);
     lv_img_set_src(s_img_radar, &s_dsc_radar);
     lv_obj_set_pos(s_img_radar, 0, 0);
+
+    /* zoom: the level top left, - and + top right, over the map (the satellite has no zoom) */
+    const int btn_in_x = PANEL_W - 2 - ZOOM_MARGIN - ZOOM_BTN_W;
+    s_zoom_in = add_zoom_button(rp, "+", btn_in_x, +1);
+    s_zoom_out = add_zoom_button(rp, "-", btn_in_x - 4 - ZOOM_BTN_W, -1);
+    s_zoom_lbl = add_label(rp, &gcal_font_20, ZOOM_ON_COLOR, "1x");
+    zoom_chip_style(s_zoom_lbl);
+    lv_obj_set_style_pad_hor(s_zoom_lbl, 6, 0);
+    lv_obj_set_style_pad_ver(s_zoom_lbl, 1, 0);
+    lv_obj_set_pos(s_zoom_lbl, ZOOM_MARGIN, ZOOM_MARGIN);
+    lv_obj_set_ext_click_area(s_zoom_in, 6);
+    lv_obj_set_ext_click_area(s_zoom_out, 6);
+    zoom_ui_apply(zoom_now);
 
     lv_obj_t *sp = add_panel(s_overlay, SAT_X);
     s_dsc_sat.header.always_zero = 0;
@@ -973,6 +1143,7 @@ void ui_radar_open(void)
     s_shown_sat_time = (time_t)-1;           /* force the satellite label to be written on the first step */
 
     s_step = 0;
+    s_clear_shown = false;
     s_expand_us_total = 0;
     s_expand_count = 0;
     s_timer = lv_timer_create(animate_cb, STEP_MS, NULL);
@@ -994,6 +1165,7 @@ void ui_radar_host_load(const radar_pack_t *const *packs, const time_t *times, i
         D = new_data();
     }
     D->stop = false;
+    D->want = D->zoom = ZOOM_NORMAL;
     D->n = 0;
     const radar_crop_t crop = radar_crop();
     for (int i = 0; i < n && i < RADAR_FRAMES; i++) {
@@ -1009,6 +1181,12 @@ void ui_radar_host_load(const radar_pack_t *const *packs, const time_t *times, i
 }
 
 /* One animation step, on demand, for a given frame (the renderer has no timer running). */
+void ui_radar_host_zoom(int zoom)      /* what pressing + / - does to the UI, with the frames already "loaded" at that zoom */
+{
+    D->want = D->zoom = zoom;
+    zoom_ui_apply(zoom);
+}
+
 void ui_radar_host_step(int step)
 {
     s_step = step;

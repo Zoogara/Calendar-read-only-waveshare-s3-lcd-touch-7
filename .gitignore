@@ -20,5 +20,5 @@ sdkconfig.dev.out*
 tests/host/build-mbedtls/
 __pycache__/
 
-# a private radar base map (see tools/make_radar_base.py)
-components/calendar_ui/radar_base.local.rgb565
+# private radar base maps (see tools/make_radar_base.py)
+components/calendar_ui/radar_base_z*.local.rgb565

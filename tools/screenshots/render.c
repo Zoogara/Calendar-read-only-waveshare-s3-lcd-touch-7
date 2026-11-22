@@ -99,7 +99,9 @@ static lv_obj_t *top_overlay(void)
     return n ? lv_obj_get_child(top, n - 1) : NULL;
 }
 
-void host_radar_show(const char *base_map_path);
+void host_radar_show(const char *base_map_dir);
+void host_radar_zoom(int zoom);
+void ui_radar_host_step(int step);
 
 static void host_tap(int x, int y)
 {
@@ -254,9 +256,17 @@ int main(int argc, char **argv)
     tap_tests();
 
     /* The radar and satellite page: the real page code with a fictional rain field, satellite picture and map. */
-    host_radar_show("../../components/calendar_ui/radar_base.rgb565");
+    host_radar_show("../../components/calendar_ui");
     settle(400);
     snap("radar");
+    host_radar_zoom(7);
+    ui_radar_host_step(2);
+    settle(300);
+    snap("radar_zoom_in");
+    host_radar_zoom(5);
+    ui_radar_host_step(2);
+    settle(300);
+    snap("radar_zoom_out");
     ui_radar_close();
     settle(300);
 

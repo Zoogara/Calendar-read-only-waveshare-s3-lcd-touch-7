@@ -162,8 +162,10 @@ it's open just swaps to that one.
 On the weather panel (the Home Assistant weather, shown when you tap the weather on the clock or the weather icon in the top
 bar), the small satellite-dish icon beside the time opens the **radar and satellite** page. The rain radar is on the left: the
 last hour as six frames playing one after the other, oldest to newest, over a map, with a bar underneath showing which frame it
-is and the date and time of that frame below. The satellite image is on the right, with its time. Tap anywhere to close it and
-get back to the weather panel; left alone for five minutes it closes itself.
+is and the date and time of that frame below. The satellite image is on the right, with its time. The **+** and **-** buttons
+in the top right corner of the map zoom in (2x) and out (1/2x, a much wider view) from the normal 1x (the level is shown top left); the frames for the new zoom appear one by one
+as they load. Tap anywhere else to close the page and get back to the weather panel; left alone for five minutes it closes
+itself, and it always opens at 1x again.
 
 The first time it opens the frames appear one by one as they arrive, with "Loading" under the radar. Once it is showing it
 looks for the next frame a couple of minutes past each ten-minute mark (that's when they come out). If the line under the radar

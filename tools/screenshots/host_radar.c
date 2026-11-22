@@ -22,10 +22,11 @@ void cJSON_Delete(cJSON *c) { (void)c; }
 int radar_zlib_inflate(const uint8_t *in, size_t n, radar_put_fn put, void *user) { (void)in; (void)n; (void)put; (void)user; return 0; }
 
 /* the page's base map: ui_radar.c reads it from here when built for the host */
-uint8_t radar_base_start[RADAR_WIN_W * RADAR_WIN_H * 2];
+uint8_t radar_base_start[3][RADAR_WIN_W * RADAR_WIN_H * 2];      /* zoom 5, 6, 7 */
 
 void ui_radar_host_load(const radar_pack_t *const *packs, const time_t *times, int n, const uint16_t *sat, time_t sat_time);
 void ui_radar_host_step(int step);
+void ui_radar_host_zoom(int zoom);
 
 /* RainViewer's rain palette, weakest to heaviest: the tan of light rain (alpha rising), light to dark blue, then yellow to red */
 static const uint8_t RAMP[][4] = {
@@ -116,13 +117,22 @@ static void make_satellite(uint16_t *out)
     }
 }
 
-void host_radar_show(const char *base_map_path)
+void host_radar_zoom(int zoom)
 {
-    FILE *f = fopen(base_map_path, "rb");
-    if (f != NULL) {
-        size_t got = fread(radar_base_start, 1, sizeof(radar_base_start), f);
-        (void)got;
-        fclose(f);
+    ui_radar_host_zoom(zoom);
+}
+
+void host_radar_show(const char *base_map_dir)
+{
+    for (int z = 5; z <= 7; z++) {
+        char path[256];
+        snprintf(path, sizeof(path), "%s/radar_base_z%d.rgb565", base_map_dir, z);
+        FILE *f = fopen(path, "rb");
+        if (f != NULL) {
+            size_t got = fread(radar_base_start[z - 5], 1, sizeof(radar_base_start[0]), f);
+            (void)got;
+            fclose(f);
+        }
     }
     const radar_crop_t crop = radar_crop();
     uint8_t *rgba = malloc((size_t)RADAR_SRC_SIZE * RADAR_SRC_SIZE * 4);

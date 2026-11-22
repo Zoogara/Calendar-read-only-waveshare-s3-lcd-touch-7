@@ -205,7 +205,7 @@ tools/
   gcal_settings.py         reads and writes the encrypted settings backup
                            without the display (see "Encrypted settings backup")
   dev_build.sh             builds the development variant of the firmware
-  make_fictional_map.py    draws the fictional radar base map that ships in the repo
+  make_fictional_map.py    draws the fictional radar base maps (three zooms) that ship in the repo
   make_radar_base.py       converts a picture of your own area to a radar base map
                            (see "Radar and satellite" below)
   screenshots/             renders the real UI with fictional data on a
@@ -735,8 +735,10 @@ Four graphs (and the hourly strip) below the forecast, all from Home Assistant's
 
 The satellite-dish icon on the weather panel's heading line (left of the time) opens a page with the **rain radar** on
 the left - the six most recent frames, ten minutes apart, looping oldest to newest over a base map, with a progress bar
-and the date and time of the frame on show - and the latest **infrared satellite** image on the right with its time. A tap
-anywhere closes it and returns to the weather panel; left untouched for five minutes it closes itself.
+and the date and time of the frame on show - and the latest **infrared satellite** image on the right with its time. The
+**+** and **-** buttons on the map's top right corner (the level is top left) zoom it in (2x) and out (1/2x, four times the area) from the normal 1x view; the
+satellite picture has no zoom. A tap anywhere else closes the page and returns to the weather panel; left untouched for five
+minutes it closes itself, and it always opens at 1x.
 
 Everything comes from Home Assistant over plain http; the display never talks to RainViewer or NASA. This is the
 Home Assistant side that the [Weather-Display](https://github.com/Zoogara/Weather-Display) project already has in its
@@ -746,8 +748,10 @@ Home Assistant side that the [Weather-Display](https://github.com/Zoogara/Weathe
   `timestamp1`..`timestamp6` (each frame's local time as `1:10 PM` or `13:10`). The frame id is the `/radar/<id>/` part of
   the URL.
 - **`sensor.himawari_latest`** whose state is the satellite image's UTC time, `2026-11-22T01:20:00Z`.
-- Home Assistant downloads each frame to `/config/www/radar/<id>.png` and the satellite image to
-  `/config/www/satellite.png`, so the display fetches `<HA address>/local/radar/<id>.png` and `/local/satellite.png` -
+- Home Assistant downloads each frame to `/config/www/radar/<id>.png` (RainViewer zoom 6, the normal 1x view) and, for the
+  zoom buttons, `<id>_z5.png` (zoomed out, 1/2x) and `<id>_z7.png` (zoomed in, 2x) - the Weather-Display `radar.yaml` does this -
+  and the satellite image to `/config/www/satellite.png`, so the display fetches `<HA address>/local/radar/<id>.png`
+  (or `_z5` / `_z7`) and `/local/satellite.png` -
   no TLS, no dependence on RainViewer being reachable from the display. (NASA's image server sends no length, which is
   also why Home Assistant fetches it.) Frames are 384x384, RGB(A) 8-bit, not interlaced; the radar window shows the
   middle of the frame scaled 4/3 (the same map scale as RainViewer's old 256 px zoom 7 frame over 2.25 times the area).
@@ -765,11 +769,17 @@ How it behaves:
   it doesn't already hold - normally one - and the satellite when its time has changed. The first open fetches all six, and
   shows each as it arrives. Nothing is fetched while the page is closed; the frames are kept for two minutes after it closes
   (so opening it again is instant) and then freed.
+- **Zoom.** Only the zoom on show is held, so memory doesn't change. Pressing **+** or **-** swaps the base map at once,
+  abandons any download in progress (the frames being fetched are for the old zoom), drops the frames and fetches the six for
+  the new zoom, which appear as they arrive, oldest first, so the order guarantee holds. It takes about as long as the page's
+  first opening. Closing the page, or the screen going to sleep, puts it back to 1x. RainViewer has no zoom 8, so 2x is the
+  limit. All three zooms use the same crop: the frames are all 384 px and centred on the same point.
 - **Speed.** The loop steps every 700 ms with the newest frame held for two extra steps, as on the ESPHome page this was
   modelled on. A step expands the next frame (about 55 ms on the display) and draws it (about 90 ms).
 - **Memory.** About 1.2 MB of PSRAM while open, allocated as one block (the working image 376 KB, the satellite 251 KB, the
   frames as lossless 8-bit indexed images at about 72 KB each, plus spare slots); a few hundred bytes of internal RAM and one
-  parked task. It refuses to open - with a short note on screen - if PSRAM is too short. The base map is a constant in flash.
+  parked task. It refuses to open - with a short note on screen - if PSRAM is too short. The three base maps (one per zoom,
+  250 KB each) are constants in flash.
   A frame's PNG is decoded **a row at a time** on the ROM's miniz (`ha_radar_png.c`, `ha_radar_inflate_rom.c`): a 32 KB window
   and two rows, packed straight into the frame's slot. (LVGL's own PNG decoder, lodepng, decodes to a whole image beside the
   inflated scanlines - about 1.2 MB for a frame - and failed with "memory allocation failed" once PSRAM was fragmented;
@@ -779,12 +789,14 @@ How it behaves:
   the URL/time parsing, the ordering and the refresh schedule - are in the host tests. The ROM inflate wrapper and the page
   itself are tested on the display.
 
-**The base map.** The repository ships a *fictional* map (`components/calendar_ui/radar_base.rgb565`, drawn by
-`tools/make_fictional_map.py`: made-up towns, rivers and roads, a ring at the centre for your location), so a fork carries
-nothing about where anyone lives. To use a real map of your own area, make a 380x330 picture at the same scale and centre as
-the frames, convert it with `python3 tools/make_radar_base.py picture.png components/calendar_ui/radar_base.local.rgb565`
-and re-run cmake: the build uses a `radar_base.local.rgb565` in preference when there is one, and git ignores it, so a
-private map is never committed. (The picture is raw RGB565, 250,800 bytes, embedded in flash and drawn from there.)
+**The base maps.** The repository ships three *fictional* maps (`components/calendar_ui/radar_base_z5.rgb565`, `_z6` and `_z7`
+for 1/2x, 1x and 2x, drawn by `tools/make_fictional_map.py`: the same made-up towns, rivers and roads at three scales, a ring at
+the centre for your location), so a fork carries nothing about where anyone lives. To use real maps of your own area, make a
+380x330 picture for each zoom at the same scale and centre as the frames (the Weather-Display project's
+`tools/make_radar_base.py` makes exactly these from map tiles), convert each with
+`python3 tools/make_radar_base.py picture.png --zoom 6 --local` (and `--zoom 5`, `--zoom 7`) and re-run cmake: the build uses a
+`radar_base_zN.local.rgb565` in preference when there is one, and git ignores them, so a private map is never committed. A zoom
+with no local map keeps the fictional one. (Each picture is raw RGB565, 250,800 bytes, embedded in flash and drawn from there.)
 
 ## On this day
 
