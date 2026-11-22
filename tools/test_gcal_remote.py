@@ -60,6 +60,43 @@ class T(unittest.TestCase):
         self.assertEqual(r["largest_kb"], 20)
         self.assertGreaterEqual(r["uptime_s"], 30)   # waited for its start-up fetches
 
+    def test_waits_for_the_heap_to_recover_after_a_restart(self):
+        # after a restart the largest block starts at 12 KB and reaches 20 KB only a minute in: it must not send at 30 s
+        f = Fake(largest=6 * 1024)
+        srv, dev = make_server(f)
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        now = [0.0]
+        def sleep(sec):
+            now[0] += sec
+            if f.restarts:
+                f.uptime = int(now[0])
+                f.largest = (12 if f.uptime < 70 else 20) * 1024
+        b = g.device_version(dev, "Basic x")
+        logs = []
+        r = g.ensure_fresh_heap(dev, "Basic x", b, 16, settle_s=30, timeout=200, log=logs.append,
+                                sleep=sleep, clock=lambda: now[0])
+        self.assertEqual(r["largest_kb"], 20)
+        self.assertGreaterEqual(r["uptime_s"], 70)
+
+    def test_gives_up_waiting_and_sends_anyway(self):
+        f = Fake(largest=6 * 1024)
+        srv, dev = make_server(f)
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        now = [0.0]
+        def sleep(sec):
+            now[0] += sec
+            if f.restarts:
+                f.uptime = int(now[0])
+                f.largest = 12 * 1024              # never recovers
+        b = g.device_version(dev, "Basic x")
+        logs = []
+        r = g.ensure_fresh_heap(dev, "Basic x", b, 16, settle_s=30, timeout=90, log=logs.append,
+                                sleep=sleep, clock=lambda: now[0])
+        self.assertEqual(r["largest_kb"], 12)
+        self.assertTrue(any("sending anyway" in l for l in logs))
+
     def test_healthy_display_is_left_alone(self):
         f = Fake(largest=20 * 1024)
         r, logs, b = self.run_case(f)
