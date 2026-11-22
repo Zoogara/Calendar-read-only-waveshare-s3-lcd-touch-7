@@ -548,7 +548,7 @@ overlay like the "On this day" list. A blank address hides that icon.
 
 Optional, and off until a location is set. On the runtime config page,
 under **Weather**: **Latitude** and **Longitude** in decimal degrees (south
-and west are negative - e.g. `-36.05` and `146.46`; long-pressing a spot in
+and west are negative - e.g. `-33.87` and `151.21`; long-pressing a spot in
 Google Maps shows them), and an optional **Location name** for the weather
 panel's heading. A blank latitude turns weather off: no requests, nothing
 on screen.

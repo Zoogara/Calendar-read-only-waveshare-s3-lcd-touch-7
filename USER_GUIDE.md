@@ -197,8 +197,8 @@ device read your calendars (see the README's *Google Cloud setup*).
 - **daily** - fetch only once a day, for calendars that rarely change.
 
 **Weather** - **Latitude** and **Longitude** of where you want the weather
-for, in decimal degrees (south and west are negative, e.g. `-36.05` and
-`146.46` - long-press a spot in Google Maps to see them), and an optional
+for, in decimal degrees (south and west are negative, e.g. `-33.87` and
+`151.21` - long-press a spot in Google Maps to see them), and an optional
 **Location name** for the weather panel's heading. Leave the latitude blank
 to turn the weather off. The weather comes from Open-Meteo, a free forecast
 service; it's a forecast model's estimate for that spot rather than a
