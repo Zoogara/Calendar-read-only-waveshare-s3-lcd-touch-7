@@ -35,7 +35,7 @@ static void plain_text_is_unchanged(void)
     clean("");                     CHECK_STR(out, "");
     gcal_clean_text(NULL, out, sizeof(out));
     CHECK_STR(out, "");
-    clean("Caf\xC3\xA9 Rutherglen"); CHECK_STR(out, "Caf\xC3\xA9 Rutherglen");
+    clean("Caf\xC3\xA9 Port Hartley"); CHECK_STR(out, "Caf\xC3\xA9 Port Hartley");
 }
 
 static void tags_are_dropped(void)

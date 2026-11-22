@@ -368,18 +368,18 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "<div class='hint'>Shows the weather on the ambient clock - tap it there for "
         "current conditions and a 7-day forecast. From Open-Meteo (open-meteo.com), "
         "free and with no account. Decimal degrees: south and west are negative, e.g. "
-        "-36.05 and 146.46. Find yours by long-pressing a spot in Google Maps. Leave "
+        "-33.87 and 151.21. Find yours by long-pressing a spot in Google Maps. Leave "
         "the latitude blank to turn weather off.</div>"
         "<label>Latitude</label>"
-        "<input type='text' name='weather_lat' inputmode='decimal' placeholder='e.g. -36.05' value='");
+        "<input type='text' name='weather_lat' inputmode='decimal' placeholder='e.g. -33.87' value='");
     send_value_chunk(req, s_cfg->weather_lat);
     httpd_resp_sendstr_chunk(req,
         "'><label>Longitude</label>"
-        "<input type='text' name='weather_lon' inputmode='decimal' placeholder='e.g. 146.46' value='");
+        "<input type='text' name='weather_lon' inputmode='decimal' placeholder='e.g. 151.21' value='");
     send_value_chunk(req, s_cfg->weather_lon);
     httpd_resp_sendstr_chunk(req,
         "'><label>Location name (optional)</label>"
-        "<input type='text' name='weather_place' placeholder='e.g. Rutherglen' value='");
+        "<input type='text' name='weather_place' placeholder='e.g. Port Hartley' value='");
     send_value_chunk(req, s_cfg->weather_place);
     httpd_resp_sendstr_chunk(req, "'><div class='hint'>Shown in the weather panel's heading.</div>");
 
