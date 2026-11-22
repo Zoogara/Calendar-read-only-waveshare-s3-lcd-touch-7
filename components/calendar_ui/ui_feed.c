@@ -169,11 +169,14 @@ void ui_feed_open(int idx)
             any_link = any_link || it->url[0];
             lv_obj_t *head = add_label(list, &gcal_font_20, TITLE_COLOR, it->title);
             lv_obj_set_user_data(head, tag);
+            lv_obj_add_flag(head, LV_OBJ_FLAG_CLICKABLE);     /* a label isn't clickable by default: a touch would go to the list */
             if (i > 0) {
                 lv_obj_set_style_pad_top(head, 12, 0);
             }
             if (it->text[0]) {
-                lv_obj_set_user_data(add_label(list, &gcal_font_14, TEXT_COLOR, it->text), tag);
+                lv_obj_t *body = add_label(list, &gcal_font_14, TEXT_COLOR, it->text);
+                lv_obj_set_user_data(body, tag);
+                lv_obj_add_flag(body, LV_OBJ_FLAG_CLICKABLE);
             }
         }
         if (any_link) {
