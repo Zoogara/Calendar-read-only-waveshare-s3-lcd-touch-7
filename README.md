@@ -1,4 +1,4 @@
-**Caveat:** Developed in conjunction with Claude AI.  Apologies for it's verbosity...
+**Caveat:** Developed in conjunction with Claude AI.  Apologies for its verbosity...
 
 # Google Calendar wall display — Waveshare ESP32-S3-Touch-LCD-7
 
@@ -112,7 +112,7 @@ Waveshare ESP32-S3-Touch-LCD-7:
 - ESP32-S3, 8MB octal PSRAM, 16MB flash
 - 800x480 IPS, RGB565 parallel interface, ST7262 controller
 - GT911 capacitive touch (I2C)
-- CH422G I2C IO expander for backlight enable + touch reset
+- CH422G I2C IO expander for backlight enable, touch reset, the LCD's reset and the TF card's chip-select
 
 The board as sold needs no external wiring at all for display/touch/SD.
 Two optional additions — a presence sensor on `GPIO6` (see "Presence
@@ -135,9 +135,19 @@ components/
                            the backlight's LEDC PWM dimming channel (see
                            "Backlight auto-dimming" below)
   provisioning/            first-boot Wi-Fi AP + web form, NVS config storage,
-                           normal-mode Wi-Fi station connect
+                           normal-mode Wi-Fi station connect, and the runtime
+                           config web page (settings, wireless update, restart
+                           in a dev build, encrypted settings backup)
   gcal/                    Google service-account auth (JWT) + Calendar API
-                           client + in-RAM event store
+                           client + ICS feed client + in-PSRAM event store
+  ota_update/              gear -> Update and the wireless-update trigger:
+                           esp_https_ota into the spare slot, rollback, and the
+                           boot confirmation (see "Wireless logging and
+                           updates" below)
+  remote_log/              sends the log over UDP to a computer (see "Wireless
+                           logging and updates" below)
+  rss_feed/                fetches and parses the two news feeds (see "News
+                           feeds" below)
   calendar_ui/             the four LVGL screens (month/week/day/up-next)
                            plus the nav rail / top bar / legend shell, the
                            idle-timeout ambient clock, the screen-lock
@@ -162,11 +172,18 @@ components/
                            esp_lcd component (overrides $IDF_PATH's) -
                            fixes a real bug in the RGB panel driver, see
                            "Ambient clock digit tearing (fixed)" below
-tests/host/              unit tests for the parsers (RSS/Atom, ICS), run on a
-                           computer: `make -C tests/host test`
+tests/host/              unit tests for the pure-C code (RSS/Atom and ICS
+                           parsers, the config page's auth lockout and URL
+                           decoding, JWT building, time formatting, text
+                           cleaning, the encrypted-backup format), run on a
+                           computer under AddressSanitizer:
+                           `make -C tests/host test`
 tools/
   gcal_remote.py           wireless log viewer and firmware pusher (see
-                           "Wireless logging and updates" below)
+                           "Wireless logging and updates" below); its logic is
+                           tested by test_gcal_remote.py
+  gcal_settings.py         reads and writes the encrypted settings backup
+                           without the display (see "Encrypted settings backup")
   dev_build.sh             builds the development variant of the firmware
   screenshots/             renders the real UI with fictional data on a
                            computer, for the images in docs/
@@ -201,11 +218,11 @@ time NVS has no valid config), the device starts its own access point:
    tap **Save & restart**.
 4. The device reboots and connects to your normal Wi-Fi network.
 
-To re-run the portal later (new Wi-Fi network, new calendar, etc.), erase
-the `gcalcfg` NVS namespace — easiest way is `idf.py erase-flash` and
-reflash, or add a small "hold touch on boot" hook calling
-`provisioning_clear()` if you want that convenience (not wired up by
-default, to keep first boot simple).
+To re-run the portal later (new Wi-Fi network, new calendar, etc.), tap the
+gear icon and choose **Setup**: it asks for confirmation, then erases the saved
+settings (the `gcalcfg` NVS namespace) and restarts into the portal. (Make an
+*Encrypted settings backup* first if you want to be able to put them back - see
+below. `idf.py erase-flash` and a reflash does the same from the computer.)
 
 ## Google Cloud setup (one-time, ~10 minutes)
 
@@ -318,7 +335,7 @@ its own, without re-running the setup portal.
 
 ## Presence sensor
 
-An active-high presence/PIR sensor is wired to `GPIO6` (high = someone's
+An active-high presence sensor - an LD2410 mmWave radar module, its OUT pin - is wired to `GPIO6` (high = someone's
 there, low = clear). `presence_sensor_init()` (`components/presence_sensor/`)
 configures it as an input with the **internal pull-down enabled** - on
 real hardware this line floats and reads intermittent false "detected"
@@ -434,7 +451,8 @@ logging and `idf.py flash` over USB keep working exactly as before.
   the configured *Firmware update URL* stay https-only, and the config page
   warns in red when that URL is plain http.
   **Did it take?** The script reads `GET /version` (same password; plain text:
-  `version`, `slot`, `uptime_s`) before sending, and after the download waits for
+  `version`, `slot`, `uptime_s`, `reset` (why it last restarted), `internal_free` and
+  `internal_largest` (bytes)) before sending, and after the download waits for
   the display to come back and checks it reports the version it was sent
   (`project_version` from `build-dev/`), printing `OK: ...` or `FAILED: display is
   running <old version>, not <new>` (exit status 2). A new image that dies early is
@@ -451,7 +469,8 @@ logging and `idf.py flash` over USB keep working exactly as before.
   `POST /restart` (same password, same-origin check; not in a default build). Before
   sending, `gcal_remote.py ota` looks at the largest free internal block in `/version`
   and, if it is under 16 KB, restarts the display, waits for it to come back and finish
-  its start-up fetches (30 s of uptime), then sends. Every update that has succeeded
+  its start-up fetches (30 s of uptime) and its largest block to recover to that size (a restart leaves it
+  at ~13 KB for the first minute or so, and an update sent then has crashed), then sends. Every update that has succeeded
   came from a freshly restarted display; the ones that crashed in the image check had
   a largest block of 5-7 KB. `--min-largest-kb N` changes the threshold and
   `--no-restart` turns it off. If the display has no `/restart` (a default build, or
@@ -691,9 +710,10 @@ anything sensitive - the config web page (its own password) is unaffected.
 
 ## Customizing
 
-- **Refresh interval / fetch window**: `main/main.c` (`FETCH_PAST_DAYS`,
-  `FETCH_FUTURE_DAYS`) and the "Refresh interval" field in the setup
-  portal.
+- **Refresh interval / fetch window**: the "Refresh interval" field (setup
+  portal and config page) and the config page's "Calendar cache window" (days
+  back and ahead: `fetch_past_days` / `fetch_future_days`, default 14 and 60,
+  at most 90 and 365 - see `app_settings.h`).
 - **Time format**: `clock_24h` in `app_settings_t`, set on the config page
   (*Other* -> Time format; 12-hour with AM/PM by default). Every time the UI
   shows goes through `tfmt_*()` in `time_fmt.c` (pure C, unit-tested in
@@ -901,8 +921,8 @@ network or against someone who can touch the hardware**. What that means in prac
   account and share only the calendars you want shown; give Home Assistant its own user for the
   token; take the card out after setup if you don't need the backup.
 - **The config web page** (runs only if you set a password) uses HTTP Basic over **plain HTTP** -
-  anyone on your network can read the password and the settings. Saving settings and starting an
-  update refuse requests from other web sites (Origin check), and saved values are HTML-escaped
+  anyone on your network can read the password and the settings. Saving settings, starting an
+  update, the backup and restore, and the dev-build restart refuse requests from other web sites (Origin check), and saved values are HTML-escaped
   when shown. The password is compared in constant time, and wrong guesses are throttled: after 5
   failures in a row every request gets `429 Too Many Requests` (with a `Retry-After` header) for
   30 s - even one with the right password - and each further wrong guess locks it out for twice as
