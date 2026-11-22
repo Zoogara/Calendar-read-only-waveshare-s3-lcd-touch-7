@@ -734,7 +734,7 @@ the frames, convert it with `python3 tools/make_radar_base.py picture.png compon
 and re-run cmake: the build uses a `radar_base.local.rgb565` in preference when there is one, and git ignores it, so a
 private map is never committed. (The picture is raw RGB565, 250,800 bytes, embedded in flash and drawn from there.)
 
-## On this day (this branch only)
+## On this day
 
 Tapping the date on the ambient clock opens a scrolling list of notable
 events from history for today's date (`components/calendar_ui/ui_history.c`)
