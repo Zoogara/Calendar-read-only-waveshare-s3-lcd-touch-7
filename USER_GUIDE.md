@@ -67,7 +67,8 @@ Then the buttons:
   pixels every 10 minutes to protect the panel.
 - **Tap the date** on the clock for *On this day* - notable events in
   history for today's date, from Wikipedia: the year and headline of
-  each, with a sentence underneath. Drag to scroll.
+  each, with a sentence underneath. Drag to scroll. Touch an entry for
+  its link (see *Links* below); the ✕ at the top right closes the list.
 - **Tap the weather** on the clock for the weather panel, headed with the
   place and date, and the current time at the right. From the top: the temperature now and what it feels like,
   wind (direction, speed, gusts), rain so far today and air pressure;
@@ -101,9 +102,12 @@ Then the buttons:
   refresh about every 20 minutes. A feed's address is usually shown on its
   site's RSS page; https:// addresses are best (nearly all news sites
   redirect plain http to https anyway). The bell moves to the right of the
-  bottom-left icon when feed 1 is set.
-- These all close with a tap, or after a minute untouched, and go back to
-  the clock - not the calendar. They also work while the screen is locked.
+  bottom-left icon when feed 1 is set. Touch a story for its link (see
+  *Links* below); the ✕ at the top right closes the list.
+- The weather panel closes with a tap; the *On this day* and news-feed
+  lists with their ✕ (or a tap on their heading or the empty background);
+  all after a minute untouched, and go back to the clock - not the calendar.
+  They also work while the screen is locked.
 - **Screensaver** - the dark screen with the backlight off. This build has
   no presence sensor, so the display always assumes someone is there: the
   clock never gives way to the screensaver on its own. You get it at the
@@ -113,6 +117,20 @@ Then the buttons:
   minutes or more, it comes back on today in Month view.
 - **Brightness** - this build has no light sensor or backlight dimming wire,
   so the backlight is simply on (full) or off.
+
+## Links
+
+There's no browser on the display, but the article can open on your phone.
+On the news-feed or *On this day* page, **touch a story**: a card shows a
+**QR code** for its link - point a phone camera at it and the article opens
+there. **Save for later** on the card keeps the link in a list you read on
+a computer or phone at `http://<the display's address>/links` (same password
+as the settings page): each link with where it's from, when it was saved and
+how many days it has left, **Remove**, and **Clear all**. Saved links expire
+after the number of days set on the settings page (default 14, up to 20
+links, the oldest dropped when it's full). **Close**, or a tap outside the
+card, goes back to the list; it also closes by itself after a minute. A story
+with no usable link does nothing when touched.
 
 ## Event details
 
@@ -231,6 +249,7 @@ touch (0 = padlock only).
 | Screen timeout | Seconds without a touch before the clock or screensaver; 0 = never |
 | Week/day view hours | First and last hour shown in Week and Day view; also when the clock counts as daytime. Plain hours 0-24 on this page, whatever the Time format |
 | Calendar cache window | Days back (up to 90) and ahead (up to 365) to fetch |
+| Saved links are kept for | Days (1-90, default 14) a link saved with *Save for later* is kept before it expires. The saved links themselves are on the page `/links` (a link to it sits under this field) |
 
 **Backup and restore** (bottom of the page) - *Download backup* saves every
 setting, passwords and keys included, to one file encrypted with a passphrase

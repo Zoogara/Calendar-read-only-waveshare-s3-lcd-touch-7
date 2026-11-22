@@ -148,6 +148,9 @@ components/
                            logging and updates" below)
   rss_feed/                fetches and parses the two news feeds (see "News
                            feeds" below)
+  readlater/               the link check every address goes through, and the
+                           read-later list (add, expiry, flash form, saved in
+                           NVS) - see "Links: QR code and read later" below
   calendar_ui/             the four LVGL screens (month/week/day/up-next)
                            plus the nav rail / top bar / legend shell, the
                            idle-timeout ambient clock, the screen-lock
@@ -542,7 +545,14 @@ overlay like the "On this day" list. A blank address hides that icon.
   whitespace and cuts the text at 320 characters with an ellipsis. Tested on
   the host against ABC, BBC, Guardian, SBS, NPR and NYT feeds. Reading stops
   at 160 KB (a 430 KB feed costs time, not memory); 15 items per feed are
-  kept (~6.6 KB each, PSRAM).
+  kept (~9.6 KB a feed, PSRAM).
+- **Links:** each item's address is kept too - RSS `<link>` (or, failing that, a
+  `<guid>` that is itself a web address), Atom `<link rel="alternate" href>` - and
+  touching an item opens its link card (see "Links: QR code and read later"). Only a
+  plain `http(s)` address that passes `link_url_ok()` is kept (no `javascript:`, no
+  user-info, no quotes or angle brackets, at most 199 bytes); an item without one is
+  still listed, and a tap on it does nothing. The page's close button (top right)
+  closes it, as does a tap on the heading or the empty background.
 - **Fonts:** headings and text use gcal_font_20 / gcal_font_14, which cover
   Latin-1, Latin Extended-A, Vietnamese and common punctuation; other
   scripts and emoji show as blanks. The RSS glyph (U+F09E) is in
@@ -635,9 +645,60 @@ retried every 30 minutes if it fails. It asks for the **local** date - a
 feed that only offers "today" in UTC would show yesterday's events until
 late morning in Australia. The response is ~190KB, because it carries
 summaries of every linked article; it's received and parsed in PSRAM and
-only ~10KB of entries is kept. Wikimedia asks API clients to identify
-themselves, so requests carry a User-Agent with this project's GitHub
-address.
+only ~15KB of entries is kept (the year, heading, one-line description and the
+article's address, `pages[0].content_urls.desktop.page`). Wikimedia asks API
+clients to identify themselves, so requests carry a User-Agent with this
+project's GitHub address. Touching an entry opens its link card (see "Links: QR
+code and read later"); the close button at the top right closes the list.
+
+## Links: QR code and read later
+
+![The link card: a QR code for the article, Save for later and Close](docs/link_card.png)
+
+There is no browser on the display, but the article can be opened on another device. Touching an
+item on the news-feed or "On this day" page (`components/calendar_ui/ui_link.c`) opens a card with
+the item's address as a **QR code** - scan it with a phone camera and the article opens there - the
+title, the address in small type, and two buttons: **Save for later** and **Close**. (Because a tap
+on an item now opens the card, those two pages have a close button at the top right; a tap on the
+heading or the empty background still closes them, as does a minute untouched.)
+
+- **The card is built once, at startup,** and then only hidden and shown (like the event details
+  card), with its text shown from fixed buffers, so a tap allocates nothing - LVGL's malloc assert
+  would reboot the device if an allocation failed at that moment. The code is drawn straight from the
+  encoder's module grid by one custom-draw object (one rectangle per run of dark modules), not an
+  object per module and not a canvas. The encoder is Nayuki's QR Code generator (MIT), which LVGL
+  bundles; its two 408-byte work buffers are in PSRAM. Version 10 at medium error correction holds 213
+  bytes, more than the longest address kept (199), at 4 px a module (260 px) on the smallest code.
+  Checked by rendering the card on the host and decoding the picture with an independent QR reader
+  (macOS's CoreImage): a short address and a 199-character one both decode exactly.
+- **While the card is open** `calendar_ui_panel_open()` is true, so syncs wait (as for the other
+  panels); it closes after a minute untouched, and when the display goes to the clock or sleep.
+- **Save for later** adds the link to the read-later list: up to 20, newest first, the same link saved
+  twice moves to the top (and its life starts again), and when the list is full the oldest goes. Each
+  link lives **read_later_days** (config page, *Other*; 1-90, default 14) from the moment it was saved,
+  then disappears - pruned at boot, after each sync and whenever the list is looked at. Links saved
+  before the clock was set (right after power-up, before the first network time) start their life when
+  the clock first allows it; nothing is ever expired on a clock that isn't set.
+- **The list is kept in flash** (its own NVS entry, `gcalrl`, not the settings JSON - so gear -> Setup
+  doesn't erase it, and the settings backup doesn't include it): a versioned, CRC-checked form that is
+  refused wholesale if anything is wrong (wrong version or checksum, a length that overruns, an address
+  `link_url_ok()` rejects), in which case the list starts empty. It is written from a short-lived task
+  with an internal-RAM stack, like the settings save (a flash write disables the cache, which a PSRAM
+  stack can't survive); a failed write is retried after the next sync.
+- **The saved links are on the config web page,** `http://<display>/links` (same password; there is a link
+  to it under *Saved links are kept for* on the settings page): each link with its source, how long ago it
+  was saved and how many days it has left, a **Remove** button and **Clear all**. Nothing is stored on the
+  computer or phone you view it from.
+- **Links come from outside, so they are treated as untrusted** (see "Security notes"): only addresses
+  that pass `link_url_ok()` are ever shown as a QR code or printed as a link, everything is HTML-escaped,
+  a link opens in a new tab with `rel="noopener noreferrer"`, and the Remove button carries the entry's
+  saved time as well as its position, so a page left open can't delete the wrong link after the list has
+  changed. The pure-C parts - the address check, the list (add, duplicates, the cap, expiry with a fake
+  clock, removal) and its flash form (every single changed byte and every truncation is refused) - and the
+  RSS link extraction are in the host tests.
+- **Memory:** the card and its buttons are about a dozen LVGL objects, built once (the same order of
+  internal RAM as the event details card); the list is 6 KB of PSRAM; each feed grows by ~3 KB and
+  "On this day" by ~5 KB of PSRAM for the addresses.
 
 Wikipedia text is full of accented letters and typographic punctuation,
 which is why the 14px and 20px fonts include Latin-1 and the common
@@ -954,6 +1015,11 @@ network or against someone who can touch the hardware**. What that means in prac
 - **The screen lock** is a 4-digit PIN with a lockout after 5 wrong tries (see *Screen lock*). It
   keeps casual passers-by off the calendar; it is not a security boundary - the PIN is stored in
   plain text and it doesn't protect the config page, the USB port or the card.
+- **Saved links** (read-later) come from news feeds and Wikipedia, so they are untrusted input: only plain
+  `http(s)` addresses without user-info, quotes, angle brackets or control characters are kept, shown as a
+  QR code or printed on the `/links` page (HTML-escaped, `rel="noopener noreferrer"`). The page needs the
+  config password and its buttons carry the same cross-site check as the other forms. The QR code and the
+  list only ever hold an address and a title - no credentials.
 - **Physical access is full access:** USB and the card expose everything above.
 
 Report a problem privately - see [SECURITY.md](SECURITY.md).

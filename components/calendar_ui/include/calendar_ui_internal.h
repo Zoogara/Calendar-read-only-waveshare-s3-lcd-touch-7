@@ -151,6 +151,14 @@ bool ui_detail_show_index(int tagged_index);        /* for the screenshot render
 void ui_detail_close(void);
 bool ui_detail_is_open(void);
 
+/* The link card (ui_link.c): tapping an item on the news-feed or "On this day" page shows its address as a QR code, with
+ * Save for later (the read-later list, components/readlater) and Close. Built once at startup by ui_link_init(); show copies
+ * the strings, so the caller's buffers can go straight away. Only a plain web address (link_url_ok()) is shown. */
+void ui_link_init(void);
+void ui_link_show(const char *title, const char *url);
+void ui_link_close(void);
+bool ui_link_is_open(void);
+
 /* "On this day" list (ui_history.c), opened by tapping the date on the
  * ambient clock; closed by a tap or by ui_screensaver.c after a minute. */
 void ui_history_open(void);

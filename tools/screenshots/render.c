@@ -9,6 +9,7 @@
 #include "calendar_ui.h"
 #include "calendar_ui_internal.h"
 #include "demo.h"
+#include "rss_feed.h"
 
 #define W 800
 #define H 480
@@ -182,6 +183,31 @@ int main(int argc, char **argv)
 
     ui_feed_open(0);
     snap("feed");
+    /* Touching the first item: its link card, with the QR code. */
+    {
+        const rss_feed_t *f = rss_feed_acquire(0);
+        if (f != NULL && f->count > 0) {
+            ui_link_show(f->items[0].title, f->items[0].url);
+        }
+        rss_feed_release();
+    }
+    settle(300);
+    snap("link_card");
+    ui_link_close();
+    /* The longest link a feed can give (199 characters): the biggest code, at the smallest module size - not copied to docs/,
+     * but decoded by a QR reader to check it scans. */
+    {
+        char url[200] = "https://news.example.org/port-hartley/";
+        size_t n = strlen(url);
+        for (int i = 0; n < 199; i++) {
+            url[n++] = "abcdefghijklmnopqrstuvwxyz0123456789-"[(i * 7) % 37];
+        }
+        url[n] = '\0';
+        ui_link_show("The longest link the card has to show: a story with an extremely long headline that wraps over several lines of the card", url);
+        settle(300);
+        snap("link_card_long");
+        ui_link_close();
+    }
     ui_feed_close();
     settle(300);
 
