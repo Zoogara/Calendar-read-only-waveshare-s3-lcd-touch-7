@@ -105,6 +105,10 @@ The weather panel (tap the weather on the clock, or the small grey weather icon 
 | ![24-hour temperature graph](docs/weather_24h.png) **24-hour graph** | ![Wind graph](docs/weather_wind.png) **Wind with hourly arrows** |
 | ![14-day highs and lows](docs/weather_14day.png) **14-day highs and lows** | ![14-day rainfall](docs/weather_rain.png) **14-day rainfall** |
 
+The satellite-dish icon on the weather panel's heading line opens the **radar and satellite** page (`with-HA-weather` branch): the last hour of rain radar playing as a loop beside the latest satellite image.
+
+![Radar and satellite](docs/radar_satellite.png)
+
 ## Hardware
 
 Waveshare ESP32-S3-Touch-LCD-7:
@@ -447,7 +451,8 @@ logging and `idf.py flash` over USB keep working exactly as before.
   `POST /restart` (same password, same-origin check; not in a default build). Before
   sending, `gcal_remote.py ota` looks at the largest free internal block in `/version`
   and, if it is under 16 KB, restarts the display, waits for it to come back and finish
-  its start-up fetches (30 s of uptime), then sends. Every update that has succeeded
+  its start-up fetches (30 s of uptime) and its largest block to recover to that size (a restart leaves it at
+  ~13 KB for the first minute or so, and an update sent then has crashed), then sends. Every update that has succeeded
   came from a freshly restarted display; the ones that crashed in the image check had
   a largest block of 5-7 KB. `--min-largest-kb N` changes the threshold and
   `--no-restart` turns it off. If the display has no `/restart` (a default build, or
@@ -673,6 +678,61 @@ Three graphs below the forecast, all from Home Assistant's REST history API
   the 14-day graphs rather than drawn wrongly. The 14-day fetch is ~330 KB
   every ~30 minutes. Typical cost: ~1.1 KB of PSRAM for the 24-hour data and
   ~1 KB for the bars.
+
+## Radar and satellite (this branch only)
+
+The satellite-dish icon on the weather panel's heading line (left of the time) opens a page with the **rain radar** on
+the left - the six most recent frames, ten minutes apart, looping oldest to newest over a base map, with a progress bar
+and the date and time of the frame on show - and the latest **infrared satellite** image on the right with its time. A tap
+anywhere closes it and returns to the weather panel; left untouched for five minutes it closes itself.
+
+Everything comes from Home Assistant over plain http; the display never talks to RainViewer or NASA. This is the
+Home Assistant side that the [Weather-Display](https://github.com/Zoogara/Weather-Display) project already has in its
+`homeassistant/` folder (`radar.yaml`, `satellite.yaml`, `template.yaml`):
+
+- **`sensor.template_weather_display_radar`** with attributes `url1`..`url6` (RainViewer frame URLs, `url1` the newest) and
+  `timestamp1`..`timestamp6` (each frame's local time as `1:10 PM` or `13:10`). The frame id is the `/radar/<id>/` part of
+  the URL.
+- **`sensor.himawari_latest`** whose state is the satellite image's UTC time, `2026-11-22T01:20:00Z`.
+- Home Assistant downloads each frame to `/config/www/radar/<id>.png` and the satellite image to
+  `/config/www/satellite.png`, so the display fetches `<HA address>/local/radar/<id>.png` and `/local/satellite.png` -
+  no TLS, no dependence on RainViewer being reachable from the display. (NASA's image server sends no length, which is
+  also why Home Assistant fetches it.) Frames are 384x384, RGB(A) 8-bit, not interlaced; the radar window shows the
+  middle of the frame scaled 4/3 (the same map scale as RainViewer's old 256 px zoom 7 frame over 2.25 times the area).
+  The satellite picture is whatever region Home Assistant saves, 380x330. Rename the entities in `ui_radar.c` if yours differ.
+
+How it behaves:
+
+- **Order.** Frames are only ever shown oldest to newest: they are sorted by their own times (never trusting the order Home
+  Assistant lists them in), the list on show is replaced as one step, and a refresh swaps in a new list only once the new
+  frame has arrived - so the loop never has a newer frame before an older one. A frame that can't be fetched leaves a gap
+  in the loop, never a misordered one, and the status line under the radar says why (`5/6 fetch -404`, `png 3`, `no slot`).
+- **Refresh.** RainViewer publishes a frame every 10 minutes and it reaches Home Assistant (and its `/local` copy) about a
+  minute later, so while the page is open the display checks at 2 minutes past each 10-minute mark (UTC, so it is right in
+  any time zone) and, if the new frame isn't there yet, every 45 s after that, up to six times. It fetches only the frames
+  it doesn't already hold - normally one - and the satellite when its time has changed. The first open fetches all six, and
+  shows each as it arrives. Nothing is fetched while the page is closed; the frames are kept for two minutes after it closes
+  (so opening it again is instant) and then freed.
+- **Speed.** The loop steps every 700 ms with the newest frame held for two extra steps, as on the ESPHome page this was
+  modelled on. A step expands the next frame (about 55 ms on the display) and draws it (about 90 ms).
+- **Memory.** About 1.2 MB of PSRAM while open, allocated as one block (the working image 376 KB, the satellite 251 KB, the
+  frames as lossless 8-bit indexed images at about 72 KB each, plus spare slots); a few hundred bytes of internal RAM and one
+  parked task. It refuses to open - with a short note on screen - if PSRAM is too short. The base map is a constant in flash.
+  A frame's PNG is decoded **a row at a time** on the ROM's miniz (`ha_radar_png.c`, `ha_radar_inflate_rom.c`): a 32 KB window
+  and two rows, packed straight into the frame's slot. (LVGL's own PNG decoder, lodepng, decodes to a whole image beside the
+  inflated scanlines - about 1.2 MB for a frame - and failed with "memory allocation failed" once PSRAM was fragmented;
+  that is why it isn't used.) Syncs are held while the page is open, like the other panels.
+- **Tested.** The pure-C parts - packing a frame, expanding it with the 4/3 premultiplied bilinear scale (alpha within one
+  level of Pillow's resize), the PNG decoder (byte for byte against raw frames, multi-chunk, RGB, truncated and corrupt files),
+  the URL/time parsing, the ordering and the refresh schedule - are in the host tests. The ROM inflate wrapper and the page
+  itself are tested on the display.
+
+**The base map.** The repository ships a *fictional* map (`components/calendar_ui/radar_base.rgb565`, drawn by
+`tools/make_fictional_map.py`: made-up towns, rivers and roads, a ring at the centre for your location), so a fork carries
+nothing about where anyone lives. To use a real map of your own area, make a 380x330 picture at the same scale and centre as
+the frames, convert it with `python3 tools/make_radar_base.py picture.png components/calendar_ui/radar_base.local.rgb565`
+and re-run cmake: the build uses a `radar_base.local.rgb565` in preference when there is one, and git ignores it, so a
+private map is never committed. (The picture is raw RGB565, 250,800 bytes, embedded in flash and drawn from there.)
 
 ## On this day (this branch only)
 

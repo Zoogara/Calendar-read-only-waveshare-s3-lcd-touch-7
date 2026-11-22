@@ -89,6 +89,9 @@ static void time_tick_cb(lv_timer_t *t)
 static void tap_cb(lv_event_t *e)
 {
     (void)e;
+    if (ui_radar_is_open()) {
+        return;            /* the radar page sits on top of this one: this panel stays for it to return to */
+    }
     lv_indev_t *indev = lv_indev_get_act();
     if (indev != NULL) {
         lv_indev_wait_release(indev);
@@ -975,6 +978,11 @@ bool ui_weather_is_open(void)
     return s_overlay != NULL;
 }
 
+static void radar_btn_cb(lv_event_t *e)
+{
+    ui_radar_open();
+}
+
 void ui_weather_open(void)
 {
     if (s_overlay != NULL) {
@@ -1007,7 +1015,7 @@ void ui_weather_open(void)
     lv_obj_t *head = add_label(s_overlay, &gcal_font_20, HEAD_COLOR, heading);
     /* Leave room on the right for the time (and the warning icon): a long place name is
      * cut with an ellipsis rather than running into them. */
-    lv_obj_set_width(head, 620);
+    lv_obj_set_width(head, 540);
     lv_label_set_long_mode(head, LV_LABEL_LONG_DOT);
     lv_obj_align(head, LV_ALIGN_TOP_LEFT, 32, 20);
 
@@ -1020,8 +1028,17 @@ void ui_weather_open(void)
      * cut-off reply) - what's shown is older data or missing a graph. */
     if (ha_graphs_incomplete()) {
         lv_obj_t *warn = add_label(s_overlay, &gcal_font_20, 0xF9AB00, LV_SYMBOL_WARNING);
-        lv_obj_align(warn, LV_ALIGN_TOP_RIGHT, -150, 20);   /* clear of the widest time, "12:35 PM" */
+        lv_obj_align(warn, LV_ALIGN_TOP_RIGHT, -200, 20);   /* clear of the widest time, "12:35 PM", and the radar icon */
     }
+
+    /* The radar and satellite page. A button of its own: a tap on the page's body closes this panel, so the icon
+     * handles its tap itself and doesn't pass it on. */
+    lv_obj_t *radar_btn = add_label(s_overlay, &gcal_font_icon_radar, HEAD_COLOR, "\xEF\x9F\x80");
+    lv_obj_align(radar_btn, LV_ALIGN_TOP_RIGHT, -150, 18);
+    lv_obj_clear_flag(radar_btn, LV_OBJ_FLAG_EVENT_BUBBLE);     /* add_label() sets it; a bubbled tap would close this panel */
+    lv_obj_add_flag(radar_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(radar_btn, 16);
+    lv_obj_add_event_cb(radar_btn, radar_btn_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *list = lv_obj_create(s_overlay);
     lv_obj_remove_style_all(list);

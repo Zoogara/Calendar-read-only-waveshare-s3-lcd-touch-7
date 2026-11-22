@@ -139,6 +139,20 @@ it's open just swaps to that one.
 - If the display is very short of memory when you touch an event, it skips opening the card rather than
   risk a restart; touch again a moment later (this is logged).
 
+## Radar and satellite
+
+On the weather panel (the Home Assistant weather, shown when you tap the weather on the clock or the weather icon in the top
+bar), the small satellite-dish icon beside the time opens the **radar and satellite** page. The rain radar is on the left: the
+last hour as six frames playing one after the other, oldest to newest, over a map, with a bar underneath showing which frame it
+is and the date and time of that frame below. The satellite image is on the right, with its time. Tap anywhere to close it and
+get back to the weather panel; left alone for five minutes it closes itself.
+
+The first time it opens the frames appear one by one as they arrive, with "Loading" under the radar. Once it is showing it
+looks for the next frame a couple of minutes past each ten-minute mark (that's when they come out). If the line under the radar
+shows something like "5/6 fetch -404" a frame couldn't be fetched from Home Assistant and it is trying again; the loop never
+shows frames out of order. If a short note says there isn't enough free memory, wait a few seconds and tap again. See the
+README, *Radar and satellite*, for what Home Assistant has to provide and for using a map of your own area.
+
 ## Reminders
 
 15 minutes before a timed event (not all-day events), a card pops up with

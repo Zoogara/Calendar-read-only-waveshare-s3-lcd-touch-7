@@ -76,6 +76,8 @@ static lv_obj_t *top_overlay(void)
     return n ? lv_obj_get_child(top, n - 1) : NULL;
 }
 
+void host_radar_show(const char *base_map_path);
+
 static void weather_shots(void)
 {
     ui_weather_open();
@@ -174,6 +176,13 @@ int main(int argc, char **argv)
     settle(300);
 
     weather_shots();
+
+    /* The radar and satellite page: the real page code with a fictional rain field, satellite picture and map. */
+    host_radar_show("../../components/calendar_ui/radar_base.rgb565");
+    settle(400);
+    snap("radar");
+    ui_radar_close();
+    settle(300);
 
     ui_history_open();
     snap("history");

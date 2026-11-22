@@ -23,6 +23,10 @@ Needs a C compiler, Python 3 with Pillow (`pip install pillow`), and LVGL 8.4 - 
 * `host_calendar_ui.c` and `host_screensaver.c` compile two firmware files in-place so
   `render.c` can reach their private state (which view is showing, the ambient clock) without
   changing the firmware source.
+* `host_radar.c` runs the real `ui_radar.c` (its loader task never starts here) with an invented rain field, an invented
+  satellite picture and the fictional map `components/calendar_ui/radar_base.rgb565`, through `ui_radar_host_load()` /
+  `ui_radar_host_step()`, which exist only in the host build. Its stand-ins (`shim/cJSON.h`, `shim/esp_http_client.h`, ...) fail
+  every call, since nothing is fetched.
 * The wall clock is pinned (`demo_set_now`) to Wed 14 Oct 2026, 14:35 in a made-up
   time zone context, so the images are reproducible.
 * `render.c` drives each scene and writes a PPM; `topng.py` converts them to PNG.

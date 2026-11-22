@@ -58,6 +58,7 @@ typedef enum {
 #define LONG_SLEEP_RESET_MS (15U * 60U * 1000U) /* away from the calendar >= this long ->
                                                     wake to today/Month instead of resuming
                                                     whatever view/date was showing */
+#define RADAR_IDLE_CLOSE_MS (5U * 60U * 1000U)   /* the radar page is for watching: left untouched this long, it closes */
 #define HISTORY_IDLE_CLOSE_MS (60U * 1000U)  /* "on this day" list left untouched
                                                  this long -> close it */
 #define KEYPAD_IDLE_CLOSE_MS (30U * 1000U)   /* PIN keypad left untouched this long
@@ -207,6 +208,7 @@ static void full_double_refresh(void)
 static void go_ambient(void)
 {
     ui_detail_close();     /* the details card belongs to the calendar views */
+    ui_radar_close();
     display_state_t prev = s_state;
     /* In front of anything else on lv_layer_top() - an open settings
      * dialog in particular, which would otherwise stay drawn above the
@@ -240,6 +242,7 @@ static void go_ambient(void)
 static void go_sleep(void)
 {
     ui_detail_close();
+    ui_radar_close();
     if (s_canvas == NULL) {
         /* ui_screensaver_init() couldn't allocate the noise canvas
          * (out of PSRAM) - nothing to show for this state, so stay put
@@ -690,7 +693,11 @@ static void check_timer_cb(lv_timer_t *timer)
     if (ui_history_is_open() && idle_ms >= HISTORY_IDLE_CLOSE_MS) {
         ui_history_close();
     }
-    if (ui_weather_is_open() && idle_ms >= HISTORY_IDLE_CLOSE_MS) {
+    if (ui_radar_is_open() && idle_ms >= RADAR_IDLE_CLOSE_MS) {
+        ui_radar_close();
+    }
+    /* the weather page the radar was opened from waits underneath it */
+    if (ui_weather_is_open() && !ui_radar_is_open() && idle_ms >= HISTORY_IDLE_CLOSE_MS) {
         ui_weather_close();
     }
     if (ui_detail_is_open() && idle_ms >= HISTORY_IDLE_CLOSE_MS) {
@@ -699,14 +706,14 @@ static void check_timer_cb(lv_timer_t *timer)
     if (ui_feed_is_open() && idle_ms >= HISTORY_IDLE_CLOSE_MS) {
         ui_feed_close();
     }
-    bool overlay_open = ui_lock_keypad_is_open() || ui_history_is_open() || ui_weather_is_open() || ui_feed_is_open();
+    bool overlay_open = ui_lock_keypad_is_open() || ui_history_is_open() || ui_weather_is_open() || ui_feed_is_open() || ui_radar_is_open();
 
     switch (s_state) {
     case DISPLAY_CALENDAR:
         if (s_locked) {
             go_idle(presence);
-        } else if (s_idle_timeout_ms > 0 && idle_ms >= s_idle_timeout_ms) {
-            go_idle(presence);
+        } else if (s_idle_timeout_ms > 0 && idle_ms >= s_idle_timeout_ms && !ui_radar_is_open()) {
+            go_idle(presence);              /* (not while the radar page is up: it closes itself after RADAR_IDLE_CLOSE_MS) */
         }
         break;
 
@@ -787,6 +794,7 @@ void ui_screensaver_init(void)
      * currently showing, regardless of calendar_ui's own view switching. */
     s_clock = ui_clock_create(lv_layer_top());
     ui_reminder_init(lv_layer_top());
+    ui_radar_init();              /* the radar page's loader task (parked until the page is opened) */
     ui_detail_init();             /* above the reminder card on the top layer; hidden until an event is tapped */
 
     size_t buf_size = LV_CANVAS_BUF_SIZE_TRUE_COLOR(SS_H_RES, SS_V_RES);
@@ -822,6 +830,7 @@ void calendar_ui_free_memory_for_update(void)
     if (!bsp_lvgl_lock(3000)) {
         return;
     }
+    ui_radar_close();
     ui_weather_close();
     ui_history_close();
     ui_feed_close();
@@ -835,7 +844,7 @@ void calendar_ui_free_memory_for_update(void)
 
 bool calendar_ui_panel_open(void)
 {
-    return ui_weather_is_open() || ui_history_is_open() || ui_feed_is_open() || ui_detail_is_open();
+    return ui_weather_is_open() || ui_history_is_open() || ui_feed_is_open() || ui_detail_is_open() || ui_radar_is_open();
 }
 
 bool calendar_ui_wait_wake(uint32_t timeout_ms)

@@ -52,6 +52,10 @@ extern const lv_font_t gcal_font_icon_clock;
  * standalone font rather than reusing gcal_font_20's LV_SYMBOL_* set. */
 extern const lv_font_t gcal_font_icon_bell;
 
+/* One glyph only - FontAwesome 5 Solid's "satellite-dish" (U+F7C0, "\xEF\x9F\x80"), the weather page's button for
+ * the radar and satellite page. See gcal_font_icon_radar.c. */
+extern const lv_font_t gcal_font_icon_radar;
+
 /* --- shared context (implemented in calendar_ui.c) --- */
 app_settings_t *ui_get_cfg(void);
 bool ui_calendar_enabled(uint8_t calendar_index);
@@ -157,6 +161,13 @@ bool ui_detail_try_show(lv_obj_t *tagged_target);   /* for a handler that must a
 bool ui_detail_show_index(int tagged_index);        /* for the screenshot renderer */
 void ui_detail_close(void);
 bool ui_detail_is_open(void);
+
+/* The radar and satellite page (ui_radar.c), opened from the radar icon on the weather page; closed by a tap or
+ * by ui_screensaver.c after five minutes untouched. ui_radar_init() starts its (parked) loader task, once. */
+void ui_radar_init(void);
+void ui_radar_open(void);
+void ui_radar_close(void);
+bool ui_radar_is_open(void);
 
 /* "On this day" list (ui_history.c), opened by tapping the date on the
  * ambient clock; closed by a tap or by ui_screensaver.c after a minute. */
