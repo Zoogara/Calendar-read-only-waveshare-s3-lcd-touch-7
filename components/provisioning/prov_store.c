@@ -30,6 +30,7 @@ static cJSON *settings_to_json(const app_settings_t *cfg)
     cJSON_AddNumberToObject(root, "clock_24h", cfg->clock_24h ? 1 : 0);
     cJSON_AddNumberToObject(root, "fetch_past_days", cfg->fetch_past_days);
     cJSON_AddNumberToObject(root, "fetch_future_days", cfg->fetch_future_days);
+    cJSON_AddNumberToObject(root, "read_later_days", cfg->read_later_days);
     cJSON_AddStringToObject(root, "config_web_password", cfg->config_web_password);
     cJSON_AddNumberToObject(root, "brightness_min_pct_x10", cfg->brightness_min_pct_x10);
     cJSON_AddNumberToObject(root, "brightness_max_lux", cfg->brightness_max_lux);
@@ -142,6 +143,9 @@ static void json_to_settings(cJSON *root, app_settings_t *out)
         strspn(j->valuestring, "0123456789") == 4) {
         memcpy(out->lock_pin, j->valuestring, 5);
     }
+    j = cJSON_GetObjectItemCaseSensitive(root, "read_later_days");
+    out->read_later_days = (cJSON_IsNumber(j) && j->valuedouble >= 1 && j->valuedouble <= APP_SETTINGS_MAX_READ_LATER_DAYS)
+                               ? (uint16_t)j->valuedouble : APP_SETTINGS_DEFAULT_READ_LATER_DAYS;   /* absent (older settings): the default */
     j = cJSON_GetObjectItemCaseSensitive(root, "lock_after_min");
     out->lock_after_min = (cJSON_IsNumber(j) && j->valuedouble >= 0 && j->valuedouble <= 1440)
                                ? (uint16_t)j->valuedouble : 0;

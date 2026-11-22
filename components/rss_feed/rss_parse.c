@@ -1,6 +1,7 @@
 #include "rss_parse.h"
 
 #include <ctype.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -202,6 +203,83 @@ static int element(const char *s, const char *e, const char *name, const char **
     return 0;
 }
 
+/* The value of attribute `name` inside the tag text [s, e): sets *vs / *ve to the value (without its quotes). */
+static int attr_value(const char *s, const char *e, const char *name, const char **vs, const char **ve)
+{
+    size_t nl = strlen(name);
+    for (const char *p = s; p + nl + 2 < e; p++) {
+        if ((p[0] == ' ' || p[0] == '\t' || p[0] == '\r' || p[0] == '\n') && strncmp(p + 1, name, nl) == 0) {
+            const char *q = p + 1 + nl;
+            while (q < e && (*q == ' ' || *q == '\t')) {
+                q++;
+            }
+            if (q >= e || *q != '=') {
+                continue;
+            }
+            q++;
+            while (q < e && (*q == ' ' || *q == '\t')) {
+                q++;
+            }
+            if (q >= e || (*q != '"' && *q != '\'')) {
+                continue;
+            }
+            char quote = *q++;
+            const char *close = memchr(q, quote, (size_t)(e - q));
+            if (close == NULL) {
+                return 0;
+            }
+            *vs = q;
+            *ve = close;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* The item's own address. RSS 2.0 has <link>https://...</link> (possibly in CDATA); Atom has
+ * <link href="..." rel="alternate"/>, often next to a rel="self" or "enclosure" one that must not be taken. If there
+ * is no usable <link>, an RSS <guid> that is itself an address will do. Anything that isn't a plain web address, or
+ * that doesn't fit, is dropped and the item simply has no link. */
+static void item_link(const char *start, const char *end, char *out, size_t out_sz, char *scratch)
+{
+    out[0] = '\0';
+    const char *p = start;
+    while ((p = find_open(p, end, "link")) != NULL) {
+        const char *gt = memchr(p, '>', (size_t)(end - p));
+        if (gt == NULL) {
+            return;
+        }
+        const char *vs, *ve, *cs, *ce;
+        bool have = false;
+        if (attr_value(p, gt, "href", &vs, &ve)) {
+            const char *rs, *re;
+            bool alternate = true;
+            if (attr_value(p, gt, "rel", &rs, &re)) {
+                alternate = (size_t)(re - rs) == 9 && memcmp(rs, "alternate", 9) == 0;
+            }
+            if (alternate) {
+                clean_text(vs, ve, out, out_sz, scratch);
+                have = true;
+            }
+        } else if (gt[-1] != '/' && element(p, end, "link", &cs, &ce)) {
+            clean_text(cs, ce, out, out_sz, scratch);
+            have = true;
+        }
+        if (have && link_url_ok(out)) {
+            return;
+        }
+        out[0] = '\0';
+        p = gt + 1;
+    }
+    const char *cs, *ce;
+    if (element(start, end, "guid", &cs, &ce)) {
+        clean_text(cs, ce, out, out_sz, scratch);
+        if (!link_url_ok(out)) {
+            out[0] = '\0';
+        }
+    }
+}
+
 int rss_parse(const char *xml, size_t len, rss_feed_t *out, char *scratch)
 {
     const char *end = xml + len;
@@ -241,6 +319,7 @@ int rss_parse(const char *xml, size_t len, rss_feed_t *out, char *scratch)
             element(start, item_end, "content", &cs, &ce)) {
             clean_text(cs, ce, it->text, sizeof(it->text), scratch);
         }
+        item_link(start, item_end, it->url, sizeof(it->url), scratch);
         /* An item with no heading is of no use; one cut off mid-way by the
          * size cap has no closing tag - keep it only if it has a heading. */
         if (it->title[0] != '\0') {
