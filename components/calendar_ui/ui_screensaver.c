@@ -209,6 +209,7 @@ static void go_ambient(void)
 {
     ui_detail_close();     /* the details card belongs to the calendar views */
     ui_radar_close();
+    ui_link_close();
     display_state_t prev = s_state;
     /* In front of anything else on lv_layer_top() - an open settings
      * dialog in particular, which would otherwise stay drawn above the
@@ -243,6 +244,7 @@ static void go_sleep(void)
 {
     ui_detail_close();
     ui_radar_close();
+    ui_link_close();
     if (s_canvas == NULL) {
         /* ui_screensaver_init() couldn't allocate the noise canvas
          * (out of PSRAM) - nothing to show for this state, so stay put
@@ -703,6 +705,9 @@ static void check_timer_cb(lv_timer_t *timer)
     if (ui_detail_is_open() && idle_ms >= HISTORY_IDLE_CLOSE_MS) {
         ui_detail_close();
     }
+    if (ui_link_is_open() && idle_ms >= HISTORY_IDLE_CLOSE_MS) {
+        ui_link_close();
+    }
     if (ui_feed_is_open() && idle_ms >= HISTORY_IDLE_CLOSE_MS) {
         ui_feed_close();
     }
@@ -795,6 +800,7 @@ void ui_screensaver_init(void)
     s_clock = ui_clock_create(lv_layer_top());
     ui_reminder_init(lv_layer_top());
     ui_radar_init();              /* the radar page's loader task (parked until the page is opened) */
+    ui_link_init();               /* the link card: hidden until an item on the news-feed or "On this day" page is tapped */
     ui_detail_init();             /* above the reminder card on the top layer; hidden until an event is tapped */
 
     size_t buf_size = LV_CANVAS_BUF_SIZE_TRUE_COLOR(SS_H_RES, SS_V_RES);
@@ -832,6 +838,7 @@ void calendar_ui_free_memory_for_update(void)
     }
     ui_radar_close();
     ui_weather_close();
+    ui_link_close();
     ui_history_close();
     ui_feed_close();
     ui_detail_close();
@@ -844,7 +851,7 @@ void calendar_ui_free_memory_for_update(void)
 
 bool calendar_ui_panel_open(void)
 {
-    return ui_weather_is_open() || ui_history_is_open() || ui_feed_is_open() || ui_detail_is_open() || ui_radar_is_open();
+    return ui_weather_is_open() || ui_history_is_open() || ui_feed_is_open() || ui_detail_is_open() || ui_radar_is_open() || ui_link_is_open();
 }
 
 bool calendar_ui_wait_wake(uint32_t timeout_ms)

@@ -29,6 +29,14 @@ void ui_settings_dialog_show(void) {}
 /* calendar_ui.c asks this when the Update item is tapped; the renderer never gets there. */
 bool ota_update_url_is_insecure(const char *url) { return url && strncmp(url, "https://", 8) != 0; }
 
+/* The link card's Save button: the renderer has no flash and no clock to save against. */
+#include "readlater.h"
+rl_add_result_t readlater_add(const char *title, const char *url, uint16_t keep_days)
+{
+    (void)title; (void)url; (void)keep_days;
+    return RL_ADDED;
+}
+
 /* The settings menu lists the connection; fictional values. */
 #include <stdio.h>
 #include "wifi_sta.h"
