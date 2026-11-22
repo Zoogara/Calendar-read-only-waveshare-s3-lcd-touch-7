@@ -11,10 +11,10 @@ CFLAGS := -std=gnu11 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-sign-compar
           -I$(ROOT)/components/app_common/include \
           -I$(ROOT)/components/ha_weather/include \
           -I$(ROOT)/components/calendar_ui/include \
-          -I$(ROOT)/components/provisioning/include
+          -I$(ROOT)/components/provisioning/include -I$(ROOT)/components/readlater/include
 
-SRC := test_main.c test_rss.c test_ics.c test_wind.c test_auth.c test_urldecode.c test_jwt.c test_urlenc.c test_timefmt.c test_eventtext.c test_setcrypt.c test_radar.c test_radardata.c test_radarpng.c fake_http.c fake_store.c \
-       $(ROOT)/components/provisioning/auth_guard.c $(ROOT)/components/provisioning/url_decode.c $(ROOT)/components/gcal/jwt_build.c $(ROOT)/components/gcal/url_encode.c $(ROOT)/components/calendar_ui/time_fmt.c $(ROOT)/components/gcal/event_text.c $(ROOT)/components/provisioning/settings_crypt.c \
+SRC := test_main.c test_rss.c test_ics.c test_wind.c test_auth.c test_urldecode.c test_jwt.c test_urlenc.c test_timefmt.c test_eventtext.c test_setcrypt.c test_radar.c test_radardata.c test_radarpng.c test_readlater.c fake_http.c fake_store.c \
+       $(ROOT)/components/provisioning/auth_guard.c $(ROOT)/components/provisioning/url_decode.c $(ROOT)/components/gcal/jwt_build.c $(ROOT)/components/gcal/url_encode.c $(ROOT)/components/calendar_ui/time_fmt.c $(ROOT)/components/gcal/event_text.c $(ROOT)/components/provisioning/settings_crypt.c $(ROOT)/components/readlater/link_url.c $(ROOT)/components/readlater/readlater_store.c \
        $(ROOT)/components/ha_weather/ha_wind_calc.c $(ROOT)/components/ha_weather/ha_radar_pack.c $(ROOT)/components/ha_weather/ha_radar_data.c $(ROOT)/components/ha_weather/ha_radar_png.c \
        $(ROOT)/components/rss_feed/rss_parse.c $(ROOT)/components/gcal/ics_client.c
 

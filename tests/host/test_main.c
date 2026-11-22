@@ -15,6 +15,7 @@ void test_setcrypt(void);
 void test_radar(void);
 void test_radardata(void);
 void test_radarpng(void);
+void test_readlater(void);
 
 int main(void)
 {
@@ -31,6 +32,7 @@ int main(void)
     test_radar();
     test_radardata();
     test_radarpng();
+    test_readlater();
     printf("\n%d checks, %d failed\n", t_checks, t_failed);
     return t_failed ? 1 : 0;
 }

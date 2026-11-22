@@ -56,6 +56,7 @@
 #include "event_store.h"
 #include "ha_weather.h"
 #include "onthisday.h"
+#include "readlater.h"
 
 static const char *TAG = "main";
 static app_settings_t s_cfg;
@@ -359,6 +360,8 @@ static void net_task(void *arg)
          * and a no-op while its address is blank. */
         wait_for_panels("the news feeds");
         rss_feed_refresh(&s_cfg);
+        /* Expire saved links that have outlived read_later_days (and retry a flash write that failed). */
+        readlater_housekeeping(s_cfg.read_later_days ? s_cfg.read_later_days : APP_SETTINGS_DEFAULT_READ_LATER_DAYS);
 
         /* Waits for either the refresh/backoff interval above or an early
          * wake - which, since 2026-09-10, means only a manual force-sync
@@ -413,6 +416,8 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+
+    readlater_init();      /* the links saved with "Save for later" (components/readlater) */
 
     /* Independent of display/Wi-Fi/config, so started as early as
      * possible. ui_screensaver.c's own idle timer polls

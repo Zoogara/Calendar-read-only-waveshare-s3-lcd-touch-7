@@ -201,8 +201,102 @@ static void long_text_is_cut_cleanly(void)
     CHECK(strlen(feed.items[0].title) <= RSS_TITLE_LEN - 1);
 }
 
+static void links_rss2(void)
+{
+    /* the channel's own <link> comes before the items and is not an item's link */
+    CHECK_INT(parse("<rss><channel><title>T</title><link>https://example.invalid/</link>"
+                    "<item><title>A</title><link>https://news.example/a?x=1&amp;y=2</link><description>d</description></item>"
+                    "<item><title>B</title><link><![CDATA[https://news.example/b]]></link></item>"
+                    "<item><title>C</title><description>no link at all</description></item>"
+                    "<item><title>D</title><link>  https://news.example/d  </link></item>"
+                    "</channel></rss>"), 4);
+    CHECK_STR(feed.items[0].url, "https://news.example/a?x=1&y=2");     /* entity decoded */
+    CHECK_STR(feed.items[1].url, "https://news.example/b");             /* CDATA unwrapped */
+    CHECK_STR(feed.items[2].url, "");                                   /* kept, without a link */
+    CHECK_STR(feed.items[3].url, "https://news.example/d");             /* trimmed */
+    CHECK_STR(feed.items[2].title, "C");
+}
+
+static void links_that_are_refused_leave_the_item_without_one(void)
+{
+    CHECK_INT(parse("<rss><channel><item><title>A</title><link>javascript:alert(1)</link></item>"
+                    "<item><title>B</title><link>/relative/path</link></item>"
+                    "<item><title>C</title><link>https://trusted.example@evil.example/</link></item>"
+                    "<item><title>D</title><link>https://news.example/a b</link></item>"
+                    "<item><title>E</title><link>ftp://news.example/file</link></item>"
+                    "<item><title>F</title><link></link></item>"
+                    "<item><title>G</title><link/></item>"
+                    "</channel></rss>"), 7);
+    for (int i = 0; i < 7; i++) {
+        CHECK_STR(feed.items[i].url, "");
+    }
+    /* markup inside a link is not a link */
+    CHECK_INT(parse("<rss><channel><item><title>A</title><link>https://x.example/<b>bold</b></link></item></channel></rss>"), 1);
+    CHECK_STR(feed.items[0].url, "");
+}
+
+static void a_link_too_long_is_dropped_not_cut(void)
+{
+    char xml[600];
+    char url[400];
+    strcpy(url, "https://news.example/");
+    memset(url + strlen(url), 'a', 300);
+    url[21 + 300] = '\0';
+    snprintf(xml, sizeof(xml), "<rss><channel><item><title>A</title><link>%s</link></item></channel></rss>", url);
+    CHECK_INT(parse(xml), 1);
+    CHECK_STR(feed.items[0].url, "");                                    /* never a truncated, wrong address */
+    /* one that just fits is kept whole */
+    url[21 + 150] = '\0';
+    snprintf(xml, sizeof(xml), "<rss><channel><item><title>A</title><link>%s</link></item></channel></rss>", url);
+    CHECK_INT(parse(xml), 1);
+    CHECK_STR(feed.items[0].url, url);
+}
+
+static void links_atom(void)
+{
+    CHECK_INT(parse("<feed><title>F</title>"
+                    "<entry><title>A</title>"
+                    "<link rel=\"self\" href=\"https://feed.example/self\"/>"
+                    "<link rel=\"alternate\" type=\"text/html\" href=\"https://news.example/a?p=1&amp;q=2\"/>"
+                    "<summary>s</summary></entry>"
+                    "<entry><title>B</title><link href='https://news.example/b'/></entry>"
+                    "<entry><title>C</title><link rel=\"enclosure\" href=\"https://news.example/c.mp3\"/></entry>"
+                    "<entry><title>D</title><link rel=\"alternate\" href=\"javascript:alert(1)\"/>"
+                    "<link href=\"https://news.example/d\"/></entry>"
+                    "</feed>"), 4);
+    CHECK_STR(feed.items[0].url, "https://news.example/a?p=1&q=2");     /* the alternate, not the self link before it */
+    CHECK_STR(feed.items[1].url, "https://news.example/b");             /* single quotes, no rel */
+    CHECK_STR(feed.items[2].url, "");                                   /* only an enclosure: not an article link */
+    CHECK_STR(feed.items[3].url, "https://news.example/d");             /* the first was refused, the next one is used */
+}
+
+static void a_guid_that_is_an_address_stands_in(void)
+{
+    CHECK_INT(parse("<rss><channel>"
+                    "<item><title>A</title><guid isPermaLink=\"true\">https://news.example/guid-a</guid></item>"
+                    "<item><title>B</title><guid isPermaLink=\"false\">tag:news.example,2026:123</guid></item>"
+                    "<item><title>C</title><link>https://news.example/link-c</link><guid>https://news.example/other</guid></item>"
+                    "</channel></rss>"), 3);
+    CHECK_STR(feed.items[0].url, "https://news.example/guid-a");
+    CHECK_STR(feed.items[1].url, "");                                   /* not an address */
+    CHECK_STR(feed.items[2].url, "https://news.example/link-c");        /* <link> wins */
+}
+
+static void atom_link_namespace_is_not_a_link(void)
+{
+    CHECK_INT(parse("<rss><channel><item><title>A</title><atom:link href=\"https://x.example/feed\" rel=\"self\"/>"
+                    "</item></channel></rss>"), 1);
+    CHECK_STR(feed.items[0].url, "");
+}
+
 void test_rss(void)
 {
+    RUN(links_rss2);
+    RUN(links_that_are_refused_leave_the_item_without_one);
+    RUN(a_link_too_long_is_dropped_not_cut);
+    RUN(links_atom);
+    RUN(a_guid_that_is_an_address_stands_in);
+    RUN(atom_link_namespace_is_not_a_link);
     RUN(rss2_basic);
     RUN(no_channel_title);
     RUN(item_with_attributes);
