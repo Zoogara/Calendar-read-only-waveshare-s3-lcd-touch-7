@@ -25,6 +25,28 @@ void host_go_calendar(void);
 static lv_color_t s_draw[W * H];
 static lv_color_t s_fb[W * H];
 static app_settings_t s_cfg;
+
+/* A simulated touch screen, so scenes can be driven through LVGL's own hit-testing - a direct call into a card
+ * can't catch "a touch on this label goes to the list instead" (which is how a tap on a feed story once closed the list). */
+static bool s_ptr_down;
+static int s_ptr_x, s_ptr_y;
+static int s_failures;
+
+static void ptr_read(lv_indev_drv_t *d, lv_indev_data_t *data)
+{
+    (void)d;
+    data->point.x = s_ptr_x;
+    data->point.y = s_ptr_y;
+    data->state = s_ptr_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+static void check(bool ok, const char *what)
+{
+    printf("%s %s\n", ok ? "ok  " : "FAIL", what);
+    if (!ok) {
+        s_failures++;
+    }
+}
 static const char *s_out = "out";
 
 static void flush_cb(lv_disp_drv_t *drv, const lv_area_t *a, lv_color_t *px)
@@ -79,6 +101,53 @@ static lv_obj_t *top_overlay(void)
 
 void host_radar_show(const char *base_map_path);
 
+static void host_tap(int x, int y)
+{
+    s_ptr_x = x;
+    s_ptr_y = y;
+    s_ptr_down = true;
+    settle(80);
+    s_ptr_down = false;
+    settle(250);
+}
+
+/* The taps that matter on the news-feed and On-this-day pages, as real touches. */
+static void tap_tests(void)
+{
+    /* feed: a story opens its card; Close returns to the list; a tap outside the card does too; the heading closes the list */
+    ui_feed_open(0);
+    settle(300);
+    host_tap(120, 74);
+    check(ui_link_is_open() && ui_feed_is_open(), "feed: touching a story's heading opens its link card (list stays)");
+    host_tap(628, 398);
+    check(!ui_link_is_open() && ui_feed_is_open(), "feed: Close returns to the list");
+    host_tap(300, 112);
+    check(ui_link_is_open() && ui_feed_is_open(), "feed: touching a story's text opens its link card too");
+    host_tap(30, 240);
+    check(!ui_link_is_open() && ui_feed_is_open(), "feed: a tap outside the card closes only the card");
+    host_tap(300, 34);
+    check(!ui_feed_is_open(), "feed: a tap on the heading closes the list");
+    ui_feed_open(0);
+    settle(300);
+    host_tap(765, 34);
+    check(!ui_feed_is_open(), "feed: the close button closes the list");
+
+    /* on this day: the same */
+    ui_history_open();
+    settle(300);
+    host_tap(120, 74);
+    check(ui_link_is_open() && ui_history_is_open(), "history: touching an entry opens its link card (list stays)");
+    host_tap(628, 398);
+    check(!ui_link_is_open() && ui_history_is_open(), "history: Close returns to the list");
+    host_tap(300, 34);
+    check(!ui_history_is_open(), "history: a tap on the heading closes the list");
+    ui_history_open();
+    settle(300);
+    host_tap(765, 34);
+    check(!ui_history_is_open(), "history: the close button closes the list");
+    settle(300);
+}
+
 static void weather_shots(void)
 {
     ui_weather_open();
@@ -128,6 +197,11 @@ int main(int argc, char **argv)
     drv.draw_buf = &draw_buf;
     drv.full_refresh = 1;
     lv_disp_drv_register(&drv);
+    static lv_indev_drv_t idrv;
+    lv_indev_drv_init(&idrv);
+    idrv.type = LV_INDEV_TYPE_POINTER;
+    idrv.read_cb = ptr_read;
+    lv_indev_drv_register(&idrv);
 
     demo_fill_events();
     demo_build_data(0);
@@ -177,6 +251,7 @@ int main(int argc, char **argv)
     settle(300);
 
     weather_shots();
+    tap_tests();
 
     /* The radar and satellite page: the real page code with a fictional rain field, satellite picture and map. */
     host_radar_show("../../components/calendar_ui/radar_base.rgb565");
@@ -236,5 +311,5 @@ int main(int argc, char **argv)
     ui_weather_open();
     snap("weather_night");
     ui_weather_close();
-    return 0;
+    return s_failures ? 1 : 0;
 }

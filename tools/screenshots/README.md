@@ -27,6 +27,9 @@ Needs a C compiler, Python 3 with Pillow (`pip install pillow`), and LVGL 8.4 - 
   satellite picture and the fictional map `components/calendar_ui/radar_base.rgb565`, through `ui_radar_host_load()` /
   `ui_radar_host_step()`, which exist only in the host build. Its stand-ins (`shim/cJSON.h`, `shim/esp_http_client.h`, ...) fail
   every call, since nothing is fetched.
+* `render.c` has a simulated touch screen (`host_tap()`) and `tap_tests()`: real touches on the news-feed and
+  "On this day" pages, checked through LVGL's own hit-testing, because a direct call into a card can't catch a touch
+  landing on the wrong object. `./render` exits non-zero if one fails, so `make shots` stops.
 * The wall clock is pinned (`demo_set_now`) to Wed 14 Oct 2026, 14:35 in a made-up
   time zone context, so the images are reproducible.
 * `render.c` drives each scene and writes a PPM; `topng.py` converts them to PNG.
